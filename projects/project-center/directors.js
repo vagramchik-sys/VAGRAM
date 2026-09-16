@@ -8,6 +8,7 @@
   const catalogColors = { '#8b5cf6': 'violet', '#3b82f6': 'blue', '#10b981': 'teal', '#ec4899': 'rose', '#f59e0b': 'amber', '#06b6d4': 'teal', '#6366f1': 'violet', '#14b8a6': 'teal', '#a855f7': 'violet', '#f97316': 'amber' };
   let directors = [], projects = [], connection = { available: false, message: 'Проверяем подключение…' };
   let selected = null, generation = 0, pollTimer = null, refreshing = false, user = null;
+  let restoreButton = null;
   const node = (tag, text, className) => { const element = document.createElement(tag); if (text !== undefined) element.textContent = text; if (className) element.className = className; return element; };
   const uuid = () => globalThis.crypto?.randomUUID?.() || 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => { const n = Math.floor(Math.random() * 16); return (c === 'x' ? n : (n & 3) | 8).toString(16); });
   function status(text, error = false) { $('directors-status').textContent = text; $('directors-status').classList.toggle('error', error); }
@@ -22,6 +23,7 @@
   function stopPoll() { clearTimeout(pollTimer); pollTimer = null; }
   function controls() {
     const conversation = conversations.get(selected);
+    if (restoreButton) restoreButton.disabled = !selected || user?.role === 'viewer' || sending.has(selected) || conversation?.busy === true || conversation?.loading === true;
     $('director-send').disabled = !selected || user?.role === 'viewer' || !connection.available || sending.has(selected) || !conversation || conversation.loading || conversation.busy || !input.value.trim();
     $('director-connection').textContent = (connection.message || (connection.available ? 'Подключение доступно.' : 'Провайдер не подключен.')) + (user?.role === 'viewer' ? ' Ваша роль разрешает только просмотр.' : '');
     if ($('director-advice')) $('director-advice').disabled = !user || user.role === 'viewer' || !connection.available || sending.has('general') || conversations.get('general')?.busy === true;
@@ -51,6 +53,7 @@
     const container = $('director-messages'), conversation = conversations.get(selected);
     const nearEnd = container.scrollHeight - container.scrollTop - container.clientHeight < 80;
     container.replaceChildren();
+    restoreButton = null;
     if (!conversation || conversation.loading) container.append(node('p', 'Загружаем историю…', 'empty-state'));
     else {
       if (!conversation.messages.length) container.append(node('p', 'Диалог пока пуст. Опишите задачу директору.', 'empty-state'));
@@ -71,7 +74,7 @@
       const previousRequest = failed ? [...conversation.messages].reverse().find(message => message.role === 'user') : null;
       if (previousRequest && user?.role !== 'viewer') {
         const restore = node('button', 'Вернуть текст обращения', 'director-action'); restore.type = 'button';
-        restore.disabled = sending.has(selected);
+        restoreButton = restore;
         const directorId = selected;
         restore.addEventListener('click', () => {
           if (selected !== directorId || sending.has(directorId) || conversations.get(directorId)?.busy) return;
