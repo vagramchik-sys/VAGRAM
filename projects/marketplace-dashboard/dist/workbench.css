@@ -1,0 +1,77 @@
+.topbar { position: sticky; top: 0; z-index: 4; gap: 16px; background: #0b1120f5; backdrop-filter: blur(16px); }
+.workbench-controls { display: flex; gap: 9px; align-items: center; margin-left: auto; }
+.quick-open, .density-toggle { display: inline-flex; align-items: center; gap: 9px; padding: 9px 12px; border: 1px solid #344661; border-radius: 8px; color: #b9c8e0; background: #152236; font-size: 11px; white-space: nowrap; }
+.quick-open:hover, .density-toggle:hover { background: #20324d; border-color: #6483b4; }
+.quick-open>span { font-size: 19px; line-height: 14px; }
+kbd { font: inherit; font-size: 9px; padding: 2px 5px; border: 1px solid #405475; border-radius: 4px; color: #aebfd9; background: #111c2e; }
+.density-toggle[aria-pressed=true] { background: #243c62; border-color: #7698d9; color: #dae6ff; }
+.anchor, .focus-section, #ins-products-panel, #focus-stores, #business-chart { scroll-margin-top: 94px; }
+.table-wrap { max-height: 680px; max-height: min(72vh,680px); }
+.table-wrap th { position: sticky; top: 0; z-index: 2; box-shadow: 0 1px 0 #30415d; }
+[data-density=compact] .table-wrap td { padding-top: 7px; padding-bottom: 7px; }
+[data-density=compact] .table-wrap th { padding-top: 9px; padding-bottom: 9px; }
+[data-density=compact] .table-wrap .sub { margin-top: 3px; }
+[data-density=compact] .table-wrap .pill { padding-block: 3px; }
+[data-density=compact] .table-wrap .focus-signals { margin-top: 4px; }
+[data-density=compact] .row-actions button { padding-block: 5px; }
+#quick-nav { width: min(650px,calc(100vw - 28px)); padding: 22px; }
+.quick-heading { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-bottom: 20px; }
+.quick-heading h2 { font-size: 23px; margin-top: 8px; }
+.quick-search-label { margin-bottom: 8px; color: #aebed6; }
+#quick-query { width: 100%; font-size: 14px; padding: 13px; }
+.quick-count { margin: 14px 0 9px; font-size: 11px; color: #a7b8d2; line-height: 1.6; }
+#quick-results { display: grid; gap: 5px; overflow: auto; max-height: 49vh; }
+#quick-results a { display: flex; align-items: center; gap: 13px; border: 1px solid transparent; padding: 12px; background: #17243a; }
+#quick-results a:hover, #quick-results a:focus-visible { background: #253c60; border-color: #5d80b9; }
+#quick-results a span { color: #dce7f8; }
+#quick-results b { font-size: 12px; }
+#quick-results small { color: #a9bad4; font-size: 10px; line-height: 1.6; margin-top: 4px; }
+#quick-results .quick-icon { width: 31px; height: 31px; display: grid; place-items: center; background: #233a5c; border-radius: 8px; font-size: 17px; flex-shrink: 0; color: #b5ceff; }
+#quick-results .quick-arrow { margin-left: auto; color: #8faad2; }
+.quick-help { margin-top: 16px; font-size: 10px; color: #a6b8d1; }
+.chart-interaction-hint { padding: 0 24px 8px; font-size: 10px; color: #a6b7d0; }
+.chart-inspector { margin: 0 24px 20px; padding: 14px; display: grid; grid-template-columns: 1.2fr 1fr auto; align-items: center; gap: 14px; border: 1px solid #3a4e6f; border-left: 3px solid var(--series-color); border-radius: 8px; background: #182840; }
+.chart-inspector span { font-size: 10px; color: #a9bddc; }
+.chart-inspector b { display: block; font-size: 12px; margin-bottom: 5px; }
+.chart-inspector .chart-point-kicker { display: block; font-size: 8px; text-transform: uppercase; letter-spacing: 1px; color: #94aacf; margin-bottom: 6px; }
+.chart-compare-controls { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin: 3px 24px 12px; padding-top: 12px; border-top: 1px solid #2b3d58; color: #aebfd8; font-size: 10px; }
+.chart-compare-controls label { display: flex; align-items: center; gap: 6px; color: #d0ddf1; cursor: pointer; }
+.chart-compare-controls input { width: 13px; height: 13px; padding: 0; margin: 0; accent-color: #9cb8ff; }
+.chart-compare-controls small { font-size: 9px; margin: 0; color: #9bafcf; }
+.compare-line { width: 19px; border-top: 2px dashed #b5c8ea; display: inline-block; flex-shrink: 0; vertical-align: middle; margin-right: 4px; }
+.compare-line.week { border-top-style: dotted; }
+.chart-comparisons { display: grid; gap: 12px; }
+.chart-comparison { padding: 13px; border: 1px solid #344865; border-left: 3px solid var(--series-color); background: #15233a; border-radius: 8px; }
+.chart-comparison h3 { margin: 0 0 12px; color: #d5e2f8; font-size: 12px; }
+.comparison-days { display: grid; grid-template-columns: repeat(auto-fit,minmax(145px,1fr)); gap: 14px; }
+.comparison-days>div { min-width: 0; padding: 10px; background: #1b2c45; border-radius: 7px; }
+.comparison-days>div.comparison-today { background: #253d62; }
+.comparison-days span { display: block; font-size: 9px; color: #b3c7e6; }
+.comparison-days strong { display: block; color: #eef4ff; font-size: 18px; margin: 6px 0; font-variant-numeric: tabular-nums; }
+.comparison-days small { font-size: 9px; color: #afc2df; line-height: 1.7; }
+.comparison-method { color: #9cafca; }
+.chart-inspector strong { font-size: 20px; display: block; margin-top: 4px; white-space: nowrap; }
+.chart-inspector small { font-size: 10px; line-height: 1.5; color: #bfcee5; }
+.chart-inspector-buttons { display: flex; gap: 6px; }
+.chart-inspector button { min-width: 32px; min-height: 32px; padding: 7px; }
+#ins-chart .chart-point { cursor: pointer; stroke: var(--surface); stroke-width: 2; }
+#ins-chart .chart-point:hover, #ins-chart .chart-point[aria-pressed=true] { stroke: #f2f6ff; stroke-width: 2.5; r: 6; }
+#ins-chart .chart-point:focus-visible { outline: none; stroke: #fff; stroke-width: 3.5; r: 7; }
+@media(max-width:1100px) { .topbar>span:first-child { display: none; } .workbench-controls { margin-left: 0; } .topbar .live-badge { margin-left: auto; } }
+@media(max-width:600px) {
+  .topbar { gap: 7px; height: 65px; }
+  .topbar .live-badge { display: none; }
+  .workbench-controls { width: 100%; justify-content: space-between; gap: 6px; }
+  .quick-open, .density-toggle { padding: 9px; font-size: 10px; gap: 5px; }
+  .quick-open kbd { display: none; }
+  .anchor, .focus-section, #ins-products-panel, #focus-stores, #business-chart { scroll-margin-top: 80px; }
+  #quick-results { margin-top: 0; }
+  #quick-results a { white-space: normal; }
+  #quick-results a:first-child { display: flex; }
+  .chart-inspector { grid-template-columns: 1fr auto; margin-inline: 16px; gap: 12px; }
+  .chart-inspector>div:first-child { grid-column: 1/-1; }
+  .chart-inspector strong { font-size: 18px; }
+  .chart-interaction-hint { padding-inline: 16px; line-height: 1.6; }
+  .chart-compare-controls { margin-inline: 16px; }
+  .comparison-days { grid-template-columns: 1fr; gap: 8px; }
+}

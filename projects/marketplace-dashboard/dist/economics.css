@@ -1,0 +1,28 @@
+.eco-panel { scroll-margin-top: 94px; }
+.eco-panel .eyebrow { display: block; margin-bottom: 9px; }
+.eco-panel .panel-heading h2 { font-size: 19px; }
+.eco-notice { margin: 0 24px 18px; font-size: 11px; line-height: 1.8; color: #c4d3eb; background: #1c2d47; padding: 12px 15px; border: 1px solid #3a5073; border-radius: 8px; }
+.eco-metrics { display: grid; grid-template-columns: repeat(4,minmax(0,1fr)); gap: 10px; margin: 0 24px 20px; }
+.eco-metric { padding: 15px; border: 1px solid #344862; border-radius: 9px; background: #1a2940; }
+.eco-metric>span { font-size: 10px; color: #aebfd8; }
+.eco-metric>strong { display: block; font-size: 22px; letter-spacing: -.5px; margin: 12px 0; font-variant-numeric: tabular-nums; }
+.eco-metric>small { font-size: 9px; line-height: 1.6; color: #a8bad5; }
+.eco-metric.positive { background: #163029; border-color: #345b4d; }
+.eco-metric.negative { background: #35232c; border-color: #694049; }
+.eco-positive { color: #84dfb9; }
+.eco-negative { color: #ffaaa1; }
+.eco-warning { display: block; font-size: 9px; color: #e9c280; margin-top: 5px; }
+.eco-equation { display: flex; flex-wrap: wrap; gap: 14px 25px; padding: 17px 24px; background: #101c2f; border-block: 1px solid #293c58; color: #a7bbd8; font-size: 10px; }
+.eco-equation span { flex: 1; min-width: 150px; }
+.eco-equation b { display: block; color: #dce8fa; font-size: 16px; margin-top: 7px; }
+.eco-equation small { width: 100%; font-size: 10px; line-height: 1.6; }
+.eco-method { padding: 18px 24px; border-bottom: 1px solid #2b3c56; }
+.eco-method summary { color: #a9c2fa; cursor: pointer; font-size: 11px; }
+.eco-method p { font-size: 11px; line-height: 1.9; margin-top: 13px; }
+.eco-subheading { padding: 21px 24px 17px; }
+.eco-subheading h3 { font-size: 14px; margin: 0; }
+.eco-subheading p { font-size: 10px; }
+#eco-product-rows td { vertical-align: top; }
+#eco-product-rows td:first-child { min-width: 250px; }
+@media(max-width:1150px) { .eco-metrics { grid-template-columns: repeat(2,minmax(0,1fr)); } }
+@media(max-width:600px) { .eco-panel { scroll-margin-top: 80px; } .eco-metrics { margin-inline: 16px; gap: 8px; } .eco-metric { padding: 12px; } .eco-metric>strong { font-size: 18px; } .eco-notice { margin-inline: 16px; } .eco-equation, .eco-method, .eco-subheading { padding-inline: 16px; } }

@@ -24,6 +24,14 @@ function buildLedger(raw,types=[]){
    for(const p of products){
      const sale=amount(p.commission?.sale_amount),commission=amount(p.commission?.commission),delivery=amount(p.delivery?.total_accrued);
      add(date,p.sku,'realized',sale,true);add(date,p.sku,'commission',commission,true);add(date,p.sku,'bonus',amount(p.commission?.bonus));add(date,p.sku,'partners',amount(p.commission?.coinvestment));
+     if(sale){
+       add(date,p.sku,'salesRows',1);
+       const unitPrice=p.commission?.seller_price,price=Math.abs(cents(unitPrice?.amount));
+       // seller_price is a unit price. Only exact, integral ratios can support a cost estimate.
+       if(price>0&&(!unitPrice.currency||unitPrice.currency==='RUB')&&Math.abs(sale)%price===0){
+         add(date,p.sku,sale>0?'soldUnits':'returnedUnits',Math.abs(sale)/price);
+       }else add(date,p.sku,'unknownUnitRows',1);
+     }
      if(sale<0)add(date,p.sku,'reversal',-sale);
      let services=0;for(const service of p.delivery?.services||[]){const value=amount(service.accrued);fee(date,p.sku,service.type_id,value,'logistics');services+=value}
      if(delivery!==services)fee(date,p.sku,'delivery-other',delivery-services,'logistics');
@@ -34,12 +42,12 @@ function buildLedger(raw,types=[]){
    for(const service of op.container_fees?.fees||[]){const value=amount(service.accrued);fee(date,null,service.type_id,value);parts+=value}
    const residual=total-parts;if(residual){add(date,null,'unreconciled',residual);add(date,null,'unreconciledRecords',1);residualRecords++}
  }
- return {version:2,period:raw.period,completedAt:raw.completedAt,complete:raw.sections?.finance?.ok===true,records,totalCents,residualRecords,foreignRecords,currencies:[...currencies],daily:[...daily.values()],skuDaily:[...skuDaily.values()],fees:[...fees.values()]};
+ return {version:3,period:raw.period,completedAt:raw.completedAt,complete:raw.sections?.finance?.ok===true,records,totalCents,residualRecords,foreignRecords,currencies:[...currencies],daily:[...daily.values()],skuDaily:[...skuDaily.values()],fees:[...fees.values()]};
 }
 module.exports={buildLedger,feeGroup,cents};
 module.exports.cache=function({privateDir,readTypes}){
  const memory=new Map();return function(id){const source=path.join(privateDir,'data-'+id+'.json');if(!fs.existsSync(source))return null;const types=readTypes(id)?.types||[];const stamp=fs.statSync(source).mtimeMs+':'+require('crypto').createHash('sha256').update(JSON.stringify(types)).digest('hex');if(memory.get(id)?.stamp===stamp)return memory.get(id).data;
- const file=path.join(privateDir,'ledger-'+id+'.json');if(fs.existsSync(file)){const saved=JSON.parse(fs.readFileSync(file,'utf8'));if(saved.stamp===stamp&&saved.data.version===2){memory.set(id,saved);return saved.data}}
+ const file=path.join(privateDir,'ledger-'+id+'.json');if(fs.existsSync(file)){const saved=JSON.parse(fs.readFileSync(file,'utf8'));if(saved.stamp===stamp&&saved.data.version===3){memory.set(id,saved);return saved.data}}
  const data=buildLedger(JSON.parse(fs.readFileSync(source,'utf8')),types),saved={stamp,data};fs.writeFileSync(file+'.tmp',JSON.stringify(saved));fs.renameSync(file+'.tmp',file);memory.set(id,saved);return data;
  };
 };

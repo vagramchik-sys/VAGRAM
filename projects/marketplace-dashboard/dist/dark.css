@@ -1,0 +1,194 @@
+/* Shared dark palette for the dashboard, product management and connections. */
+:root {
+  color-scheme: dark;
+  --bg: #0b1120;
+  --surface: #121c2c;
+  --raised: #19263a;
+  --input: #0e1828;
+  --text: #e8eef9;
+  --muted: #a0afc5;
+  --line: #29374d;
+  --blue: #4668df;
+  --accent: #9cb8ff;
+  --green: #72d9b1;
+  --green-bg: #142e29;
+  --red: #ffa49b;
+  --red-bg: #34232c;
+  --amber: #f0c77c;
+  --amber-bg: #342c20;
+  --chart-total: #91acff;
+  --chart-store-1: #58d8b4;
+  --chart-store-2: #ba9aff;
+  --chart-store-3: #f1b564;
+  --chart-store-4: #65c5eb;
+  color: var(--text);
+  background: var(--bg);
+  scrollbar-color: #42536d var(--bg);
+}
+body { background: var(--bg); color: var(--text); }
+::selection { background: #345896; color: #fff; }
+:focus-visible { outline-color: var(--accent); }
+::placeholder { color: #8e9fb8; opacity: 1; }
+
+/* Navigation and shared surfaces. */
+.sidebar, aside { background: #0e1727; border-color: var(--line); }
+.brand, .brand span { color: var(--text); }
+.brand-icon, .brand>span:last-child, .brand .brand-dot { color: var(--accent); }
+.workspace, .profile, header, .topbar, footer { border-color: var(--line); }
+.workspace-icon, .profile>span, .avatar { background: #203252; color: #b6cbff; }
+nav a, nav a span { color: #a8b6ce; }
+nav a:hover { background: var(--raised); }
+nav a.active, nav a.active span { background: #203255; color: #b3c8ff; }
+.sidebar-note { color: #c0cce0; }
+.sidebar-note a, .ins-details-link, .focus-open, .focus-store-details summary,
+.ins-chart-details summary, .chart-store-picker-title button { color: var(--accent); }
+.sidebar-note p, .nav-label, .topbar, header, .slash, .eyebrow, .focus-eyebrow,
+footer, .legend, .period { color: var(--muted); }
+.aside-bottom { background: var(--surface); }
+.live-badge { background: #16362e; color: #8de4c1; }
+.live-dot, .live-badge i { background: #59d3a3; }
+.panel, .metric, .store-card, .ins-period, .queue-card, .blank-state {
+  background: var(--surface);
+  border-color: var(--line);
+}
+.panel, .metric, .store-card { box-shadow: 0 5px 20px #03081312; }
+.panel-heading, .panel-title { color: var(--text); }
+small, p, label, .sub, .metric-label, .metric-note, .metric .label, .metric .sub,
+.footnote, .loading, .empty, .skeleton, .store-stats span, .pagination,
+.table-footer, .section-note, .data-context, .catalog-visibility>span,
+#freshness, #price-status, .queue-meta, .note-preview, .journal-event time,
+.dialog-actions span, .preview-stats, .batch-summary { color: var(--muted); }
+.catalog-visibility label, .product-controls label { color: #b6c3d8; }
+.store-card .store-stats, .pagination { border-color: var(--line); }
+.metric-note.good, .metric .positive, .up { color: var(--green); }
+.metric-note.warn, .down, .loss-text { color: var(--amber); }
+.metric.featured { background: #243e83; border-color: #405eab; }
+
+/* Controls retain a visible outline and keyboard focus on every page. */
+select, input, textarea, form input {
+  background: var(--input);
+  color: var(--text);
+  border-color: #41536e;
+}
+select option { background: var(--input); color: var(--text); }
+input[type=checkbox] { accent-color: var(--accent); }
+.button { background: var(--blue); color: #fff; }
+.button.secondary, .outline, .pagination button, .shops button, .focus-periods button {
+  background: var(--raised);
+  border-color: #3c4f6c;
+  color: #d5e0f3;
+}
+.button.secondary:hover, .outline:hover, .pagination button:hover:not(:disabled),
+.shops button:hover, .focus-periods button:hover { background: #243753; border-color: #6582b2; }
+.button:hover { filter: brightness(1.1); }
+.text-button, .selection-bar .text-button { color: var(--accent); }
+.text-button:hover { color: #c5d5ff; }
+form button.outline { background: var(--blue); color: #fff; border-color: #5e80ec; }
+.shops button.active, .focus-periods button[aria-pressed=true] {
+  color: #c5d5ff; background: #22395e; border-color: #7097ed;
+}
+.segments { background: var(--input); }
+.segments button { color: var(--muted); }
+.segments .selected { background: var(--raised); color: var(--text); }
+.search { border-color: #41536e; background: var(--input); }
+.search input { color: var(--text); }
+
+/* Financial status and category colours remain semantic. */
+.mini-badge, .demo-label, .pill.muted, .focus-tag {
+  background: #223047; color: #b1bfd5; border-color: #36465f;
+}
+.pill, .stock, .success, .ins-proof { background: var(--green-bg); color: var(--green); }
+.pill.warn, .flag, .stock.low, .ins-alert, .attention-icon, .count, .amber,
+.focus-signals span { background: var(--amber-bg); color: var(--amber); }
+.error, .red { background: var(--red-bg); color: var(--red); }
+.inline-error, .validation.error-text { color: var(--red); }
+.validation.warning-text, .ack, .focus-stock-zero, .focus-detail-signals,
+#chart-store-status { color: var(--amber); }
+.platform, .platform.ozon, .market-pill.ozon, .flag.purchase, .blue {
+  background: #203458; color: #a9c4ff;
+}
+.platform.wb, .market-pill { background: #332642; color: #ddb1f2; }
+.grade-A { background: #16382f; color: #8de0be; }
+.grade-B { background: #253960; color: #b2c9ff; }
+.grade-C { background: #342948; color: #d5b8fc; }
+
+/* Overview, priority cards, store cards and product analysis. */
+.ins-metric { background: var(--surface); border-color: var(--line); color: var(--text); }
+.ins-metric.good { background: #142b28; border-color: #285044; }
+.ins-metric.bad { background: #30212a; border-color: #53313b; }
+.ins-metric:hover { border-color: #5b759d; box-shadow: 0 8px 22px #0003; }
+.ins-metric-name, .ins-metric-name i, .ins-delta { color: #acbad0; }
+.ins-metric.good .ins-delta { color: var(--green); }
+.ins-metric.bad .ins-delta { color: var(--red); }
+.ins-period>div, .ins-source, .ins-auto { color: var(--muted); }
+.ins-quality, .ins-live { background: #172942; border-color: #314b70; color: #bccde7; }
+.ins-quality b { color: #c0d2f1; }
+.focus-brief { background: linear-gradient(110deg,#1b315a,#233f74); border: 1px solid #385784; box-shadow: 0 8px 24px #0002; }
+.focus-brief-top, .focus-facts span { color: #bbd0f5; }
+.focus-facts small { color: #ccdaf1; }
+.focus-alert { background: var(--surface); color: var(--text); border-color: var(--line); }
+.focus-alert:hover { background: #17243a; border-color: #5777a8; }
+.focus-alert strong, .ins-detail-value, .ins-trend-total b { color: #bad0ff; }
+.focus-alert p, .focus-alert strong small, .focus-store-top>span,
+.focus-store-sub, .focus-store dt, .focus-filter-note,
+.focus-abc p, .focus-abc-groups small { color: var(--muted); }
+.focus-store, .focus-abc-groups button { background: #152134; color: var(--text); border-color: #30415d; }
+.focus-store:hover, .focus-abc-groups button:hover { background: #1d2f4b; border-color: #5f80b2; }
+.focus-abc>div>b, .focus-abc-groups strong { color: #c1cee3; }
+.focus-share { background: #2b3b55; }
+.focus-share i { filter: brightness(1.3); }
+.focus-grade:not(.grade-A):not(.grade-B):not(.grade-C) { background: #263248; color: #b5c2d8; }
+.focus-star { color: #8e9fb8; }
+.focus-star.selected { color: #f3c66f; }
+.focus-product-heading .ins-product-name:hover { color: var(--accent); }
+
+/* Charts, totals and tables. SVG series use the same palette as their legend. */
+#ins-chart text, .chart text { fill: #a7b6ce; }
+#ins-chart svg line, .chart svg line { stroke: #304059; }
+.ins-expense { color: #b0bed3; }
+.ins-expense b { color: #dae4f4; }
+.ins-expense i, .progress, .cost-track, .funnel-track, .team-progress { background: #2a3951; }
+.ins-expense em { background: #83a3ff; }
+.ins-chart-details, .chart-store-picker-title, .chart-store-picker p { color: var(--muted); }
+#chart-store-options label { background: var(--input); border-color: #3b4d69; color: #b9c8e0; }
+#chart-store-options label:has(input:checked) { background: #22334f; border-color: #6887b9; color: #e1eafa; }
+.chart-series-totals>div { background: #19263b; }
+.chart-series-totals span, .chart-series-totals small { color: #b0bfd6; }
+.chart-series-totals strong { color: var(--text); }
+th { background: #18253a; color: #aebed6; border-color: var(--line); }
+td { color: #c0cde1; border-color: #27354b; }
+td:first-child, .product-title, .product-name, .ins-product-name, .manage-price { color: #e1e9f6; }
+tbody tr:hover { background: #1a2941; }
+.product-title:hover { color: var(--accent); }
+.discount-note { color: #c6a8dc; }
+.attention-button { background: var(--surface); border-color: var(--line); color: var(--text); }
+.attention-button:hover { background: var(--raised); }
+.finance-row { border-color: var(--line); }
+.finance-row.total { background: var(--raised); }
+.finance-row.profit { background: var(--green-bg); color: var(--green); }
+.finance-row.loss { background: var(--red-bg); color: var(--red); }
+.cost-percent, .method, .method p { color: var(--muted); }
+
+/* Product editing, review queue and dialogs. */
+dialog { background: var(--surface); color: var(--text); border-color: #415673; box-shadow: 0 28px 110px #0009; }
+dialog::backdrop { background: #030813b8; backdrop-filter: blur(5px); }
+.dialog-head { background: var(--surface); border-color: var(--line); }
+.detail-item, .detail-source, .blocked-send, #ins-widget-list label {
+  background: var(--raised); color: #c3d0e4;
+}
+.detail-item span { color: var(--muted); }
+.detail-item strong { color: var(--text); }
+#ins-widget-list label:has(input:checked) { background: #22395b; color: #dce8ff; }
+.workflow { background: #172942; border-color: #314b70; color: #b4c7e6; }
+.step { color: #c3d5f4; }
+.step b { background: #2c4670; color: #cee0ff; }
+.step.muted { color: #a3b3cd; }
+.step.muted b { background: #28374f; color: #a3b3cd; }
+.manage-tabs { border-color: var(--line); }
+.manage-tabs button { color: #a9b8d0; }
+.manage-tabs [aria-selected=true] { border-color: var(--accent); color: #b5ccff; }
+.manage-tabs span { background: #243957; color: #b9cef1; }
+.selection-bar { background: #17253b; border-color: var(--line); color: #b6c6df; }
+.journal-event, .dialog-actions, .preview-table { border-color: var(--line); }
+.blank-state h3 { color: #c6d7f1; }
+#toast { background: #243b5e; color: var(--text); box-shadow: 0 10px 35px #0005; }

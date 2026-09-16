@@ -1,5 +1,6 @@
 'use strict';
 const fs=require('fs'),path=require('path');
+const refresh=require('./refresh-policy.cjs');
 const day=(date=new Date())=>new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
 const shift=(date,days)=>new Date(Date.parse(date+'T12:00:00Z')+days*86400000).toISOString().slice(0,10);
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
@@ -29,7 +30,9 @@ module.exports=function({stores,protect,api,privateDir}){
       out.completedAt=new Date().toISOString();save();job.status=out.errors.length?'partial':'done';job.stage=out.errors.length?'Не все разделы обновлены':'Аналитика обновлена';job.errors=out.errors;
     }catch(e){job.status='error';job.stage='Не удалось обновить аналитику Ozon';}finally{key=null;job.finishedAt=new Date().toISOString()}
   }
-  function ensure(){for(const [id,s] of Object.entries(stores)){if(s.market==='WB')continue;const snapshot=read(id),job=jobs.get(id);if(job?.status==='running')continue;const lastAttempt=Date.parse(job?.finishedAt||snapshot?.completedAt||0);if(!lastAttempt||Date.now()-lastAttempt>6*3600000)void sync(id)}}
-  return {sync,ensure,read,status:()=>Object.fromEntries(jobs)};
+  function state(id){const snapshot=read(id);return {job:jobs.get(id),attemptAt:snapshot?.startedAt,snapshotAt:snapshot?.completedAt}}
+  function ensure(){for(const [id,s] of Object.entries(stores))if(s.market!=='WB'&&refresh.due(state(id)))void sync(id)}
+  function next(id){return refresh.nextAt(state(id))}
+  return {sync,ensure,read,next,status:()=>Object.fromEntries(jobs)};
 };
 module.exports.shift=shift;
