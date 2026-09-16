@@ -18,7 +18,7 @@ module.exports=function({stores,jobs,protect,save,privateDir}){
   }
   async function sync(id){
     if(jobs.get(id)?.status==='running')return;
-    const s=stores[id],job={status:'running',stage:'Товары WB',count:0,errors:[],startedAt:new Date().toISOString()};jobs.set(id,job);
+    const s=stores[id],job={status:'running',stage:'Товары WB',count:0,errors:[],startedAt:new Date().toISOString()};jobs.set(id,job);s.syncAttemptAt=job.startedAt;save();
     const data={store:s.name,market:'WB',clientId:id,startedAt:job.startedAt,products:[],stocks:[],operations:[],sections:{},period:{from:new Date(Date.now()-29*86400000).toISOString().slice(0,10),to:new Date().toISOString().slice(0,10)},financeAmountKnown:false};
     let key;
     async function section(name,fn){try{await fn();data.sections[name]={ok:true}}catch(e){const error=String(e.message).replaceAll(key,'[hidden]');data.sections[name]={ok:false,error};job.errors.push(error)}}

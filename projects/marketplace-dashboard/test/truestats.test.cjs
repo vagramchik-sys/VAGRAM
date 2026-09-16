@@ -58,7 +58,7 @@ test('exact dates and only uniquely named Ozon account are requested and scope v
  assert.equal(result.status,'ready');assert.equal(result.scopeVerified,true);assert.deepEqual(result.period,period);assert.deepEqual(result.accounts,[{id:17,name:'Sample A',localStoreId:'local-a'}]);
  const requests=state.calls.filter(c=>c.route==='/reporting/main/stats'||c.route==='/reporting/aggregated-view/day');
  assert.equal(requests.length,2);for(const call of requests)assert.deepEqual(call.body,{dateFrom:period.from,dateTo:period.to,filters:{accountTypes:[1],accounts:[17]},financialMod:false});
- assert.deepEqual(result.metrics,{profit:123.46,realized:1000,cogs:500,tax:0,operatingExpenses:20,marketplaceDeductions:null,margin:12.35,profitBeforeTaxAndOpex:143.46,ads:null,sales:null,adsBonus:null,adsTotal:null,adShare:null,adShareTotal:null,adShareOrders:null,adShareSales:null});
+ assert.deepEqual(result.metrics,{profit:123.46,realized:1000,cogs:500,tax:0,operatingExpenses:20,marketplaceDeductions:null,margin:12.35,profitBeforeTaxAndOpex:143.46,ads:null,sales:null,adsBonus:null,adsTotal:null,adShare:null,adShareTotal:null,adShareOrders:null,adShareSales:null,roi:24.69});
  assert.ok(!JSON.stringify(result).includes(TOKEN));
 });
 test('ambiguous or missing account mapping stops before any financial report request',async t=>{
@@ -126,6 +126,20 @@ test('advertising refunds retain their sign, unknown values do not become zero',
 test('unfinished reports hide advertising alongside profit',async t=>{
  const {connector,state}=setup(t);await connector.connect(TOKEN);state.catalog.push({id:'ads',header:'Реклама',meta:{suffix:'₽'}});state.report.stats.ads=50;
  const result=await connector.compare({period:{from:'2026-09-16',to:'2026-09-16'},stores});assert.equal(result.status,'pending');assert.equal(result.metrics.ads,null);
+});
+
+test('WB uses a pinned account ID and WB-only scope and readiness',async t=>{
+ const {connector,state}=setup(t);await connector.connect(TOKEN);state.ids=[18];state.readiness.items=[{accountId:18,dataType:'wb_report',status:'complete',checkedDate:'2026-09-15',lastDataDate:'2026-09-15'}];
+ const selected=[{id:'wb-test',name:'Local WB',market:'WB',trueStatsAccountId:18}];
+ const r=await connector.compare({period,stores:selected,market:'WB'});assert.equal(r.status,'ready');assert.equal(r.scopeVerified,true);assert.equal(r.accounts[0].id,18);assert.equal(r.readiness[0].accountId,18);
+ const body=state.calls.find(c=>c.route==='/reporting/main/stats').body;assert.deepEqual(body.filters,{accountTypes:[0],accounts:[18]});assert.equal(r.metrics.roi,24.69);
+ const wrong=await connector.compare({period,stores:[{...selected[0],trueStatsAccountId:17}],market:'WB'});assert.equal(wrong.status,'unavailable');assert.equal(wrong.metrics.profit,null);
+ const unlinked=await connector.compare({period,stores:[{id:'wb-test',name:'WB',market:'WB'}],market:'WB'});assert.equal(unlinked.status,'unavailable');
+});
+
+test('ROI needs known positive cost and preserves negative profit',()=>{
+ for(const cost of [null,0,-10]){const r=normalize({financialMod:false,stats:{profit:10,cost_value:cost}},catalog,TOKEN);assert.equal(r.metrics.roi,null)}
+ assert.equal(normalize({financialMod:false,stats:{profit:-25,cost_value:100}},catalog,TOKEN).metrics.roi,-25);
 });
 
 test('invalid date and empty or duplicate local scope cannot call network',async t=>{

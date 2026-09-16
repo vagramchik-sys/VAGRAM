@@ -7,7 +7,7 @@ const TTL=30*60*1000;
 // Official contract: https://api.truestats.ru/api/public/doc (2026-09-16).
 // All POST routes below retrieve reports; no import, settings or export routes.
 const ROUTES=new Set(['/reporting/facets','/reporting/main/stats','/reporting/aggregated-view/day','/product-metrics','/v1/data-readiness']);
-const METRICS=['profit','realized','cogs','tax','operatingExpenses','marketplaceDeductions','margin','profitBeforeTaxAndOpex','ads','sales','adsBonus','adsTotal','adShare','adShareTotal','adShareOrders','adShareSales'];
+const METRICS=['profit','realized','cogs','tax','operatingExpenses','marketplaceDeductions','margin','profitBeforeTaxAndOpex','ads','sales','adsBonus','adsTotal','adShare','adShareTotal','adShareOrders','adShareSales','roi'];
 const emptyMetrics=()=>Object.fromEntries(METRICS.map(key=>[key,null]));
 function failure(code,message){return Object.assign(new Error(message),{code,public:true,status:400});}
 function numeric(value){
@@ -55,6 +55,7 @@ function normalize(report,catalog,key){
   if(matches.length===1&&matches[0].amount!==null)metrics[metric]=['realized','sales'].includes(metric)?matches[0].amount:rounded(-matches[0].amount);
  }
  if(metrics.adShare===null&&metrics.ads!==null&&metrics.realized>0)metrics.adShare=rounded(metrics.ads/metrics.realized*100);
+ if(metrics.profit!==null&&metrics.cogs>0)metrics.roi=rounded(metrics.profit/metrics.cogs*100);
  if(metrics.ads!==null&&metrics.sales>0)metrics.adShareSales=rounded(metrics.ads/metrics.sales*100);
  if([metrics.profit,metrics.tax,metrics.operatingExpenses].every(v=>v!==null))metrics.profitBeforeTaxAndOpex=rounded(metrics.profit+metrics.tax+metrics.operatingExpenses);
  const detailComplete=details.length>0&&details.every(v=>v.amount!==null),detailSum=detailComplete?details.reduce((sum,item)=>sum+Math.round(item.amount*100),0):null;
@@ -98,27 +99,29 @@ function create({privateDir,protect,fetchImpl=fetch,now=()=>Date.now()}){
   });
   connectQueue=operation.catch(()=>{});return operation;
  }
- async function compare({period,stores}={}){
+ async function compare({period,stores,market='Ozon'}={}){
+  const accountType=market==='WB'?0:1,readinessType=market==='WB'?'wb_report':'ozon_report';
   const base={status:'unavailable',reason:null,period:period?{from:period.from,to:period.to}:null,fetchedAt:null,source:'TrueStats API',mode:'management',accounts:[],metrics:emptyMetrics(),rawMetrics:[],details:[],warnings:['Прибыль TrueStats включает его налоги, себестоимость и настройки расходов; наш расчёт использует текущую себестоимость и прибыль до налогов.']};
+  if(market==='WB')base.warnings=['Прибыль и себестоимость получены из управленческого отчёта вашего магазина WB в TrueStats. ROI рассчитан как прибыль / себестоимость реализованных товаров × 100%. Полнота внешних расходов зависит от настроек кабинета.'];
   const unavailable=(code,reason)=>({...base,code,reason});
   if(!date(period?.from)||!date(period?.to)||period.from>period.to)return unavailable('period','Выберите корректный период отчёта.');
-  if(!Array.isArray(stores)||!stores.length||stores.some(s=>!s||!['string','number'].includes(typeof s.id)||typeof s.name!=='string'||!s.name||s.market==='WB')||new Set(stores.map(s=>String(s.id))).size!==stores.length||new Set(stores.map(s=>s.name)).size!==stores.length)return unavailable('scope','Нужен однозначный список магазинов Ozon.');
+  if(!Array.isArray(stores)||!stores.length||stores.some(s=>!s||!['string','number'].includes(typeof s.id)||typeof s.name!=='string'||!s.name||(market!=='WB'&&s.market==='WB')||(market==='WB'&&!Number.isSafeInteger(s.trueStatsAccountId)))||new Set(stores.map(s=>String(s.id))).size!==stores.length||new Set(stores.map(s=>s.name)).size!==stores.length)return unavailable('scope','Нужен однозначный список сопоставленных магазинов.');
   if(!config)return {...unavailable(storageError?'storage':'not_connected',storageError?'Защищённое подключение TrueStats недоступно.':'Подключите API TrueStats для второго расчёта.'),status:'not_connected'};
-  const startRevision=revision,saved=config,scope=stores.map(s=>({id:String(s.id),name:s.name})).sort((a,b)=>a.id.localeCompare(b.id));
-  const cacheKey=JSON.stringify([startRevision,period.from,period.to,scope]),cached=cache.get(cacheKey),time=timestamp();
+  const startRevision=revision,saved=config,scope=stores.map(s=>({id:String(s.id),name:s.name,...(market==='WB'?{trueStatsAccountId:s.trueStatsAccountId}:{})})).sort((a,b)=>a.id.localeCompare(b.id));
+  const cacheKey=JSON.stringify([startRevision,market,period.from,period.to,scope]),cached=cache.get(cacheKey),time=timestamp();
   if(cached&&time>=cached.at&&time-cached.at<TTL)return structuredClone({...cached.value,cached:true});
   if(pending.has(cacheKey))return structuredClone(await pending.get(cacheKey));
   const work=(async()=>{
    try{
     let key;try{key=await protect(saved.encryptedKey,true);}catch{throw failure('storage','Не удалось открыть защищённый ключ TrueStats.');}
     const available=await accounts(key),matched=[];
-    for(const store of scope){const options=available.filter(a=>a.accountType===1&&a.name===store.name);if(options.length!==1)throw failure('scope',options.length?'В TrueStats есть несколько магазинов Ozon с одинаковым названием.':'Не все выбранные магазины найдены в TrueStats с точным названием.');matched.push({id:options[0].id,name:store.name,localStoreId:store.id});}
+    for(const store of scope){const options=available.filter(a=>a.accountType===accountType&&(market==='WB'?a.id===store.trueStatsAccountId:a.name===store.name));if(options.length!==1)throw failure('scope',options.length?'Магазин TrueStats сопоставлен неоднозначно.':'Не все выбранные магазины найдены в TrueStats по заданной привязке.');matched.push({id:options[0].id,name:store.name,localStoreId:store.id});}
     const ids=matched.map(a=>a.id).sort((a,b)=>a-b);if(new Set(ids).size!==ids.length)throw failure('scope','Магазины TrueStats сопоставлены неоднозначно.');
-    const body={dateFrom:period.from,dateTo:period.to,filters:{accountTypes:[1],accounts:ids},financialMod:false};
+    const body={dateFrom:period.from,dateTo:period.to,filters:{accountTypes:[accountType],accounts:ids},financialMod:false};
     // This endpoint echoes effective access scope, unlike KPI stats.
     const day=await request(key,'/reporting/aggregated-view/day',body);
     if(day?.financialMod!==false||!Array.isArray(day.accountIdsFilter)||JSON.stringify([...day.accountIdsFilter].sort((a,b)=>a-b))!==JSON.stringify(ids))throw failure('scope_response','TrueStats не подтвердил точный состав магазинов в отчёте.');
-    const readinessQuery=new URLSearchParams();ids.forEach(id=>readinessQuery.append('accounts[]',String(id)));readinessQuery.append('dataTypes[]','ozon_report');
+    const readinessQuery=new URLSearchParams();ids.forEach(id=>readinessQuery.append('accounts[]',String(id)));readinessQuery.append('dataTypes[]',readinessType);
     const results=await Promise.allSettled([request(key,'/reporting/main/stats',body),request(key,'/product-metrics'),request(key,'/v1/data-readiness',undefined,readinessQuery.toString())]);
     if(results[0].status==='rejected')throw results[0].reason;
     const catalog=results[1].status==='fulfilled'?results[1].value:[],normalized=normalize(results[0].value,catalog,key);
@@ -128,7 +131,7 @@ function create({privateDir,protect,fetchImpl=fetch,now=()=>Date.now()}){
     if(results[1].status==='rejected')value.warnings.push('Справочник метрик TrueStats недоступен; часть показателей не распознана.');
     if(normalized.breakdownReconciled===false){value.status='partial';value.warnings.push('Детализация TrueStats не сходится с его итоговой прибылью.');}
     const readinessItems=results[2].status==='fulfilled'&&Array.isArray(results[2].value?.items)?results[2].value.items:[];
-    value.readiness=readinessItems.filter(item=>ids.includes(item?.accountId)&&item.dataType==='ozon_report').map(item=>({accountId:item.accountId,status:['pending','complete','incomplete'].includes(item.status)?item.status:'unknown',checkedDate:date(item.checkedDate)?item.checkedDate:null,lastDataDate:date(item.lastDataDate)?item.lastDataDate:null}));
+    value.readiness=readinessItems.filter(item=>ids.includes(item?.accountId)&&item.dataType===readinessType).map(item=>({accountId:item.accountId,status:['pending','complete','incomplete'].includes(item.status)?item.status:'unknown',checkedDate:date(item.checkedDate)?item.checkedDate:null,lastDataDate:date(item.lastDataDate)?item.lastDataDate:null}));
     const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(timestamp()));
     const zeroToday=period.to>=today&&normalized.metrics.profit===0&&normalized.metrics.realized===0;
     const delayed=value.readiness.some(item=>(item.lastDataDate&&item.lastDataDate<period.to)||(item.checkedDate===period.to&&item.status!=='complete'));

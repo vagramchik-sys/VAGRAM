@@ -11,9 +11,10 @@ const wbConnector=require('./wb.cjs')({stores,jobs,protect,save,privateDir});
 const pricing=require('./pricing.cjs')({stores,protect,api,privateDir,jobs});
 const insightsSync=require('./insights-sync.cjs')({stores,protect,api,privateDir});
 const trueStats=require('./truestats.cjs').create({privateDir,protect});
+const wbEconomics=require('./wb-economics.cjs').create({stores,privateDir,trueStats});
 const refreshPolicy=require('./refresh-policy.cjs'),{day:moscowDay}=require('./intraday.cjs');
 function refreshState(id){return {job:jobs.get(id),attemptAt:stores[id].syncAttemptAt,snapshotAt:stores[id].updatedAt}}
-function ensureFreshOzon(){for(const [id,s] of Object.entries(stores))if(s.market!=='WB'&&refreshPolicy.due(refreshState(id)))void sync(id)}
+function ensureFreshOzon(){for(const [id,s] of Object.entries(stores))if(refreshPolicy.due(refreshState(id)))void sync(id)}
 const ledgerFor=require('./ledger.cjs').cache({privateDir,readTypes:insightsSync.read});
 const intraday=require('./intraday.cjs').create({privateDir});let historyError=null;
 function captureLatest(){historyError=null;for(const [id,s] of Object.entries(stores))if(s.market!=='WB')try{intraday.capture(id,{orders:insightsSync.read(id)?.orders,ledger:ledgerFor(id)})}catch{historyError='Не удалось сохранить часть точек графика. Проверьте доступность диска.'}}
@@ -22,6 +23,7 @@ function ensureTrueStats(){
  const today=moscowDay(new Date()),now=Date.now();
  if(!trueStats.status().connected||(trueStatsAttemptDay===today&&now-trueStatsAttemptAt<30*60*1000))return;
  trueStatsAttemptAt=now;trueStatsAttemptDay=today;
+ if(Object.values(stores).some(s=>s.market==='WB'))void wbEconomics.read({from:today,to:today}).catch(()=>{});
  void trueStats.compare({period:{from:today,to:today},stores:Object.entries(stores).filter(([,s])=>s.market!=='WB').map(([id,s])=>({id,name:s.name}))});
 }
 function backgroundRefresh(){captureLatest();insightsSync.ensure();ensureFreshOzon();ensureTrueStats()}
@@ -32,7 +34,7 @@ job.stage='Финансовые начисления за 30 дней';try{const
 
 data.completedAt=new Date().toISOString();const file=path.join(privateDir,'data-'+id+'.json');fs.writeFileSync(file+'.tmp',JSON.stringify(data));fs.renameSync(file+'.tmp',file);s.updatedAt=data.completedAt;save();job.status=job.errors.length?'partial':'done';job.stage=job.errors.length?'Часть разделов требует проверки':'Готово';}catch(e){job.status='error';job.stage=e.message}finally{key=null;job.finishedAt=new Date().toISOString()}}
 const mime={'.html':'text/html; charset=utf-8','.css':'text/css; charset=utf-8','.js':'application/javascript; charset=utf-8','.svg':'image/svg+xml'};function json(res,status,obj){res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(obj))}
-http.createServer(async(req,res)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Frame-Options','DENY');if(req.headers.host!=='127.0.0.1:'+port){res.writeHead(403).end();return}const u=new URL(req.url,origin);const token=(req.headers.cookie||'').match(/(?:^|; )pult_session=([a-f0-9]+)/)?.[1];if(u.pathname.startsWith('/api/')){if(!sessions.has(token)){json(res,403,{error:'Откройте страницу подключения'});return}if(req.method==='POST'&&(req.headers.origin!==origin||!req.headers['content-type']?.startsWith('application/json'))){json(res,403,{error:'Запрос отклонён'});return}try{if(req.method==='GET'&&u.pathname==='/api/truestats/status'){json(res,200,trueStats.status());return}if(req.method==='GET'&&u.pathname==='/api/economics/compare'){
+http.createServer(async(req,res)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('X-Frame-Options','DENY');if(req.headers.host!=='127.0.0.1:'+port){res.writeHead(403).end();return}const u=new URL(req.url,origin);const token=(req.headers.cookie||'').match(/(?:^|; )pult_session=([a-f0-9]+)/)?.[1];if(u.pathname.startsWith('/api/')){if(!sessions.has(token)){json(res,403,{error:'Откройте страницу подключения'});return}if(req.method==='POST'&&(req.headers.origin!==origin||!req.headers['content-type']?.startsWith('application/json'))){json(res,403,{error:'Запрос отклонён'});return}try{if(req.method==='GET'&&u.pathname==='/api/wb/economics'){json(res,200,await wbEconomics.read({from:u.searchParams.get('from'),to:u.searchParams.get('to'),storeId:u.searchParams.get('store')||undefined}));return}if(req.method==='GET'&&u.pathname==='/api/truestats/status'){json(res,200,trueStats.status());return}if(req.method==='GET'&&u.pathname==='/api/economics/compare'){
  const id=u.searchParams.get('store')||'';if(id&&(!Object.hasOwn(stores,id)||stores[id].market==='WB')){json(res,400,{error:'Выберите магазин Ozon'});return}
  const selected=publicStores().filter(s=>!s.id.startsWith('wb-')&&(!id||s.id===id));
  const values=selected.map(s=>({id:s.id,name:s.name,ledger:ledgerFor(s.id),extra:insightsSync.read(s.id),products:require('./dist/dashboard-model.js').rowsFor([s],new Map([[s.id,publicSnapshot(s.id)]]))}));
