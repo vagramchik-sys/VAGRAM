@@ -5,13 +5,15 @@
   const labels = {planning:'Распределяет задачи',planned:'План готов к запуску',running:'Директора работают',completed:'Ответы собраны',failed:'Требует внимания',queued:'Ожидает очереди',done:'Ответ готов'};
   let runs = [], directors = [], user = null, timer = null, loading = false, sending = false, pending = null;
   let epoch=0, refreshAgain=false, providerAvailable=false;
+  let catalogueLoading=false, catalogueStale=false, missingProject=false;
+  let projectIds=new Set();
   const starting = new Set();
   const uuid = () => globalThis.crypto?.randomUUID?.() || 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g,c=>{const n=Math.random()*16|0;return(c==='x'?n:(n&3)|8).toString(16);});
   const node = (tag,text,cls) => {const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
   function status(text,error=false){$('dispatch-status').textContent=text;$('dispatch-status').classList.toggle('error',error);}
   async function api(path,method='GET',body){const r=await fetch(path,{method,credentials:'same-origin',cache:'no-store',headers:{'Content-Type':'application/json'},...(body?{body:JSON.stringify(body)}:{})});if(r.status===401){location.href='/login.html';throw Error('Войдите снова.');}const data=await r.json().catch(()=>({}));if(!r.ok)throw Object.assign(Error(data.error||'Не удалось выполнить запрос.'),{status:r.status});return data;}
   const active = () => runs.some(r=>['planning','running'].includes(r.status));
-  function controls(){const disabled=!user||user.role==='viewer'||!providerAvailable||sending||starting.size>0||active();$('dispatch-create').disabled=disabled;$('dispatch-goal').disabled=sending;$('dispatch-project').disabled=sending;}
+  function controls(){const disabled=!user||user.role==='viewer'||!providerAvailable||catalogueLoading||catalogueStale||missingProject||sending||starting.size>0||active();$('dispatch-create').disabled=disabled;$('dispatch-goal').disabled=sending;$('dispatch-project').disabled=sending;}
   function acceptRun(run){if(!run)return;epoch++;runs=[run,...runs.filter(item=>item.id!==run.id)];render();schedule();}
   function render(){
     const container=$('dispatch-runs');
@@ -33,8 +35,8 @@
         card.append(item);
       }
       if(run.status==='planned'){
-        const actions=node('div',undefined,'dispatch-actions');const start=node('button',starting.has(run.id)?'Запуск…':'Назначить и запустить директоров');start.type='button';start.disabled=!user||user.role==='viewer'||!providerAvailable||starting.size>0||active();
-        start.onclick=async()=>{if(starting.size||active()||!providerAvailable)return;starting.add(run.id);epoch++;render();try{const data=await api('/api/dispatch/'+encodeURIComponent(run.id)+'/start','POST',{});acceptRun(data.run);status('Поручения назначены. Директора готовят результаты.');await refresh();}catch(e){status(e.message,true);await refresh().catch(()=>{});}finally{starting.delete(run.id);render();}};
+        const actions=node('div',undefined,'dispatch-actions');const start=node('button',starting.has(run.id)?'Запуск…':'Назначить и запустить директоров');start.type='button';start.disabled=!user||user.role==='viewer'||!providerAvailable||catalogueLoading||catalogueStale||starting.size>0||active();
+        start.onclick=async()=>{if(!user||user.role==='viewer'||catalogueLoading||catalogueStale||starting.size||active()||!providerAvailable)return;starting.add(run.id);epoch++;render();try{const data=await api('/api/dispatch/'+encodeURIComponent(run.id)+'/start','POST',{});acceptRun(data.run);status('Поручения назначены. Директора готовят результаты.');await refresh();}catch(e){status(e.message,true);await refresh().catch(()=>{});}finally{starting.delete(run.id);render();}};
         actions.append(start,node('small','Запуск использует лимит Codex. Результат — ответы и материалы директоров.'));card.append(actions);
       }
       if(run.status==='completed')card.append(node('p','Все поручения обработаны. Раскройте результаты под задачами.','dispatch-complete'));
@@ -44,7 +46,7 @@
   function schedule(){clearTimeout(timer);timer=null;if(active())timer=setTimeout(()=>refresh().catch(e=>{status(e.message,true);schedule();}),2500);}
   async function refresh(){if(loading){refreshAgain=true;return;}loading=true;const requestEpoch=epoch;try{const data=await api('/api/dispatch');if(requestEpoch===epoch){runs=data.runs;render();}else refreshAgain=true;}finally{loading=false;if(refreshAgain){refreshAgain=false;clearTimeout(timer);timer=setTimeout(()=>refresh().catch(e=>{status(e.message,true);schedule();}),0);}else schedule();}}
   form.addEventListener('submit',async e=>{
-    e.preventDefault();if(sending||starting.size||!providerAvailable||!user||user.role==='viewer'||active())return;
+    e.preventDefault();if(sending||starting.size||catalogueLoading||catalogueStale||missingProject||!providerAvailable||!user||user.role==='viewer'||active())return;
     const goal=$('dispatch-goal').value.trim(),projectId=$('dispatch-project').value;if(!goal){status('Опишите общую цель.',true);return;}
     const fingerprint=JSON.stringify([goal,projectId]);if(!pending||pending.fingerprint!==fingerprint)pending={fingerprint,requestId:uuid()};
     sending=true;epoch++;controls();
@@ -52,7 +54,31 @@
     catch(error){status(error.message,true);if(error.status&&error.status<500)pending=null;}
     finally{sending=false;controls();}
   });
-  async function init(){controls();try{const data=await api('/api/directors');directors=data.directors;user=data.user;providerAvailable=data.connection.available;const select=$('dispatch-project');for(const project of data.projects){const option=node('option',project.name);option.value=project.id;select.append(option);}await refresh();if(!data.connection.available)status(data.connection.message,true);if(user.role==='viewer')status('Наблюдатель может просматривать свои поручения, но не запускать их.');}catch(e){status(e.message,true);}}
-  $('directors-refresh')?.addEventListener('click',()=>refresh().catch(e=>status(e.message,true)));
+  async function refreshCatalogue(){
+    catalogueLoading=true;render();
+    try{
+      const data=await api('/api/directors');
+      directors=data.directors;user=data.user;providerAvailable=data.connection.available;
+      const select=$('dispatch-project'),selected=select.value;
+      projectIds=new Set(data.projects.map(project=>project.id));
+      const placeholder=node('option','Без проекта');placeholder.value='';select.replaceChildren(placeholder);
+      for(const project of data.projects){const option=node('option',project.name);option.value=project.id;select.append(option);}
+      missingProject=!!selected&&!projectIds.has(selected);
+      if(missingProject){const option=node('option','Выбранный проект удалён — выберите другой или «Без проекта»');option.value=selected;option.disabled=true;select.append(option);}
+      select.value=selected;catalogueStale=false;
+      if(missingProject)status('Выбранный проект больше недоступен. Цель сохранена. Явно выберите другой проект или «Без проекта» перед отправкой.',true);
+      else if(!providerAvailable)status(data.connection.message,true);
+      else if(user.role==='viewer')status('Наблюдатель может просматривать свои поручения, но не запускать их.');
+      else status('Проекты и настройки диспетчера обновлены.');
+    }catch(e){catalogueStale=true;throw e;}
+    finally{catalogueLoading=false;render();}
+  }
+  $('dispatch-project').addEventListener('change',()=>{missingProject=!!$('dispatch-project').value&&!projectIds.has($('dispatch-project').value);controls();if(!missingProject)status('Контекст проекта выбран.');});
+  async function init(){controls();try{await refreshCatalogue();await refresh();}catch(e){status(e.message,true);}}
+  $('directors-refresh')?.addEventListener('click',async()=>{
+    if(catalogueLoading)return;
+    const results=await Promise.allSettled([refreshCatalogue(),refresh()]);
+    const failed=results.find(result=>result.status==='rejected');if(failed)status(failed.reason.message,true);
+  });
   init();
 })();
