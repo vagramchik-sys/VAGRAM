@@ -1,0 +1,31 @@
+.profit-comparison{padding:0 24px 24px;border-bottom:1px solid #30415d;margin-bottom:22px}
+.profit-toolbar,.profit-version-top{display:flex;justify-content:space-between;align-items:center;gap:14px;flex-wrap:wrap}
+.profit-tabs{display:flex;padding:4px;border:1px solid #354867;background:#101c2f;border-radius:10px;gap:4px}
+.profit-tabs button{border:0;border-radius:6px;padding:10px 16px;background:transparent;color:#a9bddb;cursor:pointer;font:inherit;font-size:12px}
+.profit-tabs button[aria-pressed=true]{background:#355ec9;color:#fff}
+.profit-tabs button:focus-visible{outline:2px solid #a6c4ff;outline-offset:2px}
+.profit-muted{font-size:11px;line-height:1.8;color:#a9bddb;margin:14px 0}
+.profit-versions{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.profit-version{padding:22px;border:1px solid #405672;border-radius:12px;background:linear-gradient(125deg,#1d324d,#15243a)}
+.profit-version.profit-true{border-color:#594e86;background:linear-gradient(125deg,#2c294e,#19243b)}
+.profit-version .eyebrow{margin:0;font-size:10px;letter-spacing:1.2px}
+.profit-version h3{font-size:14px;margin:19px 0 9px;color:#cbdaf0}
+.profit-amount{font-size:clamp(24px,2.3vw,36px);letter-spacing:-1px;font-variant-numeric:tabular-nums;display:block}
+.profit-version p,.profit-state,.profit-difference p,.profit-method p,.profit-connection p{font-size:11px;line-height:1.8;color:#aebfd8}
+.profit-version dl{border-top:1px solid #354761;padding-top:10px;margin:20px 0 0}
+.profit-version dl>div{display:flex;justify-content:space-between;gap:15px;padding:7px 0;font-size:11px}
+.profit-version dt{color:#aebfd8}.profit-version dd{margin:0;font-weight:600;white-space:nowrap}
+.profit-state{margin:12px 0;padding:10px 13px;border-radius:7px;background:#17273d;overflow-wrap:anywhere}
+.profit-difference{display:grid;grid-template-columns:1fr auto;gap:8px 18px;background:#121e32;border:1px solid #344765;border-radius:8px;padding:15px;margin-bottom:17px;font-size:12px}
+.profit-difference strong{font-size:18px;font-variant-numeric:tabular-nums}.profit-difference p{grid-column:1/-1;margin:0}
+.profit-method,.profit-connection{margin-top:18px;padding:14px;border:1px solid #344660;border-radius:8px}
+.profit-method summary,.profit-connection summary{cursor:pointer;font-size:12px;color:#aec7fc}
+.profit-method a{color:#a9c4ff}.profit-connection label{display:block;margin:12px 0 7px;font-size:11px}
+.profit-key-row{display:flex;gap:10px}.profit-key-row input{flex:1;min-width:0}
+#profit-breakdown th,#profit-breakdown td{white-space:normal;min-width:120px}
+#economics[data-profit-mode=ours] .profit-true,#economics[data-profit-mode=ours] #profit-difference,#economics[data-profit-mode=ours] #profit-breakdown,#economics[data-profit-mode=ours] .profit-method{display:none}
+#economics[data-profit-mode=truestats] .profit-ours,#economics[data-profit-mode=truestats] #profit-difference{display:none}
+#economics[data-profit-mode=truestats] #profit-breakdown th:nth-child(2),#economics[data-profit-mode=truestats] #profit-breakdown td:nth-child(2),#economics[data-profit-mode=truestats] #profit-breakdown th:nth-child(4),#economics[data-profit-mode=truestats] #profit-breakdown td:nth-child(4){display:none}
+#economics[data-profit-mode=ours] .profit-versions,#economics[data-profit-mode=truestats] .profit-versions{grid-template-columns:1fr}
+#profit-local-detail[hidden]{display:none!important}
+@media(max-width:700px){.profit-comparison{padding-inline:16px}.profit-versions{grid-template-columns:1fr}.profit-toolbar{align-items:stretch}.profit-tabs{width:100%}.profit-tabs button{flex:1;padding:9px 6px}.profit-version{padding:17px}.profit-key-row{flex-direction:column}.profit-difference{grid-template-columns:1fr}}
