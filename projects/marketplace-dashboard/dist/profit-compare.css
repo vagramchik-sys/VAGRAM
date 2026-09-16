@@ -23,9 +23,31 @@
 .profit-method a{color:#a9c4ff}.profit-connection label{display:block;margin:12px 0 7px;font-size:11px}
 .profit-key-row{display:flex;gap:10px}.profit-key-row input{flex:1;min-width:0}
 #profit-breakdown th,#profit-breakdown td{white-space:normal;min-width:120px}
+.profit-row-note{display:block;margin-top:4px;color:#899dbb;font-size:10px;font-weight:400;line-height:1.45}
+.profit-advertising{margin-top:20px;padding:20px;border:1px solid #3d5270;border-radius:12px;background:linear-gradient(145deg,#162840,#101c30)}
+.profit-advertising-heading,.profit-ad-source{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.profit-advertising-heading h3{margin:5px 0 0;font-size:17px}
+.profit-included{padding:6px 9px;border:1px solid #47678a;border-radius:999px;color:#b8d0ec;background:#18304b;font-size:10px;white-space:nowrap}
+.profit-advertising-intro{margin:11px 0 16px;color:#aebfd8;font-size:11px;line-height:1.7}
+.profit-advertising-cards{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+.profit-ad-card{min-width:0;padding:17px;border:1px solid #405672;border-radius:10px;background:#172840}
+.profit-ad-card.profit-ad-true{border-color:#594e86;background:#242341}
+.profit-ad-source{color:#cbdaf0;font-size:11px}.profit-ad-source span{color:#8fa6c5;font-size:10px}
+.profit-ad-amount{display:block;margin-top:16px;font-size:25px;font-variant-numeric:tabular-nums}.profit-ad-amount.is-message{font-size:18px;letter-spacing:0}
+.profit-ad-card>p,.profit-ad-difference p,.profit-ad-details>p{color:#aebfd8;font-size:10px;line-height:1.65}
+.profit-ad-card dl{margin:14px 0 0;padding-top:8px;border-top:1px solid #354761}
+.profit-ad-card dl>div{display:flex;justify-content:space-between;gap:12px;padding:6px 0;font-size:10px}
+.profit-ad-card dt{color:#aebfd8}.profit-ad-card dd{margin:0;text-align:right;font-weight:600;font-variant-numeric:tabular-nums}
+.profit-ad-difference{display:grid;grid-template-columns:1fr auto;gap:6px 14px;margin-top:14px;padding:12px 14px;border:1px solid #344765;border-radius:8px;background:#101d30;font-size:11px}
+.profit-ad-difference strong{font-size:15px;font-variant-numeric:tabular-nums}.profit-ad-difference p{grid-column:1/-1;margin:0}
+.profit-ad-details{margin-top:14px;padding:13px;border:1px solid #344660;border-radius:8px}.profit-ad-details summary{cursor:pointer;color:#aec7fc;font-size:11px}
+.profit-ad-details h4{margin:17px 0 8px;color:#cbdaf0;font-size:11px}.profit-ad-details table{font-size:11px}.profit-ad-details th,.profit-ad-details td{white-space:normal;min-width:110px}
 #economics[data-profit-mode=ours] .profit-true,#economics[data-profit-mode=ours] #profit-difference,#economics[data-profit-mode=ours] #profit-breakdown,#economics[data-profit-mode=ours] .profit-method{display:none}
 #economics[data-profit-mode=truestats] .profit-ours,#economics[data-profit-mode=truestats] #profit-difference{display:none}
 #economics[data-profit-mode=truestats] #profit-breakdown th:nth-child(2),#economics[data-profit-mode=truestats] #profit-breakdown td:nth-child(2),#economics[data-profit-mode=truestats] #profit-breakdown th:nth-child(4),#economics[data-profit-mode=truestats] #profit-breakdown td:nth-child(4){display:none}
+#economics[data-profit-mode=ours] .profit-ad-true,#economics[data-profit-mode=ours] #profit-ads-difference{display:none}
+#economics[data-profit-mode=truestats] .profit-ad-ours,#economics[data-profit-mode=truestats] #profit-ads-difference,#economics[data-profit-mode=truestats] #profit-ads-ozon{display:none}
+#economics[data-profit-mode=ours] .profit-advertising-cards,#economics[data-profit-mode=truestats] .profit-advertising-cards{grid-template-columns:1fr}
 #economics[data-profit-mode=ours] .profit-versions,#economics[data-profit-mode=truestats] .profit-versions{grid-template-columns:1fr}
 #profit-local-detail[hidden]{display:none!important}
-@media(max-width:700px){.profit-comparison{padding-inline:16px}.profit-versions{grid-template-columns:1fr}.profit-toolbar{align-items:stretch}.profit-tabs{width:100%}.profit-tabs button{flex:1;padding:9px 6px}.profit-version{padding:17px}.profit-key-row{flex-direction:column}.profit-difference{grid-template-columns:1fr}}
+@media(max-width:700px){.profit-comparison{padding-inline:16px}.profit-versions,.profit-advertising-cards{grid-template-columns:1fr}.profit-toolbar{align-items:stretch}.profit-tabs{width:100%}.profit-tabs button{flex:1;padding:9px 6px}.profit-version{padding:17px}.profit-key-row{flex-direction:column}.profit-difference,.profit-ad-difference{grid-template-columns:1fr}.profit-ad-difference strong{grid-row:2}.profit-ad-difference p{grid-row:3}.profit-advertising{padding:15px}.profit-advertising-heading{align-items:flex-start;flex-direction:column}}

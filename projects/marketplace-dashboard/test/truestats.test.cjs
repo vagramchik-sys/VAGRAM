@@ -58,7 +58,7 @@ test('exact dates and only uniquely named Ozon account are requested and scope v
  assert.equal(result.status,'ready');assert.equal(result.scopeVerified,true);assert.deepEqual(result.period,period);assert.deepEqual(result.accounts,[{id:17,name:'Sample A',localStoreId:'local-a'}]);
  const requests=state.calls.filter(c=>c.route==='/reporting/main/stats'||c.route==='/reporting/aggregated-view/day');
  assert.equal(requests.length,2);for(const call of requests)assert.deepEqual(call.body,{dateFrom:period.from,dateTo:period.to,filters:{accountTypes:[1],accounts:[17]},financialMod:false});
- assert.deepEqual(result.metrics,{profit:123.46,realized:1000,cogs:500,tax:0,operatingExpenses:20,marketplaceDeductions:null,margin:12.35,profitBeforeTaxAndOpex:143.46});
+ assert.deepEqual(result.metrics,{profit:123.46,realized:1000,cogs:500,tax:0,operatingExpenses:20,marketplaceDeductions:null,margin:12.35,profitBeforeTaxAndOpex:143.46,ads:null,sales:null,adsBonus:null,adsTotal:null,adShare:null,adShareTotal:null,adShareOrders:null,adShareSales:null});
  assert.ok(!JSON.stringify(result).includes(TOKEN));
 });
 test('ambiguous or missing account mapping stops before any financial report request',async t=>{
@@ -110,6 +110,24 @@ test('partial results and network failures do not invent zero profit',async t=>{
 test('schema discovery reports field types without values or secret field names',()=>{
  const output=JSON.stringify(schemaMetadata({stats:{profit:321,token:TOKEN},secret:TOKEN,password:TOKEN}));assert.ok(output.includes('profit'));assert.ok(!output.includes('321'));assert.ok(!output.includes(TOKEN));assert.ok(!output.includes('password'));
 });
+test('advertising separates cash, bonuses and denominators without changing profit',()=>{
+ const dictionary=[['a','Реклама','₽'],['b','Расходы на рекламу с бонусов','₽'],['c','Общие расходы на рекламу','₽'],['r','Реализация','₽'],['s','Продажи','₽'],['d','ДРР','%'],['dt','Общая ДРР','%'],['do','Реклама/ДРРз','%']].map(([id,header,suffix])=>({id,header,meta:{suffix}}));
+ const r=normalize({financialMod:false,stats:{profit:50,a:20,b:5,c:25,r:200,s:100,d:10,dt:12.5,do:8}},dictionary,TOKEN);
+ assert.equal(r.metrics.ads,20);assert.equal(r.metrics.adsBonus,5);assert.equal(r.metrics.adsTotal,25);assert.equal(r.metrics.adShare,10);assert.equal(r.metrics.adShareTotal,12.5);assert.equal(r.metrics.adShareOrders,8);assert.equal(r.metrics.adShareSales,20);assert.equal(r.metrics.profit,50);
+});
+
+test('advertising refunds retain their sign, unknown values do not become zero',()=>{
+ const r=normalize({financialMod:false,stats:{profit:20},profitDetalization:[{title:'Реализация',amount:100},{title:'Реклама',amount:5}]},[],TOKEN);
+ assert.equal(r.metrics.ads,-5);assert.equal(r.metrics.adShare,-5);assert.equal(r.metrics.adsBonus,null);assert.equal(r.metrics.adsTotal,null);assert.equal(r.metrics.adShareSales,null);
+ const zero=normalize({financialMod:false,stats:{profit:0},profitDetalization:[{title:'Реализация',amount:0},{title:'Реклама',amount:0}]},[],TOKEN);assert.equal(zero.metrics.ads,0);assert.equal(zero.metrics.adShare,null);
+ const unknown=normalize({financialMod:false,stats:{profit:0}},[],TOKEN);assert.equal(unknown.metrics.ads,null);assert.equal(unknown.metrics.adShare,null);
+});
+
+test('unfinished reports hide advertising alongside profit',async t=>{
+ const {connector,state}=setup(t);await connector.connect(TOKEN);state.catalog.push({id:'ads',header:'Реклама',meta:{suffix:'₽'}});state.report.stats.ads=50;
+ const result=await connector.compare({period:{from:'2026-09-16',to:'2026-09-16'},stores});assert.equal(result.status,'pending');assert.equal(result.metrics.ads,null);
+});
+
 test('invalid date and empty or duplicate local scope cannot call network',async t=>{
  const {connector,state}=setup(t);await connector.connect(TOKEN);const initial=state.calls.length;
  for(const input of [{period:{from:'2026-02-30',to:'2026-09-01'},stores},{period,stores:[]},{period,stores:[...stores,...stores]}])assert.equal((await connector.compare(input)).status,'unavailable');assert.equal(state.calls.length,initial);

@@ -7,7 +7,7 @@ const TTL=30*60*1000;
 // Official contract: https://api.truestats.ru/api/public/doc (2026-09-16).
 // All POST routes below retrieve reports; no import, settings or export routes.
 const ROUTES=new Set(['/reporting/facets','/reporting/main/stats','/reporting/aggregated-view/day','/product-metrics','/v1/data-readiness']);
-const METRICS=['profit','realized','cogs','tax','operatingExpenses','marketplaceDeductions','margin','profitBeforeTaxAndOpex'];
+const METRICS=['profit','realized','cogs','tax','operatingExpenses','marketplaceDeductions','margin','profitBeforeTaxAndOpex','ads','sales','adsBonus','adsTotal','adShare','adShareTotal','adShareOrders','adShareSales'];
 const emptyMetrics=()=>Object.fromEntries(METRICS.map(key=>[key,null]));
 function failure(code,message){return Object.assign(new Error(message),{code,public:true,status:400});}
 function numeric(value){
@@ -26,7 +26,8 @@ function rounded(value){
 function date(value){return typeof value==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(value)&&Number.isFinite(Date.parse(value))&&new Date(value).toISOString().slice(0,10)===value;}
 function text(value,key){return typeof value==='string'?value.replaceAll(key||'\0','[скрыто]').replace(/<[^>]*>/g,'').replace(/[\x00-\x1f]/g,' ').slice(0,240):'';}
 const label=value=>value.toLocaleLowerCase('ru').replace(/ё/g,'е').replace(/\s+/g,' ').trim();
-const LABELS={realized:['реализация'],cogs:['себестоимость продаж','себестоимость реализованных товаров'],tax:['налог','налоги'],operatingExpenses:['операционные расходы'],marketplaceDeductions:['удержания маркетплейса'],margin:['маржинальность','маржинальность, %','марж-cть']};
+const LABELS={realized:['реализация'],cogs:['себестоимость продаж','себестоимость реализованных товаров'],tax:['налог','налоги'],operatingExpenses:['операционные расходы'],marketplaceDeductions:['удержания маркетплейса'],margin:['маржинальность','маржинальность, %','марж-cть'],ads:['реклама'],sales:['продажи'],adsBonus:['расходы на рекламу с бонусов'],adsTotal:['общие расходы на рекламу'],adShare:['дрр'],adShareTotal:['общая дрр'],adShareOrders:['реклама/дррз']};
+const PERCENT_METRICS=new Set(['margin','adShare','adShareTotal','adShareOrders']);
 // Lookup uses the API's metric dictionary, never an inferred JSON property name.
 function normalize(report,catalog,key){
  if(!report||typeof report.stats!=='object'||Array.isArray(report.stats)||report.financialMod!==false)throw failure('report_schema','TrueStats вернул неподдерживаемый формат отчёта.');
@@ -40,7 +41,7 @@ function normalize(report,catalog,key){
   rawMetrics.push({id:entry.id,label:text(entry.header,key),unit:suffix,value});
  }
  for(const [metric,names] of Object.entries(LABELS)){
-  const matches=rawMetrics.filter(item=>names.includes(label(item.label))&&(metric==='margin'?item.unit==='%':item.unit!=='%'));
+  const matches=rawMetrics.filter(item=>names.includes(label(item.label))&&(PERCENT_METRICS.has(metric)?item.unit==='%':item.unit!=='%'));
   if(matches.length===1)metrics[metric]=matches[0].value;
  }
  for(const item of Array.isArray(report.profitDetalization)?report.profitDetalization:[]){
@@ -49,10 +50,12 @@ function normalize(report,catalog,key){
  }
  // The official breakdown defines expense amounts as negative contributions.
  for(const [metric,names] of Object.entries({...LABELS,cogs:[...LABELS.cogs,'себестоимость']})){
-  if(metric==='margin'||metrics[metric]!==null)continue;
+  if(PERCENT_METRICS.has(metric)||metrics[metric]!==null)continue;
   const matches=details.filter(item=>names.includes(label(item.title)));
-  if(matches.length===1&&matches[0].amount!==null)metrics[metric]=metric==='realized'?matches[0].amount:rounded(-matches[0].amount);
+  if(matches.length===1&&matches[0].amount!==null)metrics[metric]=['realized','sales'].includes(metric)?matches[0].amount:rounded(-matches[0].amount);
  }
+ if(metrics.adShare===null&&metrics.ads!==null&&metrics.realized>0)metrics.adShare=rounded(metrics.ads/metrics.realized*100);
+ if(metrics.ads!==null&&metrics.sales>0)metrics.adShareSales=rounded(metrics.ads/metrics.sales*100);
  if([metrics.profit,metrics.tax,metrics.operatingExpenses].every(v=>v!==null))metrics.profitBeforeTaxAndOpex=rounded(metrics.profit+metrics.tax+metrics.operatingExpenses);
  const detailComplete=details.length>0&&details.every(v=>v.amount!==null),detailSum=detailComplete?details.reduce((sum,item)=>sum+Math.round(item.amount*100),0):null;
  const reconciled=detailSum!==null&&metrics.profit!==null?Math.abs(detailSum-Math.round(metrics.profit*100))<=details.length:null;
