@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#10233e">
+  <title>Центр управления — проекты и задачи</title>
+  <link rel="stylesheet" href="projects.css">
+  <script src="projects.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">К содержимому</a>
+  <aside class="sidebar">
+    <a class="brand" href="/projects.html" aria-label="Центр управления, главная"><span class="brand-mark" aria-hidden="true">Ц</span><span>Рабочий центр<small>Проекты и команда</small></span></a>
+    <div class="nav-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+    <nav aria-label="Основная навигация">
+      <a class="active" href="/projects.html" aria-current="page"><span aria-hidden="true">▦</span> Центр проектов</a>
+      <a href="/directors.html"><span aria-hidden="true">◎</span> ИИ-директора <span class="nav-tag">10</span></a><a href="/index.html"><span aria-hidden="true">◈</span> Учёт Ozon <span class="nav-tag">Модуль</span></a>
+      <a href="/index.html"><span aria-hidden="true">⚙</span> Настройки Ozon</a>
+    </nav>
+    <div class="sidebar-note"><span class="note-dot" aria-hidden="true"></span><strong>Общая картина</strong><p>Проекты, ответственные и сроки в одном рабочем пространстве.</p></div>
+    <div class="sidebar-footer">От замысла до результата</div>
+  </aside>
+  <main id="main">
+    <header class="page-header">
+      <div><div class="eyebrow">ПРОЕКТЫ · КОМАНДА · РЕЗУЛЬТАТ</div><h1>Центр управления</h1><p>Всё, над чем вы работаете, — в одном месте.</p></div>
+      <div class="header-actions"><button id="hub-refresh" class="secondary" type="button">Обновить</button><button id="hub-logout" class="quiet" type="button">Выйти</button></div>
+    </header>
+    <div id="hub-status" class="status" role="status" aria-live="polite"></div>
+    <section class="kpis" aria-label="Общая сводка">
+      <article class="kpi"><span>Всего проектов</span><strong id="hub-total">—</strong><small>В вашем рабочем пространстве</small></article>
+      <article class="kpi accent"><span>В работе</span><strong id="hub-active">—</strong><small>Проекты на активном этапе</small></article>
+      <article class="kpi"><span>Открытые задачи</span><strong id="hub-tasks">—</strong><small>Ещё не отмечены готовыми</small></article>
+      <article class="kpi"><span>Просрочено</span><strong id="hub-overdue">—</strong><small>Требуют внимания к срокам</small></article>
+    </section>
+    <section class="directors-teaser"><div><div class="eyebrow">ВАША УПРАВЛЕНЧЕСКАЯ КОМАНДА</div><h2>Совет ИИ-директоров</h2><p>Разработка, финансы, маркетинг и другие направления. Выберите директора, обсудите проект и получите план действий.</p></div><a href="/directors.html">Открыть совет →</a></section><div class="workspace-grid">
+      <section class="portfolio" aria-labelledby="portfolio-title">
+        <div class="section-heading"><div><div class="eyebrow">ПОРТФЕЛЬ</div><h2 id="portfolio-title">Ваши проекты</h2></div><span class="section-hint">Выберите проект, чтобы открыть задачи</span></div>
+        <div class="filters"><label class="search-label" for="project-search">Найти проект<input id="project-search" type="search" placeholder="Название, описание или ответственный" autocomplete="off"></label><label for="project-status-filter">Статус<select id="project-status-filter"><option value="all">Все статусы</option><option value="planned">Запланирован</option><option value="active">В работе</option><option value="paused">Приостановлен</option><option value="done">Завершён</option></select></label></div>
+        <div id="project-list" class="project-list" aria-live="polite"><div class="empty-state"><span class="empty-symbol" aria-hidden="true">▦</span><h3>Загружаем проекты</h3><p>Здесь появятся проекты вашего рабочего пространства.</p></div></div>
+      </section>
+      <section class="panel project-editor" aria-labelledby="project-form-title">
+        <div class="eyebrow">КАРТОЧКА ПРОЕКТА</div><h2 id="project-form-title">Новый проект</h2><p class="form-intro">Задайте направление и назначьте ответственного. Задачи добавим следующим шагом.</p>
+        <form id="project-form" class="form-grid">
+          <label class="full">Название проекта<input name="name" required maxlength="200" placeholder="Например, запуск нового продукта"></label>
+          <label class="full">Описание<textarea name="description" rows="3" maxlength="5000" placeholder="Какого результата нужно достичь?"></textarea></label>
+          <label class="full">Ответственный<input name="owner" maxlength="120" placeholder="Имя или отдел"></label>
+          <label>Статус<select name="status"><option value="planned">Запланирован</option><option value="active">В работе</option><option value="paused">Приостановлен</option><option value="done">Завершён</option></select></label>
+          <label>Срок<input name="dueDate" type="date"></label>
+          <div class="form-actions full"><button id="project-submit" type="submit">Создать проект</button><button id="project-cancel" class="secondary" type="reset">Очистить</button></div>
+        </form>
+      </section>
+    </div>
+    <div id="selected-project" class="selected-project" aria-live="polite"></div>
+    <section id="task-section" class="task-section" hidden aria-labelledby="tasks-title">
+      <div class="section-heading"><div><div class="eyebrow">ОТ ПЛАНА К ДЕЙСТВИЮ</div><h2 id="tasks-title">Задачи проекта</h2></div><span class="section-hint">Ответственный, приоритет и следующий шаг</span></div>
+      <div id="task-board" class="task-board" aria-label="Доска задач"></div>
+      <section class="panel task-editor" aria-labelledby="task-form-title">
+        <div class="task-editor-heading"><h3 id="task-form-title">Новая задача</h3><p>Разбейте результат на конкретные действия.</p></div>
+        <form id="task-form" class="task-form">
+          <label class="task-title">Что нужно сделать<input name="title" required maxlength="200" placeholder="Сформулируйте конкретное действие"></label>
+          <label>Ответственный<input name="owner" maxlength="120" placeholder="Имя или отдел"></label>
+          <label>Статус<select name="status"><option value="todo">К выполнению</option><option value="doing">В работе</option><option value="done">Готово</option></select></label>
+          <label>Приоритет<select name="priority"><option value="low">Низкий</option><option value="medium" selected>Средний</option><option value="high">Высокий</option></select></label>
+          <label>Срок<input name="dueDate" type="date"></label>
+          <div class="form-actions"><button id="task-submit" type="submit">Добавить задачу</button><button id="task-cancel" class="secondary" type="reset">Очистить</button></div>
+        </form>
+      </section>
+    </section>
+    <footer>Центр объединяет проекты и задачи команды. Учёт Ozon доступен в отдельном модуле.</footer>
+  </main>
+</body>
+</html>
+
+

@@ -1,0 +1,13 @@
+{
+  "name": "market-pult-local",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "start": "node server.cjs",
+    "check": "node --check server.cjs && node --check summary.cjs && node --check dist/dashboard.js && node --check dist/dashboard-model.js && node --check dist/connections.js && node --check management.cjs && node --check pricing.cjs && node --check dist/manage.js && node --check insights.cjs && node --check insights-sync.cjs && node --check ledger.cjs && node --check dist/insights-ui.js",
+    "test": "node --test test/*.test.cjs"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,69 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="theme-color" content="#10233e">
+  <title>Совет ИИ-директоров — рабочий центр</title>
+  <link rel="stylesheet" href="directors.css">
+  <script src="directors.js" defer></script>
+  <script src="dispatcher.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">К содержимому</a>
+  <aside class="sidebar">
+    <a class="brand" href="/projects.html"><span class="brand-mark" aria-hidden="true">Ц</span><span>Рабочий центр<small>Проекты и команда</small></span></a>
+    <div class="nav-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+    <nav aria-label="Основная навигация">
+      <a href="/projects.html"><span aria-hidden="true">▦</span> Центр проектов</a>
+      <a class="active" href="/directors.html" aria-current="page"><span aria-hidden="true">◈</span> Директора</a>
+      <a href="/index.html"><span aria-hidden="true">▤</span> Учёт Ozon <small>Модуль</small></a>
+    </nav>
+    <div class="sidebar-note"><span class="note-label">УПРАВЛЕНИЕ</span><p>Обсуждайте решения здесь. Ведите проекты и задачи в общем центре.</p><a href="/projects.html">Перейти к проектам <span aria-hidden="true">↗</span></a></div>
+    <div class="sidebar-footer">От решения к действию</div>
+  </aside>
+  <main id="main">
+    <header class="page-header">
+      <div><div class="eyebrow">КОМАНДА УПРАВЛЕНИЯ</div><h1>Ваш совет ИИ-директоров</h1><p>Обращения по направлениям, контекст проектов и история решений.</p></div>
+      <div class="header-actions"><button id="directors-refresh" class="secondary" type="button">Обновить</button><button id="directors-logout" class="quiet" type="button">Выйти</button></div>
+    </header>
+    <div id="directors-status" class="status" role="status" aria-live="polite"></div>
+    <section class="owner-banner" aria-labelledby="owner-title">
+      <div class="owner-avatar" aria-hidden="true">ВЫ</div>
+      <div class="owner-copy"><div class="owner-eyebrow">ВАША РОЛЬ</div><h2 id="owner-title">Вы — руководитель</h2><p>Задавайте направление, расставляйте приоритеты и принимайте решения.</p></div>
+      <a class="owner-link" href="/projects.html">Все действия по проектам <span aria-hidden="true">↗</span></a>
+    </section>
+    <section class="advisor-panel"><div><div class="eyebrow">ЛИЧНЫЙ СОВЕТНИК</div><h2>Что мне делать дальше?</h2><p>Генеральный ИИ-директор изучит портфель и открытые задачи, предложит три приоритета и первый шаг. Снимок проектов отправляется в OpenAI через Codex.</p></div><button id="director-advice" type="button" disabled>Получить совет</button></section><section class="dispatch-panel" aria-labelledby="dispatch-title">
+      <div class="dispatch-header"><div><div class="eyebrow">ОДНА ЦЕЛЬ · НЕСКОЛЬКО НАПРАВЛЕНИЙ</div><h2 id="dispatch-title">Диспетчер поручений</h2></div><span class="dispatch-badge coordinator">Генеральный директор · координатор</span></div>
+      <p class="dispatch-intro">Опишите общую цель. Генеральный директор подготовит план и распределит задачи между директорами. Изучите план и нажмите кнопку запуска, когда будете готовы.</p>
+      <form id="dispatch-form" class="dispatch-form">
+        <label class="dispatch-goal-label" for="dispatch-goal">Какого результата вы хотите достичь?<textarea id="dispatch-goal" name="goal" rows="3" maxlength="4000" required placeholder="Например: подготовить запуск нового продукта — изучить рынок, рассчитать бюджет и составить план продвижения…" aria-describedby="dispatch-hint"></textarea></label>
+        <div class="dispatch-form-bottom"><label for="dispatch-project">Контекст проекта<select id="dispatch-project" name="projectId"><option value="">Без проекта</option></select></label><button id="dispatch-create" type="submit">Распределить задачи</button></div>
+      </form>
+      <p id="dispatch-hint" class="dispatch-note">Директора готовят ответы, планы и материалы. Внешние действия не выполняются.</p>
+      <div id="dispatch-status" class="status" role="status" aria-live="polite"></div>
+      <div id="dispatch-runs" class="dispatch-runs"></div>
+    </section>
+    <section class="directors-section" aria-labelledby="team-title">
+      <div class="section-heading"><div><div class="eyebrow">НАПРАВЛЕНИЯ</div><h2 id="team-title">К кому обратиться</h2></div><p>Выберите директора, чтобы открыть историю обращений.</p></div>
+      <p class="section-description">Директор анализирует выбранный проект и отвечает в диалоге. Действия в проектах автоматически не выполняются.</p>
+      <div id="director-grid" class="director-grid"><div class="director-empty"><span class="empty-mark" aria-hidden="true">◈</span><h3>Загружаем состав совета</h3><p>Здесь появятся карточки директоров и их направления.</p></div></div>
+    </section>
+    <section id="director-dialog" class="director-dialog" hidden aria-labelledby="director-name">
+      <header class="dialog-header"><div class="dialog-heading"><div class="eyebrow">ИСТОРИЯ ОБРАЩЕНИЙ</div><h2 id="director-name"></h2><p id="director-role" class="director-role"></p></div><div class="dialog-context"><p id="director-description"></p><div id="director-connection" class="director-connection" role="status" aria-live="polite"></div></div><button id="director-close" class="quiet" type="button" aria-label="Закрыть диалог">Закрыть</button></header>
+      <div id="director-messages" class="director-messages" role="log" aria-label="История обращений" aria-live="polite" aria-relevant="additions text"></div>
+      <div class="composer">
+        <form id="director-form">
+          <label class="message-label" for="director-message">Ваше обращение<textarea id="director-message" name="message" rows="4" required maxlength="6000" placeholder="Опишите задачу, ожидаемый результат и важные ограничения…" aria-describedby="message-hint"></textarea></label>
+          <div class="composer-bottom"><label class="project-label" for="director-project">Контекст проекта <span>необязательно</span><select id="director-project" name="projectId"><option value="">Без привязки к проекту</option></select></label><div class="send-area"><p id="message-hint">До 6 000 символов</p><button id="director-send" type="submit">Отправить обращение <span aria-hidden="true">↑</span></button></div></div>
+          <p class="privacy-note">Сообщение и контекст выбранного проекта отправляются в OpenAI через вашу учётную запись Codex.</p>
+        </form>
+      </div>
+      <div class="dialog-footer"><span>Проекты и задачи ведутся в общем рабочем пространстве.</span><a href="/projects.html">Открыть центр проектов <span aria-hidden="true">↗</span></a></div>
+    </section>
+    <footer class="page-footer"><span>Рабочий центр · Совет директоров</span><a href="/projects.html">Все действия по проектам</a></footer>
+  </main>
+</body>
+</html>
+

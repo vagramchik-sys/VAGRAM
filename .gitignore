@@ -1,0 +1,17 @@
+node_modules/
+.env
+.env.*
+!.env.example
+.private/
+data/
+work/
+.sites-runtime/
+.openai/
+*.log
+*.sqlite
+*.sqlite-*
+*.db
+*.pem
+*.key
+test/*-test-*/
+test/*-tests-*/
