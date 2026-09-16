@@ -67,13 +67,14 @@
     // Reset remains available when a conflict requires refreshing the database.
     if(!saving&&!loading&&user?.role!=='viewer')for(const form of forms){const reset=form.querySelector('[type=reset]');if(reset)reset.disabled=false;}
     $('hub-refresh').disabled=saving||loading;
+    $('hub-logout').disabled=saving;
   }
   $('project-form').addEventListener('submit',guard(async e=>{e.preventDefault();const form=e.currentTarget;if(dirty.has('task-form'))throw Error('Сначала сохраните или отмените ввод задачи.');const v=formData(form);const project={id:editingProject||uid(),name:v.name.trim(),description:v.description.trim(),status:v.status,owner:v.owner.trim(),dueDate:v.dueDate};if(!project.name)throw Error('Укажите название проекта.');if(editingProject&&!state.items.some(p=>p.id===editingProject))throw Error('Проект уже удалён.');const items=editingProject?state.items.map(p=>p.id===editingProject?project:p):[...state.items,project];await commit({...state,items},editingProject?'Проект обновлён.':'Проект создан.');selected=project.id;form.reset();render();}));
   $('task-form').addEventListener('submit',guard(async e=>{e.preventDefault();const form=e.currentTarget;if(!selected)throw Error('Выберите проект.');if(dirty.has('project-form'))throw Error('Сначала сохраните или отмените ввод проекта.');const v=formData(form);const task={id:editingTask||uid(),projectId:selected,title:v.title.trim(),owner:v.owner.trim(),status:v.status,priority:v.priority,dueDate:v.dueDate};if(!task.title)throw Error('Укажите название задачи.');if(editingTask&&!state.tasks.some(t=>t.id===editingTask))throw Error('Задача уже удалена.');await commit({...state,tasks:editingTask?state.tasks.map(t=>t.id===editingTask?task:t):[...state.tasks,task]},editingTask?'Задача обновлена.':'Задача добавлена.');form.reset();render();}));
   $('project-search').addEventListener('input',render);$('project-status-filter').addEventListener('change',render);
-  $('hub-refresh').onclick=guard(async()=>{if(dirty.size&&!confirm('Обновление сбросит несохранённый ввод. Продолжить?'))return;forms.forEach(f=>f.reset());await load();notice('Портфель обновлён.');});
-  $('hub-logout').onclick=guard(async()=>{if(dirty.size&&!confirm('Выйти без сохранения ввода?'))return;await api('/api/logout','POST');location.href='/login.html';});
-  window.addEventListener('beforeunload',e=>{if(dirty.size){e.preventDefault();e.returnValue='';}});
+  $('hub-refresh').onclick=guard(async()=>{if(loading||saving)return;if(dirty.size&&!confirm('После успешного обновления несохранённый ввод будет сброшен. Продолжить?'))return;await load();forms.forEach(f=>f.reset());render();notice('Портфель обновлён.');});
+  $('hub-logout').onclick=guard(async()=>{if(saving){notice('Дождитесь завершения сохранения перед выходом.',true);return;}if(dirty.size&&!confirm('Выйти без сохранения ввода?'))return;await api('/api/logout','POST');location.href='/login.html';});
+  window.addEventListener('beforeunload',e=>{if(dirty.size||saving){e.preventDefault();e.returnValue='';}});
   render();load().catch(e=>notice(e.message,true));
 })();
 

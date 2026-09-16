@@ -24,7 +24,7 @@
   function controls() {
     const conversation = conversations.get(selected);
     if (restoreButton) restoreButton.disabled = !selected || user?.role === 'viewer' || sending.has(selected) || conversation?.busy === true || conversation?.loading === true;
-    $('director-send').disabled = !selected || user?.role === 'viewer' || !connection.available || sending.has(selected) || !conversation || conversation.loading || conversation.busy || !input.value.trim();
+    $('director-send').disabled = !selected || user?.role === 'viewer' || !connection.available || sending.has(selected) || !conversation || conversation.loading || conversation.busy || Boolean(conversation.error) || !input.value.trim();
     $('director-connection').textContent = (connection.message || (connection.available ? 'Подключение доступно.' : 'Провайдер не подключен.')) + (user?.role === 'viewer' ? ' Ваша роль разрешает только просмотр.' : '');
     if ($('director-advice')) $('director-advice').disabled = !user || user.role === 'viewer' || !connection.available || sending.has('general') || conversations.get('general')?.busy === true;
   }
@@ -56,7 +56,7 @@
     restoreButton = null;
     if (!conversation || conversation.loading) container.append(node('p', 'Загружаем историю…', 'empty-state'));
     else {
-      if (!conversation.messages.length) container.append(node('p', 'Диалог пока пуст. Опишите задачу директору.', 'empty-state'));
+      if (!conversation.messages.length && !conversation.error) container.append(node('p', 'Диалог пока пуст. Опишите задачу директору.', 'empty-state'));
       for (const message of conversation.messages) {
         const role = ['user', 'assistant', 'error'].includes(message.role) ? message.role : 'system';
         const item = node('article', undefined, `director-message role-${role}`);
@@ -69,7 +69,7 @@
       }
       const last = conversation.messages.at(-1);
       const failed = !conversation.busy && ['system', 'error'].includes(last?.role);
-      const outcome = conversation.busy ? 'Директор готовит ответ…' : failed ? 'Ответ не получен. Причина указана выше; вы можете отправить обращение повторно.' : last?.role === 'assistant' ? 'Ответ директора готов.' : '';
+      const outcome = conversation.error ? '' : conversation.busy ? 'Директор готовит ответ…' : failed ? 'Ответ не получен. Причина указана выше; вы можете отправить обращение повторно.' : last?.role === 'assistant' ? 'Ответ директора готов.' : '';
       if (outcome) { const indicator = node('p', outcome, failed ? 'error' : 'director-busy'); indicator.setAttribute('role', failed ? 'alert' : 'status'); container.append(indicator); }
       const previousRequest = failed ? [...conversation.messages].reverse().find(message => message.role === 'user') : null;
       if (previousRequest && user?.role !== 'viewer') {
@@ -85,7 +85,18 @@
         });
         container.append(restore);
       }
-      if (conversation.error) container.append(node('p', conversation.error, 'error'));
+      if (conversation.error) {
+        container.append(node('p', conversation.error, 'error'));
+        const retry = node('button', 'Повторить загрузку истории', 'director-action'); retry.type = 'button';
+        const directorId = selected;
+        retry.addEventListener('click', () => {
+          if (selected !== directorId) return;
+          saveDraft(); stopPoll(); generation++;
+          conversations.set(directorId, { ...conversations.get(directorId), loading: true });
+          renderConversation(); void readConversation(directorId, generation);
+        });
+        container.append(retry);
+      }
     }
     if (nearEnd) container.scrollTop = container.scrollHeight;
     controls();
@@ -142,6 +153,7 @@
   $('director-project').addEventListener('change', saveDraft);
   form.addEventListener('submit', async event => {
     event.preventDefault(); saveDraft(); const id = selected, draft = drafts.get(id), conversation = conversations.get(id);
+    if (conversation?.error) { status('Сначала восстановите загрузку истории. Ваш черновик сохранён в этой вкладке.', true); return; }
     if (!id || user?.role === 'viewer' || !connection.available || sending.has(id) || !conversation || conversation.loading || conversation.busy) { status(user?.role === 'viewer' ? 'Ваша роль разрешает только просмотр.' : connection.message || 'Отправка пока недоступна.', true); return; }
     if (!draft.text.trim() || draft.text.length > 6000) { status('Введите сообщение от 1 до 6000 символов.', true); return; }
     if (draft.projectId && !projects.some(project => project.id === draft.projectId)) { status('Выбранный проект больше недоступен. Выберите другой проект.', true); return; }

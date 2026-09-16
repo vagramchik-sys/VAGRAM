@@ -8,7 +8,7 @@ const ids=['director-form','director-grid','director-dialog','director-name','di
 const els=Object.fromEntries(ids.map(id=>[id,new Element()]));const input=new Element();els['director-form'].elements={namedItem:()=>input};
 let requests=[],timers=[];
 const context={document:{getElementById:id=>els[id],createElement:()=>new Element()},fetch:(path,options)=>new Promise(resolve=>requests.push({path,options,resolve})),setTimeout:fn=>{timers.push(fn);return fn;},clearTimeout:fn=>{timers=timers.filter(t=>t!==fn);},location:{},confirm:()=>true,crypto:{randomUUID:()=> '11111111-1111-4111-8111-111111111111'},console};context.window={addEventListener(){}};
-vm.runInNewContext(fs.readFileSync('./directors.js','utf8'),context);
+vm.runInNewContext(fs.readFileSync(require('node:path').join(__dirname,'../directors.js'),'utf8'),context);
 const flush=async()=>{for(let n=0;n<6;n++)await Promise.resolve();};
 function reply(index,data,status=200){requests[index].resolve({ok:status<400,status,json:async()=>data});}
 function director(id){return{id,label:id,title:'Роль',description:'Описание',initials:'ИИ',color:'evil;display:none',tags:['<script>']};}
@@ -40,6 +40,21 @@ function director(id){return{id,label:id,title:'Роль',description:'Опис�
  restore.listeners.click();assert.equal(input.value,'Важный черновик');
  context.confirm=()=>true;restore.listeners.click();assert.equal(input.value,'Восстановить меня');assert.equal(els['director-project'].value,'removed-project');assert.equal(requests.length,requestCount);
  assert.ok(els['director-project'].children.some(option=>option.textContent==='Проект больше недоступен'));
+ els['director-project'].value='';els['director-project'].listeners.change();
+ const immediateFailure=els['director-form'].listeners.submit({preventDefault(){}});
+ reply(requests.length-1,{busy:false},202);await flush();
+ reply(requests.length-1,{messages:[{role:'user',text:'Восстановить меня'},{role:'system',text:'Быстрый сбой ИИ'}],busy:false});await immediateFailure;
+ const immediateRestore=els['director-messages'].children.at(-1);
+ assert.equal(immediateRestore.textContent,'Вернуть текст обращения');
+ assert.equal(immediateRestore.disabled,false,'Restore must unlock after POST completes');
+ input.value='Черновик при разрыве связи';input.listeners.input();
+ els['director-grid'].children[0].children[3].listeners.click();reply(requests.length-1,{error:'Connection interrupted'},503);await flush();
+ assert.equal(els['director-send'].disabled,true);
+ const beforeBlocked=requests.length;await els['director-form'].listeners.submit({preventDefault(){}});assert.equal(requests.length,beforeBlocked);
+ const reloadHistory=els['director-messages'].children.at(-1);assert.equal(reloadHistory.textContent,'Повторить загрузку истории');
+ reloadHistory.listeners.click();assert.equal(requests.at(-1).path,'/api/directors/a');
+ reply(requests.length-1,{messages:[{role:'assistant',text:'Ответ после восстановления связи'}],busy:false});await flush();
+ assert.equal(input.value,'Черновик при разрыве связи');assert.equal(els['director-send'].disabled,false);
  console.log('Director UI tests passed: stale responses, draft switching, busy polling, idempotent retry, viewer guard, safe palette/text.');
 })().catch(e=>{console.error(e);process.exitCode=1;});
 
