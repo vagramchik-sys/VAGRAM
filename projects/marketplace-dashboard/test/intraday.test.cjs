@@ -36,3 +36,20 @@ test('history is durable, repeated reads do not add points, and unchanged import
  assert.deepEqual(restored.map(p=>p.orderedRevenue),[10,10]);assert.equal(restored.length,2);
  }finally{const target=path.resolve(dir);assert.equal(path.dirname(target),parent);assert.ok(path.basename(target).startsWith('pult-intraday-test-'));fs.rmSync(target,{recursive:true,force:true})}
 });
+
+test('intraday economics uses combined bases and leaves legacy or incomplete snapshots unavailable',()=>{
+ const make=e=>({date,source:'finance',at:at('10'),values:{realized:e.realized*100,net:0,ads:0},economy:e});
+ const a=make({profit:70,cogs:30,realized:100}),b=make({profit:500,cogs:500,realized:1000});
+ const result=combine([[a],[b]],'finance',date)[0];assert.equal(result.ourRoi,570/530*100);assert.equal(result.ourMargin,570/1100*100);
+ delete b.economy;assert.equal(combine([[a],[b]],'finance',date)[0].ourRoi,null);
+ b.economy={profit:null,cogs:null,realized:1000};assert.equal(combine([[a],[b]],'finance',date)[0].ourMargin,null);
+ a.economy={profit:-5,cogs:0,realized:0};assert.equal(combine([[a]],'finance',date)[0].ourRoi,null);
+});
+
+test('new finance observations freeze current costs without rewriting older observations',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pult-intraday-economics-'));
+ try{const h=create({privateDir:dir}),values={realized:10000,net:8000,salesRows:1,soldUnits:1},ledger={version:3,complete:true,period:{from:date,to:date},completedAt:at('10'),daily:[{date,values}],skuDaily:[{date,sku:'1',values}]},products=[{sku:'1',cost:{status:'filled',currency:'RUB',unitCost:30}}];
+ h.capture('1',{ledger,products});products[0].cost.unitCost=40;h.capture('1',{ledger,products});assert.equal(h.series(['1'],date).finance[0].ourRoi,50/30*100);
+ ledger.completedAt=at('11');h.capture('1',{ledger,products});const points=h.series(['1'],date).finance;assert.equal(points.length,2);assert.equal(points[1].ourRoi,100);assert.equal(points[0].ourMargin,50);
+ }finally{assert.equal(path.dirname(path.resolve(dir)),path.resolve(os.tmpdir()));assert.ok(path.basename(dir).startsWith('pult-intraday-economics-'));fs.rmSync(dir,{recursive:true,force:true})}
+});

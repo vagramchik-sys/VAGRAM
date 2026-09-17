@@ -20,7 +20,8 @@
   const cacheKey=(id,period)=>id+':'+period.from+':'+period.to;
   function getReport(id,period=report.current){const key=cacheKey(id,period);if(cache.has(key))return Promise.resolve(cache.get(key));const query=new URLSearchParams({from:period.from,to:period.to,store:id,hideInactive:String($('hide-inactive').checked)}),request=api('/api/insights?'+query);cache.set(key,request);return request}
   async function render(){
-   if(!report)return;const current=report,seq=++version,key=$('ins-chart-metric').value,title=metricTitle(key),oneDay=current.days===1,format=v=>v===null?'—':key==='orderedUnits'?integer.format(v)+' шт.':num.format(v)+' ₽';
+   if(!report)return;const current=report,seq=++version,key=$('ins-chart-metric').value,title=metricTitle(key),oneDay=current.days===1,ratio=key==='ourMargin'||key==='ourRoi',format=v=>v===null?'—':ratio?num.format(v)+' %':key==='orderedUnits'?integer.format(v)+' шт.':num.format(v)+' ₽';
+   const formatDelta=v=>ratio?(v===null?'—':num.format(v)+' п.п.'):format(v);
    const isToday=oneDay&&current.current.from===new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
    $('ins-chart-title').textContent=oneDay?(isToday?'Динамика за сегодня':'Динамика за '+short(current.current.from)):'Динамика бизнеса';
    $('chart-compare-controls').hidden=!isToday;
@@ -29,7 +30,7 @@
    await ready;if(seq!==version)return;
    if(catalogError){$('chart-store-status').textContent=catalogError;$('ins-chart').removeAttribute('aria-busy');return}
    const chosen=options().filter(s=>selected.has(s.id));
-   if(!chosen.length){$('chart-store-status').textContent='Выберите общий оборот или нужные магазины.';$('ins-chart').removeAttribute('aria-busy');return}
+   if(!chosen.length){$('chart-store-status').textContent='Выберите общий показатель или нужные магазины.';$('ins-chart').removeAttribute('aria-busy');return}
    const enabled=isToday?comparisons.filter(c=>$('chart-compare-controls').querySelector('input[value="'+c.id+'"]').checked).map(c=>({...c,date:PultStoreChart.shiftDate(current.current.from,c.days)})):[];
    const requests=chosen.flatMap(s=>[{store:s,compare:null,period:current.current},...enabled.map(c=>({store:s,compare:c,period:{from:c.date,to:c.date}}))]);
    const results=await Promise.allSettled(requests.map(r=>getReport(r.store.id,r.period)));if(seq!==version)return;
@@ -42,16 +43,19 @@
    const failed=series.filter(s=>s.error).map(s=>s.name),empty=series.filter(s=>!s.error&&!s.points.some(p=>p.value!==null)).map(s=>s.name);
    const historyFailed=historical.filter(s=>s.error).map(s=>s.name),historyMissing=historical.filter(s=>!s.error&&!s.reference&&!s.points.some(p=>p.value!==null)).map(s=>s.name);
    $('chart-store-status').textContent=[failed.length?'Не удалось загрузить: '+failed.join(', '):'',empty.length?'Нет точек за период: '+empty.join(', '):'',historyFailed.length?'Не удалось загрузить сравнение: '+historyFailed.join(', '):'',historyMissing.length?'Нет данных для сравнения: '+historyMissing.join(', '):'',historical.some(s=>s.reference)?'Для прошлых дней без почасовой истории пунктиром показаны уровни итогов за весь день. Это не оборот на текущее время.':''].filter(Boolean).join(' · ');$('ins-chart').removeAttribute('aria-busy');
-   draw([...series,...historical],current,oneDay,title,format);
+   if(ratio&&empty.length){$('chart-store-status').textContent+=' · Для расчёта нужны полные начисления, количество проданных единиц и себестоимость всех продаж. История внутри дня начинается с новых снимков; прежние точки не пересчитываются задним числом.';}
+   draw([...series,...historical],current,oneDay,title,format,formatDelta,ratio);
    const details=$('ins-chart-details');details.hidden=false;
-   details.innerHTML='<div class="chart-series-totals">'+series.map(s=>{const actual=s.points.filter(p=>p.value!==null),last=actual.at(-1),previous=actual.at(-2),delta=previous?last.value-previous.value:null;return '<div style="--series-color:'+s.color+'"><span><i></i>'+esc(s.name)+'</span><strong>'+format(oneDay?last?.value??null:s.total)+'</strong><small>'+(oneDay&&last?'На '+time(last.time)+(delta===null?' · первая точка':' · '+(delta>0?'+':'')+format(delta)+' с '+time(previous.time)):s.error?'Ошибка загрузки':s.total===null?'Нет полного периода':'За выбранный период')+'</small></div>'}).join('')+'</div><p>'+ (oneDay?'Точки — накопительные итоги дня на время загрузки. Изменения включают корректировки Ozon. История до первого снимка не восстанавливается.':'Каждая линия показывает выбранный показатель по дням.')+' Общая линия уже включает магазины — складывать её с отдельными линиями не нужно.</p>';
+   details.innerHTML='<div class="chart-series-totals">'+series.map(s=>{const actual=s.points.filter(p=>p.value!==null),last=actual.at(-1),previous=actual.at(-2),delta=previous?last.value-previous.value:null;return '<div style="--series-color:'+s.color+'"><span><i></i>'+esc(s.name)+'</span><strong>'+format(oneDay?last?.value??null:s.total)+'</strong><small>'+(oneDay&&last?'На '+time(last.time)+(delta===null?' · первая точка':' · '+(delta>0?'+':'')+formatDelta(delta)+' с '+time(previous.time)):s.error?'Ошибка загрузки':s.total===null?'Нет полного периода':'За выбранный период')+'</small></div>'}).join('')+'</div><p>'+ (oneDay?'Точки — накопительные итоги дня на время загрузки. Изменения включают корректировки Ozon. История до первого снимка не восстанавливается.':'Каждая линия показывает выбранный показатель по дням.')+' Общая линия уже включает магазины — складывать её с отдельными линиями не нужно.</p>';
+   if(ratio){const gaps=series.filter(s=>s.report?.economics&&!s.report.economics.complete).map(s=>{const e=s.report.economics;return esc(s.name)+': '+[!e.covered?'неполный финансовый период':'',e.missingCostSkus?'нет себестоимости у '+integer.format(e.missingCostSkus)+' SKU':'',e.unknownUnitRows?'не определено количество в '+integer.format(e.unknownUnitRows)+' операциях':'',e.unmappedSaleRows?'продажи без привязки к SKU: '+integer.format(e.unmappedSaleRows):''].filter(Boolean).join(', ')});if(gaps.length)details.insertAdjacentHTML('beforeend','<p><b>Почему нет полного итога:</b> '+gaps.join(' · ')+'. <a href="#economics">Проверить экономику →</a></p>');}
+   if(ratio)details.insertAdjacentHTML('beforeend','<p><b>Наш расчёт:</b> прибыль = начисления Ozon после удержаний − себестоимость проданного с учётом возвратов. Маржинальность = прибыль / реализация; ROI = прибыль / себестоимость × 100%. Общий показатель взвешен по суммам, проценты товаров не усредняются. Расчёт по текущей себестоимости, до налогов и внешних расходов. Если данных недостаточно, остаётся пропуск. Данные за сегодня предварительные.</p>');
    if(enabled.length){
     details.querySelector('.chart-series-totals').outerHTML='<div class="chart-comparisons">'+series.map(s=>{
      const today=s.points.filter(p=>p.value!==null).at(-1);
      return '<section class="chart-comparison" style="--series-color:'+s.color+'"><h3>'+esc(s.name)+'</h3><div class="comparison-days"><div class="comparison-today"><span>Сегодня · '+short(current.current.from)+'</span><strong>'+format(today?.value??null)+'</strong><small>'+(today?'На '+time(today.time)+' МСК':'Нет точки загрузки')+'</small></div>'+enabled.map(c=>{
       const past=loaded.find(r=>r.store.id===s.id&&r.compare?.id===c.id),result=PultStoreChart.comparison(s.report||{},past?.report||{},key);
       const value=result.mode==='same-time'?result.previous.value:result.fullDay;
-      let note=past?.error?'Не удалось загрузить данные':result.mode==='same-time'?'На '+time(result.previous.time)+' МСК · сегодня '+(result.delta>0?'+':'')+format(result.delta)+(result.percent===null?' · % не рассчитывается':' ('+(result.percent>0?'+':'')+num.format(result.percent)+'%)'):result.fullDay!==null?'За весь день · сравнение по времени недоступно':'Нет полного дня и сопоставимой точки';
+      let note=past?.error?'Не удалось загрузить данные':result.mode==='same-time'?'На '+time(result.previous.time)+' МСК · сегодня '+(result.delta>0?'+':'')+formatDelta(result.delta)+(ratio?'':result.percent===null?' · % не рассчитывается':' ('+(result.percent>0?'+':'')+num.format(result.percent)+'%)'):result.fullDay!==null?'За весь день · сравнение по времени недоступно':'Нет полного дня и сопоставимой точки';
       return '<div><span><i class="compare-line '+c.id+'"></i>'+c.name+' · '+short(c.date)+'</span><strong>'+format(value)+'</strong><small>'+note+'</small>'+(result.mode==='same-time'&&result.fullDay!==null?'<small>За весь день: '+format(result.fullDay)+'</small>':'')+'</div>';
      }).join('')+'</div></section>';
     }).join('')+'</div>';
@@ -59,12 +63,12 @@
    }
    if(oneDay){const rows=series.flatMap(s=>s.points.filter(p=>p.value!==null).slice(-8).map(p=>({name:s.name,...p}))).sort((a,b)=>b.time-a.time);details.insertAdjacentHTML('beforeend','<details><summary>История загрузок</summary><div class="table-wrap"><table><thead><tr><th>Магазин</th><th>Время МСК</th><th class="numeric">Итог дня</th></tr></thead><tbody>'+rows.map(p=>'<tr><td>'+esc(p.name)+'</td><td>'+time(p.time)+'</td><td class="numeric">'+format(p.value)+'</td></tr>').join('')+'</tbody></table></div></details>')}
   }
-  function draw(series,current,oneDay,title,format){
+  function draw(series,current,oneDay,title,format,formatDelta,ratio){
    if(!series.some(s=>s.points.some(p=>p.value!==null))){$('ins-chart').innerHTML='<div class="empty">График появится после загрузки данных для выбранных магазинов.</div>';return}
    const W=760,H=240,L=70,R=22,T=16,B=38,{min,max}=PultStoreChart.domain(series),start=Date.parse(current.current.from+(oneDay?'T00:00:00+03:00':'T12:00:00Z')),end=oneDay?start+86400000:Date.parse(current.current.to+'T12:00:00Z'),x=t=>L+(W-L-R)*(end===start?.5:(t-start)/(end-start)),y=v=>T+(max-v)/(max-min)*(H-T-B);
    const observations=[];
    let svg='<svg viewBox="0 0 '+W+' '+H+'" role="group" aria-label="'+esc(title)+' · '+esc(series.map(s=>s.name).join(', '))+'">';
-   for(let i=0;i<4;i++){const v=min+(max-min)*i/3,yy=y(v);svg+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+yy+'" y2="'+yy+'" stroke="#eaf0f8"/><text x="'+(L-10)+'" y="'+(yy+4)+'" text-anchor="end">'+num.format(Math.abs(v)>=1e6?v/1e6:Math.abs(v)>=1000?v/1000:v)+(Math.abs(v)>=1e6?'м':Math.abs(v)>=1000?'к':'')+'</text>'}
+   for(let i=0;i<4;i++){const v=min+(max-min)*i/3,yy=y(v);svg+='<line x1="'+L+'" x2="'+(W-R)+'" y1="'+yy+'" y2="'+yy+'" stroke="#eaf0f8"/><text x="'+(L-10)+'" y="'+(yy+4)+'" text-anchor="end">'+num.format(Math.abs(v)>=1e6?v/1e6:Math.abs(v)>=1000?v/1000:v)+(Math.abs(v)>=1e6?'м':Math.abs(v)>=1000?'к':'')+(ratio?' %':'')+'</text>'}
    if(oneDay){for(let h=0;h<=24;h+=4)svg+='<text x="'+x(start+h*3600000)+'" y="'+(H-10)+'" text-anchor="middle">'+String(h).padStart(2,'0')+':00</text>'}
    else for(let i=0;i<current.days;i++)if(i===0||i===current.days-1||i%Math.max(1,Math.ceil(current.days/6))===0){const t=start+i*86400000;svg+='<text x="'+x(t)+'" y="'+(H-10)+'" text-anchor="middle">'+short(new Date(t).toISOString().slice(0,10))+'</text>'}
    for(const s of series){
@@ -85,7 +89,7 @@
     active=index;const {series:s,point,previous,delta}=observations[index];inspected={id:s.id,time:point.time};
     box.hidden=false;$('chart-interaction-hint').hidden=false;box.style.setProperty('--series-color',s.color);
     $('chart-point-label').innerHTML='<span class="chart-point-kicker">'+(s.reference?'Уровень полного дня':'Выбранная точка')+'</span><b>'+esc(s.name)+'</b><span>'+(s.reference?'Итог за '+short(s.date):oneDay?(s.date?short(s.date)+' · ':'')+'Загрузка '+time(point.time)+' МСК':short(point.label))+' · '+esc(title)+'</span>';
-    $('chart-point-value').innerHTML='<strong>'+format(point.value)+'</strong><small>'+(s.reference?'Почасовая история отсутствует':delta===null?'Нет предыдущей точки для сравнения':(delta>0?'+':'')+format(delta)+(oneDay?' с '+time(previous.time):' к '+short(previous.label)))+'</small>';
+    $('chart-point-value').innerHTML='<strong>'+format(point.value)+'</strong><small>'+(s.reference?'Почасовая история отсутствует':delta===null?'Нет предыдущей точки для сравнения':(delta>0?'+':'')+formatDelta(delta)+(oneDay?' с '+time(previous.time):' к '+short(previous.label)))+'</small>';
     dots.forEach((dot,i)=>{dot.setAttribute('aria-pressed',String(i===index));dot.setAttribute('tabindex',i===index?'0':'-1')});
     $('chart-point-prev').disabled=index===0;$('chart-point-next').disabled=index===observations.length-1;
     if(focus)dots[index].focus({preventScroll:true});

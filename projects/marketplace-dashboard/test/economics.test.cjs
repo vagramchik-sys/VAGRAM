@@ -70,3 +70,11 @@ test('current cost updates change a historical return estimate; archived status 
  let e=economics([s],period);assert.equal(e.cogs,-30);assert.equal(e.profit,-50);
  s.products[0].cost.unitCost=45;e=economics([s],period);assert.equal(e.cogs,-45);assert.equal(e.profit,-35);assert.equal(e.basis,'current-cost');
 });
+
+test('ROI and margin aggregate economic bases rather than averaging store percentages',()=>{
+ const a=store([sale(10,100,100,0)]),b=store([sale(10,1000,1000,0)]);b.id='2';b.products[0].cost.unitCost=500;
+ const e=economics([a,b],period);assert.equal(e.profit,570);assert.equal(e.roi,570/530*100);assert.equal(e.margin,570/1100*100);assert.notEqual(e.roi,(e.stores[0].roi+e.stores[1].roi)/2);
+ assert.equal(economics([store([])],period).roi,null);assert.equal(economics([store([sale(99,100,100)])],period).roi,null);
+ const loss=store([sale(10,100,100,-100)]);assert.equal(economics([loss],period).roi,-100);
+ const report=require('../insights.cjs').report([a,b],{from:period.to,to:period.to});assert.equal(report.metrics.ourRoi.current,e.roi);assert.equal(report.daily[0].ourMargin,e.margin);assert.equal(report.metrics.ourRoi.previous,null);
+});

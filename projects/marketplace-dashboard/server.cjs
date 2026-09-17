@@ -17,7 +17,7 @@ function refreshState(id){return {job:jobs.get(id),attemptAt:stores[id].syncAtte
 function ensureFreshOzon(){for(const [id,s] of Object.entries(stores))if(refreshPolicy.due(refreshState(id)))void sync(id)}
 const ledgerFor=require('./ledger.cjs').cache({privateDir,readTypes:insightsSync.read});
 const intraday=require('./intraday.cjs').create({privateDir});let historyError=null;
-function captureLatest(){historyError=null;for(const [id,s] of Object.entries(stores))if(s.market!=='WB')try{intraday.capture(id,{orders:insightsSync.read(id)?.orders,ledger:ledgerFor(id)})}catch{historyError='Не удалось сохранить часть точек графика. Проверьте доступность диска.'}}
+function captureLatest(){historyError=null;for(const [id,s] of Object.entries(stores))if(s.market!=='WB')try{intraday.capture(id,{orders:insightsSync.read(id)?.orders,ledger:ledgerFor(id),products:require('./dist/dashboard-model.js').rowsFor([{id,...s}],new Map([[id,publicSnapshot(id)]]))})}catch{historyError='Не удалось сохранить часть точек графика. Проверьте доступность диска.'}}
 let trueStatsAttemptAt=0,trueStatsAttemptDay='';
 function ensureTrueStats(){
  const today=moscowDay(new Date()),now=Date.now();

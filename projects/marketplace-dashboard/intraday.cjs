@@ -3,7 +3,7 @@ const fs=require('node:fs'),path=require('node:path');
 const {INTERVAL}=require('./refresh-policy.cjs');
 const day=date=>new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
 const covers=(s,d)=>s?.period?.from<=d&&s?.period?.to>=d;
-function point(source,data){
+function point(source,data,products){
   const at=source==='orders'?data?.updatedAt:data?.completedAt;
   if(!at||!Number.isFinite(Date.parse(at)))return null;
   const date=day(new Date(at));if(!covers(data,date)||source==='finance'&&!data.complete)return null;
@@ -13,7 +13,9 @@ function point(source,data){
     else{values.realized+=row.values.realized||0;values.net+=row.values.net||0;values.ads-=row.values.ads||0}
   }
   if(!Object.values(values).every(Number.isFinite))return null;
-  return {date,at:new Date(at).toISOString(),source,values};
+  let economy;
+  if(source==='finance'&&Array.isArray(products)){const e=require('./economics.cjs').economics([{ledger:data,products}],{from:date,to:date});economy={profit:e.profit,cogs:e.cogs,realized:e.realized};}
+  return {...(economy?{economy}:{}),date,at:new Date(at).toISOString(),source,values};
 }
 // A combined point requires a new, sufficiently close observation from every selected store.
 // A failed store never becomes a zero and cannot create a false aggregate change.
@@ -28,6 +30,12 @@ function combine(histories,source,date){
     if(end-start>INTERVAL){for(let i=0;i<lists.length;i++)if(Date.parse(selected[i].at)<end-INTERVAL)indices[i]++;continue}
     const values={};for(const p of selected)for(const [k,v] of Object.entries(p.values))values[k]=(values[k]||0)+v;
     for(const k of Object.keys(values))if(k!=='orderedUnits')values[k]/=100;
+    if(source==='finance'){
+      const known=selected.every(p=>p.economy&&['profit','cogs','realized'].every(k=>Number.isFinite(p.economy[k])));
+      const total=k=>selected.reduce((n,p)=>n+Math.round(p.economy[k]*100),0);
+      values.ourMargin=known&&total('realized')>0?total('profit')/total('realized')*100:null;
+      values.ourRoi=known&&total('cogs')>0?total('profit')/total('cogs')*100:null;
+    }
     out.push({at:new Date(end).toISOString(),sourceFromAt:new Date(start).toISOString(),...values});
     for(let i=0;i<indices.length;i++)indices[i]++;
   }
@@ -36,10 +44,10 @@ function combine(histories,source,date){
 function create({privateDir}){
   const file=id=>path.join(privateDir,'intraday-'+id+'.json');
   function read(id){return fs.existsSync(file(id))?JSON.parse(fs.readFileSync(file(id),'utf8')).points:[]}
-  function capture(id,{orders,ledger}){
+  function capture(id,{orders,ledger,products}){
     const points=read(id);let changed=false;
     for(const [source,data] of [['orders',orders],['finance',ledger]]){
-      const next=point(source,data);if(!next||points.some(p=>p.source===source&&p.at===next.at))continue;
+      const next=point(source,data,products);if(!next||points.some(p=>p.source===source&&p.at===next.at))continue;
       points.push(next);changed=true;
     }
     if(!changed)return;
