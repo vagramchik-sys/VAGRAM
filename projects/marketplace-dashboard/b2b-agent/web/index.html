@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>B2B · Агент продаж</title><link rel="stylesheet" href="/ui.css"><script defer src="/ui.js"></script></head>
+<body><main>
+  <header><div><span class="eyebrow">СТАЛЬКРЕПЕЖ · ЛОКАЛЬНАЯ СИСТЕМА</span><h1>Агент продаж <span>B2B</span></h1><p>Очередь новых лидов и сделок, подготовка черновиков по данным 1С</p></div><span class="badge">ПОДКЛЮЧЕНИЕ И ПРОВЕРКА</span></header>
+  <section class="notice"><b>Черновики не отправляются клиентам</b><p>Доступ к рабочей почте и 1С ещё не подключён, а связь CRM-активности с исходным письмом не доказана. Подготовленный текст всегда требует проверки сотрудником.</p></section>
+  <section id="version-note" class="version-note" hidden><b>Новая версия сохранена.</b> Для включения лидов и подготовки черновиков требуется перезапуск консоли.</section>
+  <div id="message" role="status" aria-live="polite"></div>
+  <section class="metrics" aria-label="Готовность"><article><span>Битрикс24</span><strong id="crm">Проверка…</strong><small>Лиды, сделки и входящие письма</small></article><article><span>1С</span><strong id="onec">Не подключена</strong><small>Подтверждённые цены и остатки</small></article><article><span>Локальная модель</span><strong id="model">Проверка…</strong><small>Данные обрабатываются на компьютере</small></article><article><span>Обращения</span><strong id="total">—</strong><small id="scan-time">Загрузка CRM ещё не выполнялась</small></article><article><span>Подготовка</span><strong id="processed">—</strong><small id="process-time">Письма ещё не разбирались</small></article></section>
+  <section class="panel"><div class="section-head"><div><h2>Подключения</h2><p>Ключи сохраняются в защищённом хранилище Windows и не отображаются повторно.</p></div></div>
+    <form id="connect"><div class="form-grid">
+      <label>Входящий вебхук Битрикс24<input id="webhook" name="webhook" type="password" autocomplete="new-password" placeholder="Вставьте здесь, не в чат"></label>
+      <label>Номер воронки<input id="categoryId" name="categoryId" type="number" min="0" value="6" required></label>
+      <label>Начальная стадия<select id="newStageId" name="newStageId"><option value="">Сначала проверить доступ к CRM</option></select></label>
+      <label>Адрес внутреннего сервиса 1С<input id="oneCUrl" name="oneCUrl" type="url" placeholder="Адрес согласует администратор 1С"></label>
+      <label>Ключ внутреннего сервиса 1С<input id="oneCToken" name="oneCToken" type="password" autocomplete="new-password" placeholder="Если сервис требует ключ"></label>
+      <label>Локальная модель<input id="model-name" name="model" value="qwen3:4b" required></label>
+    </div><div class="actions"><button type="submit">Проверить и сохранить</button><span>Для чтения сделок нужен доступ CRM. Для будущей переписки — доступ к нужным почтовым ящикам.</span></div></form>
+    <details><summary>Что передать администратору 1С</summary><p>Нужен внутренний HTTP-сервис для чтения товаров, клиентских цен, свободных остатков, единиц измерения, НДС и сроков. Формат интеграции описан в документации проекта. Ввод адреса обычной базы или веб-клиента 1С сам по себе интеграцию не создаёт.</p></details>
+  </section>
+  <section class="panel"><div class="section-head"><div><h2>Входящие обращения</h2><p>Сделки со стадии «Новая» и, когда включено отдельно, новые лиды. Цикл чтения — раз в 5 минут.</p></div><div class="buttons"><button id="scan" type="button">Обновить из CRM</button><button id="poll" class="secondary" type="button">Чтение раз в 5 минут: выкл.</button><button id="leads" class="secondary" type="button">Новые лиды: выкл.</button></div></div>
+    <div class="automation"><div><strong>Подготовка черновиков</strong><p>За один ручной или автоматический запуск разбираются не более 3 писем.</p></div><div class="buttons"><button id="process" type="button">Разобрать до 3 писем</button><button id="processing" class="secondary" type="button">Подготовка ответов: выкл.</button></div></div>
+    <div class="rules"><span>Лиды и сделки разделены</span><span>Только с обратным адресом</span><span>Без повторной отправки</span><span>Без выдуманных цен</span></div>
+    <div id="cases" class="cases"><div class="empty">Подключите Битрикс24, чтобы увидеть реальные обращения. Демонстрационные сделки сюда не добавляются.</div></div>
+  </section>
+  <section class="bottom-grid"><article class="panel"><h2>Проверка модели</h2><p>Учебное письмо о крепеже. Без CRM, без цен и без отправки.</p><button id="demo" class="secondary" type="button">Проверить на учебном письме</button><pre id="demo-result" hidden></pre></article><article class="panel"><h2>Журнал агента</h2><div id="events" class="events"><p>Событий пока нет.</p></div></article></section>
+  <footer>Работает только на этом компьютере · Черновики не отправляются, стадии CRM не меняются</footer>
+</main></body></html>
