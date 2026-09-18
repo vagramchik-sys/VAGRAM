@@ -63,6 +63,7 @@ async function submitForm(event, type) {
     $(type + '-editor').close(); currentPreview = null; $('preview-panel').hidden = true;
     notice(type === 'category' ? 'Категория сохранена. Изменения сразу учитываются в назначенных кабинетах.' : 'Кабинет сохранён локально. Проверьте его предварительный просмотр.');
     await load();
+    if(type === 'category')window.dispatchEvent(new Event('pult:supplier-categories-changed'));
   } catch (error) { $(type + '-error').textContent = error.message; }
   finally { button.disabled = false; }
 }

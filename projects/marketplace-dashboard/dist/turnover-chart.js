@@ -14,7 +14,7 @@
   $('chart-store-options').onchange=e=>{if(e.target.type!=='checkbox')return;e.target.checked?selected.add(e.target.value):selected.delete(e.target.value);void render()};
   $('chart-only-total').onclick=()=>{selected=new Set(['']);renderOptions();void render()};
   $('chart-all-stores').onclick=()=>{selected=new Set(options().map(s=>s.id));renderOptions();void render()};
-  const comparisons=[{id:'yesterday',days:-1,name:'Вчера',dash:'7 5'},{id:'week',days:-7,name:'Неделю назад',dash:'2 5'}];
+  const comparisons=[{id:'yesterday',days:-1,name:'Вчера',dash:'7 5',color:'#e78cb5'},{id:'week',days:-7,name:'Неделю назад',dash:'2 5',color:'#6bcfdf'}];
   $('chart-store-status').insertAdjacentHTML('beforebegin','<div id="chart-compare-controls" class="chart-compare-controls" role="group" aria-label="Сравнить сегодняшний день" hidden><span>Сравнить с</span>'+comparisons.map(c=>'<label><input type="checkbox" value="'+c.id+'" checked><i class="compare-line '+c.id+'"></i>'+c.name+'</label>').join('')+'<small>Сегодня — сплошная линия</small></div>');
   $('chart-compare-controls').onchange=()=>{void render()};
   $('chart-store-status').insertAdjacentHTML('beforebegin','<div id="chart-forecast-controls" class="chart-compare-controls" hidden><label><input id="chart-forecast-enabled" type="checkbox" checked>Прогноз до конца дня</label></div>');
@@ -37,15 +37,15 @@
    if(!chosen.length){$('chart-store-status').textContent='Выберите общий показатель или нужные магазины.';$('ins-chart').removeAttribute('aria-busy');return}
    const enabled=isToday?comparisons.filter(c=>$('chart-compare-controls').querySelector('input[value="'+c.id+'"]').checked).map(c=>({...c,date:PultStoreChart.shiftDate(current.current.from,c.days)})):[];
    const requests=chosen.flatMap(s=>[{store:s,compare:null,period:current.current},...enabled.map(c=>({store:s,compare:c,period:{from:c.date,to:c.date}}))]);
-   if(forecastEnabled)for(const s of chosen)requests.push({store:s,forecastHistory:true,period:{from:PultStoreChart.shiftDate(current.current.from,-7),to:PultStoreChart.shiftDate(current.current.from,-1)}});
+   if(forecastEnabled)for(const s of chosen)requests.push({store:s,forecastHistory:true,period:{from:PultStoreChart.shiftDate(current.current.from,-21),to:PultStoreChart.shiftDate(current.current.from,-1)}});
    const results=await Promise.allSettled(requests.map(r=>getReport(r.store.id,r.period)));if(seq!==version)return;
    const loaded=requests.map((r,i)=>({...r,report:results[i].status==='fulfilled'?results[i].value:null,error:results[i].status==='rejected'}));
    const series=loaded.filter(r=>!r.compare&&!r.forecastHistory).map(r=>r.report?{...r.store,report:r.report,points:PultStoreChart.points(r.report,key),total:PultStoreChart.totals(r.report,key)}:{...r.store,points:[],total:null,error:true});
    const historical=loaded.filter(r=>r.compare).map(r=>{
     const fullDay=r.report?PultStoreChart.totals(r.report,key):null,points=r.report?PultStoreChart.alignedPoints(r.report,key,current.current.from):[],reference=!points.some(p=>p.value!==null)&&fullDay!==null;
-    return {...r.store,id:(r.store.id||'total')+'@'+r.compare.id,name:r.store.name+' · '+r.compare.name,date:r.compare.date,dash:r.compare.dash,reference,error:r.error,points:reference?[{time:Date.parse(current.current.from+'T00:00:00+03:00')+86400000,label:r.compare.date,value:fullDay}]:points};
+    return {...r.store,id:(r.store.id||'total')+'@'+r.compare.id,name:r.store.name+' · '+r.compare.name,color:r.compare.color,date:r.compare.date,dash:r.compare.dash,reference,error:r.error,points:reference?[{time:Date.parse(current.current.from+'T00:00:00+03:00')+86400000,label:r.compare.date,value:fullDay}]:points};
    });
-   const forecastColors=['#f28db7','#f3ad70','#c2a6f3','#7dd8ed','#b9d982'];
+   const forecastColors=['#ba9af2','#f3ad70','#80c6e8','#b9d982','#eab6cf'];
    const forecasts=forecastEnabled?series.map((s,i)=>{const history=loaded.find(r=>r.forecastHistory&&r.store.id===s.id),value=PultStoreChart.orderForecast(s.report,history?.report,key);return {...s,id:(s.id||'total')+'@forecast',name:s.name+' · прогноз',forecast:true,color:forecastColors[i%forecastColors.length],dash:'5 5',...value}}):[];
    const failed=series.filter(s=>s.error).map(s=>s.name),empty=series.filter(s=>!s.error&&!s.points.some(p=>p.value!==null)).map(s=>s.name);
    const historyFailed=historical.filter(s=>s.error).map(s=>s.name),historyMissing=historical.filter(s=>!s.error&&!s.reference&&!s.points.some(p=>p.value!==null)).map(s=>s.name);
@@ -68,7 +68,7 @@
     }).join('')+'</div>';
     details.insertAdjacentHTML('beforeend','<p class="comparison-method">Процент изменения считается только по снимкам на сопоставимое время: прошлый снимок не позднее сегодняшнего и отстаёт не больше интервала обновления: 5 минут для заказов, 30 минут для финансов. Итоги полных дней приведены отдельно; пропуски не заменяются нулями.</p>');
    }
-   if(forecastEnabled)details.insertAdjacentHTML('beforeend','<div class="chart-forecast-summary"><p><b>Ориентировочный прогноз до 24:00 МСК</b> · сплошная линия — факты сегодня; цветной пунктир с полыми точками — прогноз.</p>'+forecasts.map(s=>'<p><span style="color:'+s.color+'">●</span> <b>'+esc(s.name)+'</b>: '+(s.status==='available'?format(s.endValue)+' к 24:00 · среднее за 7 дней: '+format(s.average):'Недоступен: '+esc(s.reason))+'</p>').join('')+'<p>Ориентировочный прогноз: среднее за 7 полных дней, не ниже уже заказанного. Это ориентир, сезонность и темп текущего дня не учтены. Пунктир соединяет последний факт с ориентиром на конец дня; промежуточные точки не являются отдельным почасовым прогнозом. Прогноз не включён в фактические итоги.</p></div>');
+   if(forecastEnabled)details.insertAdjacentHTML('beforeend','<div class="chart-forecast-summary"><p><b>Ориентировочный прогноз до 24:00 МСК</b> · сплошная линия — факты сегодня; цветной пунктир — ориентир. Точки видны при наведении или выборе с клавиатуры.</p>'+forecasts.map(s=>'<p><span style="color:'+s.color+'">●</span> <b>'+esc(s.name)+'</b>: '+(s.status==='available'?format(s.endValue)+' к 24:00 · среднее трёх таких же дней недели: '+format(s.average)+'<br><small>'+s.basis.map(b=>short(b.date)+': '+format(b.value)).join(' · ')+'</small>':'Недоступен: '+esc(s.reason))+'</p>').join('')+'<p>Ориентировочный прогноз: среднее того же дня недели за последние три недели, не ниже уже заказанного. Например, пятница сравнивается только с тремя предыдущими пятницами. Это ориентир: темп текущего дня, акции и праздники не учтены. Пунктир соединяет последний факт с ориентиром на конец дня; промежуточные точки не являются отдельным почасовым прогнозом. Прогноз не включён в фактические итоги.</p></div>');
    if(oneDay){const rows=series.flatMap(s=>s.points.filter(p=>p.value!==null).slice(-8).map(p=>({name:s.name,...p}))).sort((a,b)=>b.time-a.time);details.insertAdjacentHTML('beforeend','<details><summary>История загрузок</summary><div class="table-wrap"><table><thead><tr><th>Магазин</th><th>Время МСК</th><th class="numeric">Итог дня</th></tr></thead><tbody>'+rows.map(p=>'<tr><td>'+esc(p.name)+'</td><td>'+time(p.time)+'</td><td class="numeric">'+format(p.value)+'</td></tr>').join('')+'</tbody></table></div></details>')}
   }
   function draw(series,current,oneDay,title,format,formatDelta,ratio){
@@ -84,33 +84,67 @@
     if(s.reference)svg+='<path data-series="'+esc(s.id)+'" d="M'+L+','+y(s.points[0].value)+'H'+(W-R)+'" fill="none" stroke="'+s.color+'" stroke-width="2"'+dash+'><title>'+esc(s.name)+' · итог полного дня: '+format(s.points[0].value)+'</title></path>';
     else for(const segment of PultStoreChart.segments(s.points))if(segment.length>1)svg+='<path data-series="'+esc(s.id||'total')+'" d="'+segment.map((p,i)=>(i?'L':'M')+x(p.time)+','+y(p.value)).join(' ')+'" fill="none" stroke="'+s.color+'" stroke-width="'+(oneDay?(s.id?1.6:2.2):(s.id?2.5:3.5))+'" stroke-linejoin="round" stroke-linecap="round"'+dash+'/>';
     s.points.forEach((p,index)=>{
-     if(s.forecast){if(index>0)svg+='<circle data-forecast-point="true" cx="'+x(p.time)+'" cy="'+y(p.value)+'" r="2.5" fill="var(--surface, #15171a)" stroke="'+s.color+'" stroke-width="1.5"><title>'+esc(s.name)+' · '+(index===s.points.length-1?'24:00':time(p.time))+' МСК · ориентир: '+esc(format(p.value))+'</title></circle>';return}
+     if(s.forecast&&index===0)return;
      const detail=PultStoreChart.observation(s.points,index);if(!detail)return;
-     const pointIndex=observations.push({series:s,...detail})-1,label=s.name+' · '+(s.reference?'Итог полного дня '+short(s.date):oneDay?time(p.time)+' МСК':short(p.label))+': '+format(p.value);
-     svg+='<circle class="chart-point" data-point="'+pointIndex+'" data-series="'+esc(s.id||'total')+'" role="button" tabindex="-1" aria-pressed="false" aria-label="'+esc(label)+'" cx="'+x(p.time)+'" cy="'+y(p.value)+'" r="'+(oneDay?2:4.5)+'" fill="'+s.color+'"><title>'+esc(label)+'</title></circle>';
+     const pointIndex=observations.push({series:s,...detail})-1,label=s.name+' · '+(s.reference?'Итог полного дня '+short(s.date):oneDay?(p.time===end?'24:00':time(p.time))+' МСК':short(p.label))+(s.forecast?' · ориентир':'')+': '+format(p.value);
+     svg+='<circle class="chart-point'+(s.forecast?' chart-forecast-point':'')+'" data-point="'+pointIndex+'" data-series="'+esc(s.id||'total')+'" role="button" tabindex="-1" aria-pressed="false" aria-label="'+esc(label)+'" cx="'+x(p.time)+'" cy="'+y(p.value)+'" r="3.5" fill="'+s.color+'"/>';
     });
    }
-   $('ins-chart').innerHTML=svg+'</svg>';
-   const dots=[...$('ins-chart').querySelectorAll('[data-point]')],box=$('chart-inspector');
-   let active=0;
+   $('ins-chart').innerHTML=svg+'<line class="chart-crosshair" x1="0" x2="0" y1="'+T+'" y2="'+(H-B)+'" visibility="hidden"/></svg><div class="chart-hover-tooltip" role="tooltip" hidden></div>';
+   const host=$('ins-chart'),svgNode=host.querySelector('svg'),crosshair=host.querySelector('.chart-crosshair'),tooltip=host.querySelector('.chart-hover-tooltip'),dots=[...host.querySelectorAll('[data-point]')],box=$('chart-inspector');
+   const tolerance=(['orderedRevenue','orderedUnits'].includes($('ins-chart-metric').value)?5:30)*60000;
+   let active=-1,tooltipIndex=-1,pointerInside=false;
    function show(index,focus=false){
     if(!observations[index])return;
+    if(active===index){if(focus)dots[index].focus({preventScroll:true});return}
     active=index;const {series:s,point,previous,delta}=observations[index];inspected={id:s.id,time:point.time};
     box.hidden=false;$('chart-interaction-hint').hidden=false;box.style.setProperty('--series-color',s.color);
-    $('chart-point-label').innerHTML='<span class="chart-point-kicker">'+(s.reference?'Уровень полного дня':'Выбранная точка')+'</span><b>'+esc(s.name)+'</b><span>'+(s.reference?'Итог за '+short(s.date):oneDay?(s.date?short(s.date)+' · ':'')+'Загрузка '+time(point.time)+' МСК':short(point.label))+' · '+esc(title)+'</span>';
-    $('chart-point-value').innerHTML='<strong>'+format(point.value)+'</strong><small>'+(s.reference?'Почасовая история отсутствует':delta===null?'Нет предыдущей точки для сравнения':(delta>0?'+':'')+formatDelta(delta)+(oneDay?' с '+time(previous.time):' к '+short(previous.label)))+'</small>';
+    $('chart-point-label').innerHTML='<span class="chart-point-kicker">'+(s.reference?'Уровень полного дня':s.forecast?'Ориентир · не фактическая загрузка':'Выбранная точка')+'</span><b>'+esc(s.name)+'</b><span>'+(s.reference?'Итог за '+short(s.date):oneDay?(s.date?short(s.date)+' · ':'')+(s.forecast?'Ориентир на ':'Загрузка ')+(point.time===end?'24:00':time(point.time))+' МСК':short(point.label))+' · '+esc(title)+'</span>';
+    $('chart-point-value').innerHTML='<strong>'+esc(format(point.value))+'</strong><small>'+(s.forecast?'Пунктир к ориентиру на конец дня; не отдельный почасовой прогноз':s.reference?'Почасовая история отсутствует':delta===null?'Нет предыдущей точки для сравнения':(delta>0?'+':'')+formatDelta(delta)+(oneDay?' с '+time(previous.time):' к '+short(previous.label)))+'</small>';
     dots.forEach((dot,i)=>{dot.setAttribute('aria-pressed',String(i===index));dot.setAttribute('tabindex',i===index?'0':'-1')});
     $('chart-point-prev').disabled=index===0;$('chart-point-next').disabled=index===observations.length-1;
     if(focus)dots[index].focus({preventScroll:true});
    }
-   $('ins-chart').onpointerover=e=>{const dot=e.target.closest('[data-point]');if(dot)show(Number(dot.dataset.point))};
-   $('ins-chart').onfocusin=e=>{const dot=e.target.closest('[data-point]');if(dot)show(Number(dot.dataset.point))};
-   $('ins-chart').onclick=e=>{const dot=e.target.closest('[data-point]');if(dot)show(Number(dot.dataset.point),true)};
+   function hideHover(){tooltip.hidden=true;tooltipIndex=-1;crosshair.setAttribute('visibility','hidden');dots.forEach(dot=>dot.classList.remove('chart-hover-visible'))}
+   function hover(index,clientX,clientY){
+    const item=observations[index];if(!item)return;
+    if(tooltipIndex!==index){
+     tooltipIndex=index;const at=item.point.time,matched=[];
+     const rows=series.map(s=>{
+      let p=s.reference?s.points[0]:s===item.series?item.point:s.forecast?s.points.find(p=>p.time===at):oneDay?s.points.filter(p=>p.time<=at&&at-p.time<=tolerance).at(-1):s.points.find(p=>p.time===at);
+      if(!Number.isFinite(p?.value))p=null;
+      if(p&&!s.reference){const i=observations.findIndex(o=>o.series===s&&o.point===p);if(i>=0)matched.push(i)}
+      const note=s.reference?'итог полного дня · '+short(s.date):s.forecast?'ориентир':p?oneDay?(p.time===end?'24:00':time(p.originalTime??p.time))+' МСК'+(s.date?' · '+short(s.date):''):'':oneDay?'нет снимка на сопоставимое время':'нет данных';
+      return '<div class="chart-tooltip-row"><i style="background:'+s.color+'"></i><span>'+esc(s.name)+'<small>'+esc(note)+'</small></span><b>'+esc(format(p?.value??null))+'</b></div>';
+     });
+     const stamp=item.series.reference?'Итоги полных дней':oneDay?short(current.current.from)+' · '+(at===end?'24:00':time(at))+' МСК':short(item.point.label);
+     tooltip.innerHTML='<div class="chart-tooltip-date">'+esc(stamp)+'</div>'+rows.join('');
+     dots.forEach((dot,i)=>dot.classList.toggle('chart-hover-visible',matched.includes(i)));
+     crosshair.setAttribute('x1',x(at));crosshair.setAttribute('x2',x(at));crosshair.setAttribute('visibility','visible');
+    }
+    tooltip.hidden=false;
+    const bounds=tooltip.getBoundingClientRect(),margin=10;
+    tooltip.style.left=Math.max(margin,Math.min(clientX+16,window.innerWidth-bounds.width-margin))+'px';
+    tooltip.style.top=Math.max(margin,Math.min(clientY+16,window.innerHeight-bounds.height-margin))+'px';
+   }
+   function nearest(event){
+    if(!host.contains(svgNode))return -1;
+    const rect=svgNode.getBoundingClientRect(),px=(event.clientX-rect.left)/rect.width*W,py=(event.clientY-rect.top)/rect.height*H;
+    if(px<L||px>W-R||py<T||py>H-B)return -1;
+    const candidates=observations.map((item,index)=>({item,index})).filter(({item})=>!item.series.reference);
+    return (candidates.length?candidates:observations.map((item,index)=>({item,index}))).reduce((best,row)=>{const distance=Math.abs(x(row.item.point.time)-px)*4+Math.abs(y(row.item.point.value)-py);return !best||distance<best.distance?{index:row.index,distance}:best},null)?.index??-1;
+   }
+   host.onpointerover=null;
+   host.onpointermove=e=>{pointerInside=true;const index=nearest(e);if(index<0){hideHover();return}show(index);hover(index,e.clientX,e.clientY)};
+   host.onpointerleave=()=>{pointerInside=false;hideHover()};
+   host.onfocusin=e=>{const dot=e.target.closest('[data-point]');if(!dot)return;const index=Number(dot.dataset.point),rect=dot.getBoundingClientRect();show(index);hover(index,rect.left,rect.top)};
+   host.onfocusout=e=>{if(!host.contains(e.relatedTarget)&&!pointerInside)hideHover()};
+   host.onclick=e=>{const dot=e.target.closest('[data-point]'),index=dot?Number(dot.dataset.point):nearest(e);if(index>=0){show(index,true);hover(index,e.clientX,e.clientY)}};
    $('ins-chart').onkeydown=e=>{
     const dot=e.target.closest('[data-point]');if(!dot||!['ArrowLeft','ArrowRight','Home','End','Enter',' '].includes(e.key))return;
     e.preventDefault();const index=Number(dot.dataset.point),next=e.key==='Home'?0:e.key==='End'?observations.length-1:e.key==='ArrowLeft'?Math.max(0,index-1):e.key==='ArrowRight'?Math.min(observations.length-1,index+1):index;show(next,true);
    };
-   $('chart-point-prev').onclick=()=>show(active-1);$('chart-point-next').onclick=()=>show(active+1);
+   $('chart-point-prev').onclick=()=>show(active-1,true);$('chart-point-next').onclick=()=>show(active+1,true);
    const restored=inspected?observations.findIndex(p=>p.series.id===inspected.id&&p.point.time===inspected.time):-1;
    show(restored>=0?restored:observations.findLastIndex(p=>p.series.id===observations[0]?.series.id));
   }

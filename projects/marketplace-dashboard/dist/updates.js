@@ -1,54 +1,57 @@
 (function(){
  'use strict';
+ const model=window.PultUpdatesModel;if(!model)return;
+ window.PultUpdates?.destroy?.();
  const STORE_KEY='pult-updates-open-v1',POLL_MS=60000;
  const esc=value=>String(value??'').replace(/[&<>"']/g,char=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[char]));
- const date=value=>{if(!value)return 'Дата не указана';const parsed=new Date(value);return Number.isFinite(parsed.getTime())?parsed.toLocaleDateString('ru-RU',{timeZone:'Europe/Moscow',day:'numeric',month:'long',year:'numeric'}):String(value)};
- const stamp=value=>{if(!value)return '';const parsed=new Date(value);return Number.isFinite(parsed.getTime())?parsed.toLocaleString('ru-RU',{timeZone:'Europe/Moscow',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'})+' МСК':''};
+ const stamp=value=>{const parsed=new Date(value);return value&&Number.isFinite(parsed.getTime())?parsed.toLocaleString('ru-RU',{timeZone:'Europe/Moscow',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit',second:'2-digit'})+' МСК':''};
+ const date=value=>/^\d{4}-\d{2}-\d{2}$/.test(value)?new Date(value+'T12:00:00Z').toLocaleDateString('ru-RU',{timeZone:'Europe/Moscow',day:'numeric',month:'long',year:'numeric'})+' · время не сохранено':stamp(value)||'Дата не указана';
  const root=document.createElement('div');root.className='pult-updates-root';
- root.innerHTML=`<button class="pult-updates-launch" type="button" aria-controls="pult-updates-drawer" aria-expanded="false"><span aria-hidden="true">✦</span> Что нового</button>
-  <div class="pult-updates-backdrop" aria-hidden="true"></div>
-  <aside class="pult-updates-drawer" id="pult-updates-drawer" aria-label="Что нового в Пульте" aria-hidden="true">
-   <header class="pult-updates-head"><div><span>ЖУРНАЛ ПРОДУКТА</span><h2>Что нового</h2><p>Готовые изменения и текущая работа</p></div><button class="pult-updates-close" type="button" aria-label="Закрыть панель обновлений">×</button></header>
-   <div class="pult-updates-state" role="status" aria-live="polite">Загружаем изменения…</div>
-   <div class="pult-updates-list"></div>
-   <footer class="pult-updates-foot"></footer>
-  </aside>`;
+ root.innerHTML=`<button class="pult-updates-launch" type="button" aria-controls="pult-updates-drawer" aria-expanded="false"><span aria-hidden="true">✦</span> Что нового</button><div class="pult-updates-backdrop" aria-hidden="true"></div><aside class="pult-updates-drawer" id="pult-updates-drawer" aria-labelledby="pult-updates-title" aria-hidden="true"><header class="pult-updates-head"><div><span>ЖУРНАЛ ПРОДУКТА</span><h2 id="pult-updates-title">Что нового</h2><p>Планы, выполненные задачи и следующие шаги</p></div><button class="pult-updates-close" type="button" aria-label="Закрыть панель обновлений">×</button></header><div class="pult-updates-controls"><label class="pult-updates-search-label" for="pult-updates-search">Поиск по журналу</label><div class="pult-updates-search"><input id="pult-updates-search" type="search" placeholder="Задача, результат или зависимость" autocomplete="off"><button class="pult-updates-clear" type="button" aria-label="Очистить поиск" hidden>×</button></div><div class="pult-updates-filters" role="group" aria-label="Статус задачи">${[['all','Все'],...Object.entries(model.statuses)].map(([key,label])=>'<button type="button" data-update-filter="'+key+'" aria-pressed="'+(key==='all')+'">'+label+' <span>0</span></button>').join('')}</div><div class="pult-updates-count" role="status" aria-live="polite"></div></div><div class="pult-updates-state" role="status" aria-live="polite">Загружаем изменения…</div><div class="pult-updates-list"></div><footer class="pult-updates-foot"></footer></aside>`;
  document.body.append(root);
- const drawer=root.querySelector('.pult-updates-drawer'),launch=root.querySelector('.pult-updates-launch'),close=root.querySelector('.pult-updates-close'),backdrop=root.querySelector('.pult-updates-backdrop'),state=root.querySelector('.pult-updates-state'),list=root.querySelector('.pult-updates-list'),foot=root.querySelector('.pult-updates-foot');
- let opened=false,lastFocus=null,busy=false,lastRequest=0,data=null,destroyed=false;
+ const $=selector=>root.querySelector(selector),drawer=$('.pult-updates-drawer'),launch=$('.pult-updates-launch'),close=$('.pult-updates-close'),backdrop=$('.pult-updates-backdrop'),state=$('.pult-updates-state'),list=$('.pult-updates-list'),foot=$('.pult-updates-foot'),search=$('#pult-updates-search'),clear=$('.pult-updates-clear'),filterButtons=[...root.querySelectorAll('[data-update-filter]')];
+ const expanded=new Set();let opened=false,lastFocus=null,busy=false,lastRequest=0,lastSuccess=0,data=null,destroyed=false,selectedStatus='all',rendering=false,controller=null;
  function preference(){try{const saved=localStorage.getItem(STORE_KEY);return saved===null?true:saved==='true'}catch{return true}}
  function remember(value){try{localStorage.setItem(STORE_KEY,String(value))}catch{}}
+ function modality(){const modal=window.matchMedia('(max-width:900px)').matches;drawer.setAttribute('role',modal?'dialog':'complementary');if(modal&&opened)drawer.setAttribute('aria-modal','true');else drawer.removeAttribute('aria-modal');return modal;}
  function setOpen(value,{focus=true,save=true}={}){
-  opened=Boolean(value);root.classList.toggle('is-open',opened);document.body.classList.toggle('pult-updates-open',opened);drawer.setAttribute('aria-hidden',String(!opened));launch.setAttribute('aria-expanded',String(opened));launch.tabIndex=opened?-1:0;
+  const wasOpen=opened;opened=Boolean(value);root.classList.toggle('is-open',opened);document.body.classList.toggle('pult-updates-open',opened);drawer.setAttribute('aria-hidden',String(!opened));drawer.inert=!opened;launch.setAttribute('aria-expanded',String(opened));launch.tabIndex=opened?-1:0;modality();
   if(save)remember(opened);
-  if(opened){lastFocus=document.activeElement;if(focus)close.focus({preventScroll:true})}
-  else if(focus){const target=lastFocus instanceof HTMLElement&&lastFocus!==document.body&&document.contains(lastFocus)&&!root.contains(lastFocus)?lastFocus:launch;target.focus({preventScroll:true})}
+  if(opened){if(!wasOpen)lastFocus=document.activeElement;if(focus)close.focus({preventScroll:true});}
+  else if(focus){const target=lastFocus instanceof HTMLElement&&lastFocus!==document.body&&document.contains(lastFocus)&&!root.contains(lastFocus)?lastFocus:launch;target.focus({preventScroll:true});}
  }
- function validate(value){return value&&typeof value==='object'&&Array.isArray(value.entries)&&value.entries.every(item=>item&&typeof item.id==='string'&&typeof item.title==='string'&&typeof item.details==='string'&&['ready','progress'].includes(item.status))}
+ function bulletSection(title,items,empty,kind){return '<section class="pult-update-section '+kind+'"><h4>'+title+(items.length?' <span>'+items.length+'</span>':'')+'</h4>'+(items.length?'<ul>'+items.map(v=>'<li>'+esc(v)+'</li>').join('')+'</ul>':'<p class="pult-update-unspecified">'+empty+'</p>')+'</section>';}
+ function card(item){
+  const dependencies=model.dependencies(item,data.entries),estimate=model.estimate(item),rowId='pult-update-'+encodeURIComponent(item.id);
+  const dependencyHtml=dependencies.length?'<ul>'+dependencies.map(d=>'<li>'+esc(d.label)+(d.resolved&&!d.self?'<button class="pult-update-dependency" type="button" data-update-dependency="'+esc(d.id)+'">'+esc(model.statuses[d.status])+' · открыть запись <span aria-hidden="true">↗</span></button>':d.self?'<small>Ссылка на эту же запись</small>':d.id?'<small>Связанная запись пока не найдена</small>':'')+'</li>').join('')+'</ul>':'<p class="pult-update-unspecified">Не указаны</p>';
+  return '<details class="pult-update-card" id="'+esc(rowId)+'" data-update-id="'+esc(item.id)+'"'+(expanded.has(item.id)?' open':'')+'><summary><div class="pult-update-meta"><time datetime="'+esc(item.updatedAt||item.date)+'">'+esc(date(item.updatedAt||item.date))+'</time><span class="is-'+item.status+'">'+esc(model.statuses[item.status])+'</span></div><div class="pult-update-title"><h3>'+esc(item.title)+'</h3><span class="pult-update-chevron" aria-hidden="true">⌄</span></div><p>'+esc(item.details)+'</p><div class="pult-update-preview">'+(item.status==='ready'?'Завершено':item.remaining.length?'Осталось шагов: '+item.remaining.length:'Следующие шаги внутри')+'<span>Подробнее</span></div></summary><div class="pult-update-detail">'+bulletSection('Что сделано',item.completed,'Отдельные выполненные пункты не перечислены.','is-completed')+(item.status==='ready'?'':bulletSection('Что осталось',item.remaining,'Следующие шаги пока не указаны.','is-remaining'))+'<section class="pult-update-section"><h4>Зависимости</h4>'+dependencyHtml+'</section>'+bulletSection('Проверка',item.verification,'Результат проверки не указан.','is-verification')+'<section class="pult-update-section pult-update-estimate"><h4>'+esc(estimate.text)+'</h4>'+(estimate.basis?'<p>'+esc(estimate.basis)+'</p>':'')+'</section></div></details>';
+ }
  function render(){
   if(!data)return;
-  const entries=[...data.entries].sort((a,b)=>String(b.date).localeCompare(String(a.date)));
-  list.innerHTML=entries.map(item=>`<article class="pult-update-card"><div class="pult-update-meta"><time datetime="${esc(item.date)}">${esc(date(item.date))}</time><span class="is-${item.status}">${item.status==='ready'?'Готово':'В работе'}</span></div><h3>${esc(item.title)}</h3><p>${esc(item.details)}</p></article>`).join('')||'<div class="pult-updates-empty">Пока нет опубликованных изменений.</div>';
-  state.textContent='';state.className='pult-updates-state';foot.textContent=data.updatedAt?'Обновлено '+stamp(data.updatedAt):'';
+  const active=document.activeElement,focusedId=active?.closest?.('[data-update-id]')?.dataset.updateId,focusedDependency=active?.dataset?.updateDependency,wasSummary=active?.tagName==='SUMMARY',scroll=list.scrollTop;
+  for(const detail of list.querySelectorAll('details[data-update-id]')){if(detail.open)expanded.add(detail.dataset.updateId);else expanded.delete(detail.dataset.updateId);}
+  const selected=model.select(data.entries,{status:selectedStatus,query:search.value});rendering=true;
+  list.innerHTML=selected.rows.map(card).join('')||'<div class="pult-updates-empty">'+(data.entries.length?'По этим условиям записей нет. Измените поиск или статус.':'В журнале пока нет записей.')+'</div>';rendering=false;list.scrollTop=scroll;
+  for(const button of filterButtons){button.setAttribute('aria-pressed',String(button.dataset.updateFilter===selectedStatus));button.querySelector('span').textContent=selected.counts[button.dataset.updateFilter];}
+  clear.hidden=!search.value;$('.pult-updates-count').textContent='Показано '+selected.rows.length+' из '+selected.total+' записей'+(search.value.trim()?' · поиск по всем разделам карточек':'');
+  if(focusedId&&(wasSummary||focusedDependency)){const target=[...list.querySelectorAll('[data-update-id]')].find(el=>el.dataset.updateId===focusedId);if(target){const next=focusedDependency?[...target.querySelectorAll('[data-update-dependency]')].find(el=>el.dataset.updateDependency===focusedDependency):target.querySelector('summary');next?.focus({preventScroll:true});}}
+  renderClock();
  }
+ function renderClock(){const next=Math.max(0,Math.ceil((lastRequest+POLL_MS-Date.now())/1000));foot.innerHTML='<span>Журнал: '+esc(data?.updatedAt?stamp(data.updatedAt):'ещё не загружен')+'</span><span>Проверено: '+esc(lastSuccess?stamp(lastSuccess):'ещё не проверено')+'</span><span>'+(busy?'Проверяем новые записи…':'Следующая проверка через '+next+' сек.')+'</span>';}
  async function refresh(force=false){
-  if(destroyed||busy||document.hidden)return;
-  if(!force&&Date.now()-lastRequest<POLL_MS-1000)return;
-  busy=true;lastRequest=Date.now();
-  if(!data){state.className='pult-updates-state';state.textContent='Загружаем изменения…'}
-  try{
-   const response=await fetch('/api/changes',{headers:{Accept:'application/json'},cache:'no-store'}),value=await response.json();
-   if(!response.ok)throw Error(value?.error||'Не удалось загрузить изменения');
-   if(!validate(value))throw Error('Сервер вернул неполный журнал изменений');
-   data=value;render();
-  }catch(error){
-   state.className='pult-updates-state is-error';state.textContent=data?'Не удалось проверить новые записи. Ниже сохранён последний загруженный журнал.':(error?.message||'Не удалось загрузить изменения')+'. Повторим автоматически.';
-  }finally{busy=false}
+  if(destroyed||busy||document.hidden)return;if(!force&&Date.now()-lastRequest<POLL_MS-1000)return;busy=true;lastRequest=Date.now();controller=new AbortController();const timeout=setTimeout(()=>controller?.abort(),20000);
+  if(!data){state.className='pult-updates-state';state.textContent='Загружаем изменения…';}renderClock();
+  try{const response=await fetch('/api/changes',{headers:{Accept:'application/json'},cache:'no-store',signal:controller.signal});if(!response.ok)throw Error('Не удалось загрузить изменения.');const value=model.normalize(await response.json());if(destroyed)return;data=value;lastSuccess=Date.now();state.textContent='';state.className='pult-updates-state';render();}
+  catch{if(!destroyed){state.className='pult-updates-state is-error';state.textContent=data?'Не удалось проверить новые записи. Показан последний загруженный журнал с прежним временем.':'Не удалось загрузить журнал. Повторим автоматически через минуту.';}}
+  finally{clearTimeout(timeout);controller=null;busy=false;if(!destroyed)renderClock();}
  }
+ list.addEventListener('toggle',event=>{if(rendering||!event.target.matches?.('details[data-update-id]'))return;const detail=event.target;if(detail.open)expanded.add(detail.dataset.updateId);else expanded.delete(detail.dataset.updateId);},true);
+ list.addEventListener('click',event=>{const button=event.target.closest('[data-update-dependency]');if(!button||!data?.entries.some(e=>e.id===button.dataset.updateDependency))return;selectedStatus='all';search.value='';const targetId=button.dataset.updateDependency;expanded.add(targetId);render();const target=[...list.querySelectorAll('[data-update-id]')].find(el=>el.dataset.updateId===targetId);if(target){target.open=true;expanded.add(targetId);target.scrollIntoView({block:'nearest',behavior:window.matchMedia('(prefers-reduced-motion:reduce)').matches?'instant':'smooth'});target.querySelector('summary').focus({preventScroll:true});}});
+ search.addEventListener('input',render);clear.addEventListener('click',()=>{search.value='';render();search.focus();});for(const button of filterButtons)button.addEventListener('click',()=>{selectedStatus=button.dataset.updateFilter;render();});
  launch.addEventListener('click',()=>setOpen(true));close.addEventListener('click',()=>setOpen(false));backdrop.addEventListener('click',()=>setOpen(false));
- document.addEventListener('keydown',event=>{if(opened&&event.key==='Escape'){event.preventDefault();setOpen(false)}});
- const onVisibility=()=>{if(!document.hidden)void refresh()};document.addEventListener('visibilitychange',onVisibility);
- const timer=setInterval(()=>void refresh(),POLL_MS);
+ function onKey(event){if(!opened)return;if(event.key==='Escape'){event.preventDefault();setOpen(false);return;}if(event.key==='Tab'&&modality()){const focusable=[...drawer.querySelectorAll('button:not([disabled]),input,summary,a[href]')].filter(el=>!el.hidden&&el.getClientRects().length);const first=focusable[0],last=focusable.at(-1);if(event.shiftKey&&(document.activeElement===first||!drawer.contains(document.activeElement))){event.preventDefault();last?.focus();}else if(!event.shiftKey&&(document.activeElement===last||!drawer.contains(document.activeElement))){event.preventDefault();first?.focus();}}}
+ const onVisibility=()=>{if(!document.hidden)void refresh();};document.addEventListener('keydown',onKey);document.addEventListener('visibilitychange',onVisibility);window.addEventListener('resize',modality);
+ const timer=setInterval(()=>void refresh(),POLL_MS),clockTimer=setInterval(()=>{if(opened&&!document.hidden)renderClock();},1000);
  setOpen(preference(),{focus:false,save:false});void refresh(true);
- window.PultUpdates={open:()=>setOpen(true),close:()=>setOpen(false),refresh:()=>refresh(true),destroy(){destroyed=true;clearInterval(timer);document.removeEventListener('visibilitychange',onVisibility);document.body.classList.remove('pult-updates-open');root.remove();delete window.PultUpdates}};
+ window.PultUpdates={open:()=>setOpen(true),close:()=>setOpen(false),refresh:()=>refresh(true),destroy(){destroyed=true;controller?.abort();clearInterval(timer);clearInterval(clockTimer);document.removeEventListener('keydown',onKey);document.removeEventListener('visibilitychange',onVisibility);window.removeEventListener('resize',modality);document.body.classList.remove('pult-updates-open');root.remove();delete window.PultUpdates;}};
 })();

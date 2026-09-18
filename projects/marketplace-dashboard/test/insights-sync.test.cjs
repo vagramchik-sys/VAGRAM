@@ -64,3 +64,36 @@ test('429 retry-after blocks both schedules and manual requests across restart',
  const client=create(f.options);await client.syncToday('1');assert.equal(client.schedule('1').orders.nextAt,'2026-09-18T09:15:00.000Z');
  let requests=0;f.options.api=async()=>{requests++;throw Error('must not request')};const restarted=create(f.options);f.advance(5*60000);restarted.ensure();await restarted.sync('1');await restarted.syncToday('1');await tick();assert.equal(requests,0);
 });
+
+test('supplemental funnel uses orders priority, one page per job and the durable analytics gate',async t=>{
+ const f=fixture(t);let requested=0,accepted=0;
+ f.options.funnel={due:()=>true,request:()=>{requested++;return {dimension:['sku'],metrics:['ordered_units','hits_view_pdp','hits_tocart_pdp'],limit:1000,offset:0}},accept:()=>{accepted++},fail:()=>assert.fail('unexpected funnel failure')};
+ const client=create(f.options);client.ensure();await settled(client);assert.equal(requested,0);assert.equal(f.calls.length,2);
+ f.advance(61000);client.ensure();await settled(client);assert.equal(requested,1);assert.equal(accepted,1);assert.equal(f.calls.length,3);assert.equal(f.calls.at(-1).payload.dimension[0],'sku');
+ const restarted=create(f.options);await restarted.syncFunnel('1');assert.equal(requested,1);
+ f.advance(239000);restarted.ensure();await settled(restarted);assert.equal(requested,1);assert.equal(f.calls.at(-1).payload.dimension[0],'day');
+});
+
+test('supplemental 429 backs off orders too without changing last successful orders or leaking upstream errors',async t=>{
+ const f=fixture(t);await f.client.sync('1');const orders=f.client.read('1').orders;let failure;
+ f.options.funnel={due:()=>true,request:()=>({dimension:['sku']}),accept:()=>assert.fail('must fail'),fail:(id,reason)=>{failure=reason}};
+ f.options.api=async()=>{throw Object.assign(Error('upstream-secret 429'),{status:429,retryAfterMs:10*60000})};f.advance(61000);
+ const client=create(f.options);await client.syncFunnel('1');assert.equal(failure.status,429);assert.equal(failure.message,undefined);assert.deepEqual(client.read('1').orders,orders);assert.equal(client.read('1').analyticsRetryAt,'2026-09-18T09:11:01.000Z');
+ assert.equal(fs.readFileSync(f.file,'utf8').includes('upstream-secret'),false);assert.equal(JSON.stringify(client.status()).includes('upstream-secret'),false);
+ let requests=0;f.options.api=async()=>{requests++;throw Error('must not request')};f.advance(5*60000);const restarted=create(f.options);restarted.ensure();await restarted.syncFunnel('1');await restarted.syncToday('1');await tick();assert.equal(requests,0);
+});
+
+test('funnel holds the same job lock so orders and supplemental pages cannot overlap',async t=>{
+ const f=fixture(t);await f.client.sync('1');f.advance(61000);let release,entered;
+ const waiting=new Promise(resolve=>{entered=resolve});
+ f.options.funnel={due:()=>true,request:()=>({dimension:['sku']}),accept:()=>{},fail:()=>assert.fail('unexpected failure')};
+ f.options.api=async()=>{entered();return new Promise(resolve=>{release=()=>resolve({result:{data:[]}})})};
+ const client=create(f.options),pending=client.syncFunnel('1');await waiting;assert.equal(client.status()['1'].mode,'funnel');await client.syncToday('1');await client.syncFunnel('1');release();await pending;assert.equal(client.status()['1'].status,'done');
+});
+
+test('supplemental analytics reserves the slot immediately before the five-minute orders refresh',async t=>{
+ const f=fixture(t);await f.client.sync('1');let requests=0;
+ f.options.funnel={due:()=>true,request:()=>{requests++;return {dimension:['sku']}},accept:()=>{},fail:()=>assert.fail('unexpected failure')};
+ f.advance(4*60000);const client=create(f.options);await client.syncFunnel('1');assert.equal(requests,0);
+ f.advance(60000);client.ensure();await settled(client);assert.equal(requests,0);assert.equal(f.calls.at(-1).payload.dimension[0],'day');assert.equal(client.read('1').orders.updatedAt,'2026-09-18T09:05:00.000Z');
+});

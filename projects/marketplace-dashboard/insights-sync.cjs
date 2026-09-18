@@ -6,7 +6,7 @@ const shift=(date,days)=>new Date(Date.parse(date+'T12:00:00Z')+days*86400000).t
 const pause=ms=>new Promise(r=>setTimeout(r,ms));
 // Shared by the full and today-only jobs; retain the existing conservative API spacing.
 const ANALYTICS_GAP=61000;
-module.exports=function({stores,protect,api,privateDir,now=Date.now,sleep=pause}){
+module.exports=function({stores,protect,api,privateDir,now=Date.now,sleep=pause,funnel=null}){
   const jobs=new Map(),iso=()=>new Date(now()).toISOString();
   function file(id){return path.join(privateDir,'insights-'+id+'.json')}
   function read(id){return fs.existsSync(file(id))?JSON.parse(fs.readFileSync(file(id),'utf8')):null}
@@ -75,10 +75,35 @@ module.exports=function({stores,protect,api,privateDir,now=Date.now,sleep=pause}
     }finally{key=null;job.finishedAt=iso()}
   }
   const sync=id=>run(id,true),syncToday=id=>run(id,false);
+  async function syncFunnel(id){
+    const store=stores[id],snapshot=read(id);
+    if(!funnel||!store||store.market==='WB'||jobs.get(id)?.status==='running'||now()<gate(snapshot))return;
+    // Supplemental analytics never take a slot already due for either orders job.
+    if(refresh.due(state(id,'full',snapshot),now())||refresh.due(state(id,'orders',snapshot),now(),refresh.ORDERS_INTERVAL)||!funnel.due(id))return;
+    // Reserve the next slot when orders are due within one API spacing interval.
+    // Otherwise a supplemental request at 04:59 would defer the 05:00 refresh.
+    if(Date.parse(refresh.nextAt(state(id,'orders',snapshot),now(),refresh.ORDERS_INTERVAL))<now()+ANALYTICS_GAP)return;
+    const job={status:'running',mode:'funnel',stage:'Воронка Ozon по SKU',startedAt:iso()};jobs.set(id,job);
+    const out={...snapshot};let key;
+    try{
+      const payload=funnel.request(id);if(!payload){job.status='done';return}
+      // One page per job: persist the same gate orders use, before any request.
+      out.analyticsAttemptAt=iso();await write(id,out);key=await protect(store.key,true);
+      const result=await api(store,key,'/v1/analytics/data',payload);
+      funnel.accept(id,result);delete out.analyticsRetryAt;await write(id,out);
+      job.status='done';job.stage='Страница воронки Ozon получена';
+    }catch(e){
+      const status=Number(e.status)||Number(/\b(400|403|429)\b/.exec(e.message||'')?.[1])||0;
+      if(status===429)out.analyticsRetryAt=new Date(Math.max(now()+refresh.ORDERS_INTERVAL,now()+(Number(e.retryAfterMs)||0),Date.parse(e.retryAt)||0)).toISOString();
+      try{funnel.fail(id,{status,retryAfterMs:e.retryAfterMs,retryAt:e.retryAt});await write(id,out)}catch{}
+      job.status='error';job.stage='Воронка Ozon временно недоступна';job.errors=['Не удалось получить полную воронку Ozon'];
+    }finally{key=null;job.finishedAt=iso()}
+  }
   function ensure(){for(const [id,s] of Object.entries(stores))if(s.market!=='WB'){
     const snapshot=read(id);if(now()<gate(snapshot)||jobs.get(id)?.status==='running')continue;
     if(refresh.due(state(id,'full',snapshot),now()))void sync(id);
     else if(refresh.due(state(id,'orders',snapshot),now(),refresh.ORDERS_INTERVAL))void syncToday(id);
+    else if(funnel?.due(id))void syncFunnel(id);
   }}
   function schedule(id){
     const snapshot=read(id),result={};
@@ -89,6 +114,6 @@ module.exports=function({stores,protect,api,privateDir,now=Date.now,sleep=pause}
     return result;
   }
   function next(id){return Object.values(schedule(id)).map(s=>s.nextAt).sort()[0]}
-  return {sync,syncToday,ensure,read,next,schedule,status:()=>Object.fromEntries(jobs)};
+  return {sync,syncToday,syncFunnel,ensure,read,next,schedule,status:()=>Object.fromEntries(jobs)};
 };
 module.exports.shift=shift;

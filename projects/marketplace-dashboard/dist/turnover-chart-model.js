@@ -33,11 +33,12 @@
   if(!Number.isFinite(instant))return unavailable('Неизвестно текущее время.');
   const today=new Date(instant+10800000).toISOString().slice(0,10);
   if(!['orderedRevenue','orderedUnits'].includes(key)||current?.days!==1||current.current?.from!==today||current.current?.to!==today)return unavailable('Прогноз доступен только для заказов за сегодня.');
-  const from=shiftDate(today,-7),to=shiftDate(today,-1),expected=Array.from({length:7},(_,i)=>shiftDate(from,i));
-  if(history?.coverage?.orders!==true||history.days!==7||history.current?.from!==from||history.current?.to!==to||!Array.isArray(history.daily)||history.daily.length!==7)return unavailable('Нет полной истории заказов за 7 завершённых дней.');
+  const from=shiftDate(today,-21),to=shiftDate(today,-1),expected=[21,14,7].map(days=>shiftDate(today,-days));
+  if(history?.coverage?.orders!==true||history.days!==21||history.current?.from!==from||history.current?.to!==to||!Array.isArray(history.daily))return unavailable('Нет полной истории за три предыдущих таких же дня недели.');
   const dates=new Map();
-  for(const row of history.daily){if(!expected.includes(row.date)||dates.has(row.date)||!Number.isFinite(row[key])||row[key]<0)return unavailable('Нет полных количественных данных за все 7 дней.');dates.set(row.date,row[key])}
-  const sum=[...dates.values()].reduce((a,b)=>a+b,0),average=sum/7;
+  for(const row of history.daily){if(!expected.includes(row.date))continue;if(dates.has(row.date)||!Number.isFinite(row[key])||row[key]<0)return unavailable('Нет достоверных заказов за все три сопоставимых дня недели.');dates.set(row.date,row[key])}
+  if(dates.size!==3)return unavailable('Нужны все три предыдущих таких же дня недели; пропуск не считается нулём.');
+  const basis=expected.map(date=>({date,value:dates.get(date)})),sum=[...dates.values()].reduce((a,b)=>a+b,0),average=sum/3;
   if(!Number.isFinite(average))return unavailable('Некорректная история заказов.');
   const start=dayStart(today),end=start+86400000;
   const actual=points(current,key).filter(p=>p.time>=start&&p.time<end&&p.time<=instant).at(-1);
@@ -45,7 +46,7 @@
   const endValue=Math.max(actual.value,average),projected=[{...actual,forecast:true}];
   for(let at=Math.floor((actual.time-start)/3600000+1)*3600000+start;at<end;at+=3600000)projected.push({time:at,label:new Date(at).toISOString(),value:actual.value+(endValue-actual.value)*(at-actual.time)/(end-actual.time),forecast:true});
   projected.push({time:end,label:'24:00 МСК',value:endValue,forecast:true});
-  return {status:'available',reason:null,points:projected,average,endValue};
+  return {status:'available',reason:null,points:projected,average,endValue,basis,method:'same-weekday-three-weeks'};
  }
  const model={points,totals,segments,domain,observation,shiftDate,alignedPoints,comparison,orderForecast};if(typeof module!=='undefined'&&module.exports)module.exports=model;else root.PultStoreChart=model;
 })(typeof window==='undefined'?{}:window);

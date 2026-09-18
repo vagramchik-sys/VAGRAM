@@ -68,10 +68,10 @@ test('comparison boundary is inclusive; zero, signed finance values and missing 
 });
 
 function forecastHistory(value=700,key='orderedRevenue',today='2026-09-18'){
- const from=model.shiftDate(today,-7),to=model.shiftDate(today,-1);
- return {days:7,current:{from,to},coverage:{orders:true},daily:Array.from({length:7},(_,i)=>({date:model.shiftDate(from,i),[key]:value}))};
+ const from=model.shiftDate(today,-21),to=model.shiftDate(today,-1);
+ return {days:21,current:{from,to},coverage:{orders:true},daily:Array.from({length:21},(_,i)=>({date:model.shiftDate(from,i),[key]:value}))};
 }
-test('order forecast starts at the last actual cutoff and reaches the seven-day mean at Moscow midnight',()=>{
+test('order forecast starts at the last actual cutoff and reaches the mean of three same weekdays at Moscow midnight',()=>{
  const today=comparisonReport('2026-09-18',[['2026-09-18T09:37:00Z',300]]),history=forecastHistory();
  const before=structuredClone(today),f=model.orderForecast(today,history,'orderedRevenue',{now:'2026-09-18T10:00:00Z'});
  assert.equal(f.status,'available');assert.equal(f.average,700);assert.equal(f.endValue,700);
@@ -82,9 +82,9 @@ test('order forecast starts at the last actual cutoff and reaches the seven-day 
  assert.deepEqual(today,before);assert.equal(model.totals(today,'orderedRevenue'),1000);
  assert.equal(model.points(today,'orderedRevenue').length,1);
 });
-test('forecast requires exactly seven covered known days; missing days, duplicate dates and unknown values stay unavailable',()=>{
+test('forecast requires three covered same weekdays; missing days, duplicate dates and unknown values stay unavailable',()=>{
  const today=comparisonReport('2026-09-18',[['2026-09-18T09:00:00Z',300]]),options={now:'2026-09-18T10:00:00Z'};
- const mutations=[h=>h.coverage.orders=false,h=>h.daily.pop(),h=>h.daily[1].date=h.daily[0].date,
+ const mutations=[h=>h.coverage.orders=false,h=>h.daily.shift(),h=>h.daily.push({...h.daily[0]}),
   h=>h.daily[0].orderedRevenue=null,h=>h.daily[0].orderedRevenue=-1,h=>h.daily[0].orderedRevenue=NaN,
   h=>h.current.from='2026-09-10',h=>h.current.to='2026-09-18',h=>h.days=6];
  for(const change of mutations){const h=forecastHistory();change(h);const f=model.orderForecast(today,h,'orderedRevenue',options);assert.equal(f.status,'unavailable');assert.equal(f.endValue,null);assert.deepEqual(f.points,[]);assert.ok(f.reason)}
@@ -113,3 +113,5 @@ test('forecast is today-only in Moscow, excludes future snapshots, and never app
  for(const key of ['realized','net','ads','ourMargin','ourRoi'])assert.equal(model.orderForecast(today,h,key,{now:'2026-09-18T10:00:00Z'}).status,'unavailable');
  assert.equal(model.orderForecast({...today,days:2},h,'orderedRevenue',{now:'2026-09-18T10:00:00Z'}).status,'unavailable');
 });
+
+test('weekday forecast ignores other weekdays and exposes the three comparable dates',()=>{const history=forecastHistory(9000);history.daily[0].orderedRevenue=100;history.daily[7].orderedRevenue=200;history.daily[14].orderedRevenue=600;const today=comparisonReport('2026-09-18',[['2026-09-18T09:00:00Z',50]]);const f=model.orderForecast(today,history,'orderedRevenue',{now:'2026-09-18T10:00:00Z'});assert.equal(f.average,300);assert.equal(f.endValue,300);assert.deepEqual(f.basis,[{date:'2026-08-28',value:100},{date:'2026-09-04',value:200},{date:'2026-09-11',value:600}]);history.daily[14].orderedRevenue=null;assert.equal(model.orderForecast(today,history,'orderedRevenue',{now:'2026-09-18T10:00:00Z'}).status,'unavailable')});
