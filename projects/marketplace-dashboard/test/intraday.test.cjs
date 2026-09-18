@@ -28,6 +28,12 @@ test('a stale store does not cause a fabricated combined point; later matching s
  const a=[sample('10',100),sample('12',200)],b=[sample('11',300),sample('12',400)];
  const r=combine([a,b],'orders',date);assert.equal(r.length,1);assert.equal(r[0].orderedRevenue,600);assert.equal(r[0].at,at('12'));
 });
+test('orders combine only observations within five minutes while finance keeps thirty minutes',()=>{
+ const a=sample('10',100),b={...sample('10',200),at:'2026-09-16T10:05:00Z'};
+ assert.equal(combine([[a],[b]],'orders',date)[0].orderedRevenue,300);
+ b.at='2026-09-16T10:05:01Z';assert.equal(combine([[a],[b]],'orders',date).length,0);
+ a.source=b.source='finance';assert.equal(combine([[a],[b]],'finance',date).length,1);
+});
 test('history is durable, repeated reads do not add points, and unchanged imported values produce a flat next point',()=>{
  const parent=fs.realpathSync(os.tmpdir()),dir=fs.mkdtempSync(path.join(parent,'pult-intraday-test-'));
  try{const h=create({privateDir:dir}),orders={period:{from:date,to:date},updatedAt:at('10'),daily:[{date,revenue:10,units:2}]};

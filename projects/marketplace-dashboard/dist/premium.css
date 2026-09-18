@@ -1,0 +1,99 @@
+/* Premium graphite theme. Loaded last so every dashboard module shares one visual system. */
+:root{
+ color-scheme:dark;
+ --bg:#0c0d0f;
+ --surface:#15171a;
+ --raised:#1b1e22;
+ --input:#101215;
+ --text:#f0ede6;
+ --muted:#aaa59c;
+ --line:#303238;
+ --blue:#c5a466;
+ --accent:#dfc384;
+ --green:#78c6a3;
+ --green-bg:#172b24;
+ --red:#e89b91;
+ --red-bg:#33201f;
+ --amber:#dfbd78;
+ --amber-bg:#302819;
+ --chart-total:#e0bc72;
+ --chart-store-1:#67c4ad;
+ --chart-store-2:#a99ade;
+ --chart-store-3:#e69a6b;
+ --chart-store-4:#6daed2;
+ background:var(--bg);
+ color:var(--text);
+ font-size:15px;
+}
+html{background:var(--bg);scrollbar-color:#4b4943 #111214}
+body{min-height:100vh;background:radial-gradient(circle at 75% -10%,#292419 0,transparent 32rem),linear-gradient(180deg,#101113 0,var(--bg) 25rem);color:var(--text);font-weight:430;letter-spacing:.005em}
+::selection{background:#66532f;color:#fff8e9}
+:focus-visible{outline:2px solid var(--accent)!important;outline-offset:3px!important}
+h1,h2,h3,strong,b{color:var(--text)}
+h1{font-size:clamp(2.15rem,3vw,3.25rem);font-weight:720;letter-spacing:-.045em;line-height:1.05}
+h2{font-size:1.15rem;font-weight:680;letter-spacing:-.02em}
+p{color:var(--muted);font-size:12px}
+.eyebrow,.focus-eyebrow,.wb-eco-kicker{color:var(--accent);font-weight:720;letter-spacing:.18em}
+
+/* Navigation and page frame */
+.sidebar{width:252px;padding:30px 20px 24px;background:linear-gradient(180deg,#121316,#0e0f11);border-right:1px solid #292a2e;box-shadow:18px 0 50px #0003}
+main{margin-left:252px;max-width:1920px;padding:0 42px 34px}
+.brand{font-size:30px;letter-spacing:-.06em;color:#f5f1e9}.brand-icon,.brand>span:last-child{color:var(--accent)}
+.workspace{margin:31px 0 28px;padding:12px;border:1px solid #2b2d31;border-radius:11px;background:#181a1d;font-size:12px}
+.workspace-icon,.profile>span{background:#29251d;color:#e8c983;border:1px solid #4d422e;border-radius:9px}
+.nav-label{margin:3px 11px 10px;color:#7f7c75;font-size:9px}
+nav{gap:4px}nav a{min-height:42px;padding:10px 12px;border:1px solid transparent;border-radius:9px;color:#88877f;font-size:15px}nav a span{color:#bbb7af;font-size:12px;font-weight:550}nav a:hover{background:#1b1d20;border-color:#2d2f34}nav a.active{background:linear-gradient(90deg,#332b1e,#24221d);border-color:#52452d;color:#edd49b;box-shadow:inset 3px 0 #cfab65}nav a.active span{background:transparent;color:#edd49b}
+.sidebar-note{padding:18px 10px;margin-top:auto;border-top:1px solid #292b2f;color:#c6c0b5}.sidebar-note p{color:#8f8b83}.sidebar-note a{color:#d9bd80}.profile{border-color:#292b2f;padding:18px 9px 0}
+.topbar{height:70px;top:0;background:#0d0e10e8;border-color:#292b2f;backdrop-filter:blur(18px) saturate(120%);font-size:11px;color:#aaa59c}.slash{color:#585a5e}.live-badge{padding:7px 12px;border:1px solid #315044;background:#172b24;color:#8ed4b4}.live-dot,.live-badge i{background:#78c6a3;box-shadow:0 0 0 3px #78c6a318}
+.page-heading{padding:42px 0 28px}.page-heading p{font-size:13px}.section-heading{margin:38px 0 18px}
+
+/* Controls */
+.button{min-height:38px;padding:10px 16px;border:1px solid #d0ae6c;background:linear-gradient(180deg,#d2b16f,#b99454);border-radius:8px;color:#17130d;font-size:11px;font-weight:700;box-shadow:0 5px 16px #0003,inset 0 1px #f7dda3}.button:hover{filter:brightness(1.08)}
+.button.secondary,.outline,.pagination button,.shops button,.focus-periods button,.quick-open,.density-toggle{background:#1a1c20;border:1px solid #3a3c42;color:#d8d3ca;box-shadow:inset 0 1px #ffffff08}.button.secondary:hover,.outline:hover,.pagination button:hover:not(:disabled),.shops button:hover,.focus-periods button:hover,.quick-open:hover,.density-toggle:hover{background:#23262a;border-color:#6d6149;color:#f2e5c9}
+.text-button,.selection-bar .text-button,.ins-details-link,.focus-open,.focus-store-details summary,.ins-chart-details summary,.chart-store-picker-title button,.profit-method summary,.profit-connection summary,.profit-ad-details summary{color:#d6b875}
+select,input,textarea,form input{min-height:40px;padding:10px 12px;background:#111317;border:1px solid #3b3d43;border-radius:8px;color:#eeeae2;box-shadow:inset 0 1px 3px #0005}select:hover,input:hover,textarea:hover{border-color:#57534a}select:focus,input:focus,textarea:focus{border-color:#ad9159;background:#141619}select option{background:#15171a;color:#eeeae2}input[type=checkbox]{accent-color:#c9a866;min-height:0;box-shadow:none}
+label{color:#bdb8ae;font-size:10px;letter-spacing:.025em}.filter-bar{gap:14px;margin-bottom:17px;padding:15px 16px;border:1px solid #292b2f;border-radius:12px;background:#121416}.filter-bar label{min-width:175px}.filter-bar label:nth-child(2){min-width:255px}#freshness{color:#918e87}.catalog-visibility{margin:0 2px 22px}.catalog-visibility label{color:#c1bcb2}
+.quick-open,.density-toggle{min-height:36px}kbd{background:#0d0f12;border-color:#4b4c50;color:#d8c59e}
+
+/* Shared surfaces and hierarchy */
+.panel,.metric,.store-card,.ins-period,.queue-card,.blank-state{background:linear-gradient(145deg,#17191c,#131518);border:1px solid #2f3136;box-shadow:0 12px 34px #00000024,inset 0 1px #ffffff08}
+.panel{border-radius:14px;margin-bottom:26px}.panel-heading,.panel-title{padding:22px 24px 18px}.panel-heading p,.panel-title p{font-size:11px}.mini-badge,.demo-label,.pill.muted,.focus-tag{border:1px solid #3b3d42;background:#202226;color:#b9b5ad;border-radius:999px}
+.metrics{gap:12px;margin-bottom:22px}.metric{min-height:128px;padding:18px 19px;border-radius:12px}.metric-label{color:#a6a198;font-size:11px}.metric-value{margin:13px 0 7px;color:#f4efe5;font-size:30px;font-weight:660;letter-spacing:-.045em}.metric-note{color:#969188;font-size:10px}.metric:nth-child(2){border-color:#4d432e;background:linear-gradient(145deg,#201d17,#171717)}
+.overview-grid{gap:18px}.attention-button{background:transparent;border-color:#2b2d31;padding:15px 21px}.attention-button:hover{background:#1c1e21}.attention-icon{background:#302819;color:#e0bd79}.attention-button strong{font-size:12px}.attention-button small{font-size:10px}.attention-button b{color:#efe9df;font-size:19px}
+.footnote,.ins-source,.data-context{color:#8f8b83}.loading,.empty,.skeleton{color:#9d9990}
+.store-grid{gap:14px}.store-card{padding:19px;border-radius:12px}.store-card h3{font-size:14px}.store-card .store-stats{border-color:#303238}.store-stats strong{font-size:20px;color:#f2ece1}
+
+/* Data tables */
+.table-wrap{border-color:#303238;scrollbar-color:#484a4e #141619}
+table{font-variant-numeric:tabular-nums}th{padding:12px 16px;background:#191b1f;color:#aaa69e;border-color:#303238;font-size:9px;font-weight:650;letter-spacing:.07em;text-transform:uppercase}td{padding:14px 16px;border-color:#292b30;color:#cbc6bc;font-size:11px;line-height:1.5}td:first-child,.product-title,.product-name,.ins-product-name,.manage-price{color:#eee9df}tbody tr:hover{background:#1d1f23}.product-title{font-size:12px}.product-title:hover,.ins-product-name:hover{color:#e1c783}.sub{color:#918d85;font-size:9px}.pagination{background:#15171a;border-color:#303238;color:#aaa69d}
+.platform,.platform.ozon,.market-pill.ozon,.flag.purchase,.blue{background:#1b2a3a;color:#96bfdf}.platform.wb,.market-pill{background:#2d2334;color:#cfaddb}.pill,.stock,.success,.ins-proof{background:#172b24;color:#84cbae}.pill.warn,.flag,.stock.low,.ins-alert,.attention-icon,.count,.amber,.focus-signals span{background:#302819;color:#dfbd78}.error,.red{background:#33201f;color:#e89b91}
+
+/* Executive summary and priorities */
+#executive{margin-top:28px}.ins-heading h2{font-size:21px}.ins-period{padding:15px 18px;background:#141619;border-color:#303238;border-radius:11px}.ins-metrics{gap:9px}.ins-metric{min-height:105px;padding:14px;border-radius:10px;background:#17191c;border-color:#303238;color:#eee9df}.ins-metric:hover{border-color:#514a3b;box-shadow:0 10px 25px #0004}.ins-metric.good{background:#16231f;border-color:#29453a}.ins-metric.bad{background:#291c1d;border-color:#4c2c2d}.ins-metric-name,.ins-metric-name i,.ins-delta{color:#aaa59c}.ins-metric strong{font-size:22px;color:#f3eee4}.ins-quality,.ins-live{background:#191d20;border-color:#35383e}.ins-quality b,.ins-live{color:#c9c2b7}
+.focus-brief{padding:22px 25px;border:1px solid #665331;background:linear-gradient(120deg,#3a3020,#24221d 48%,#191b1e);box-shadow:0 14px 34px #0004,inset 0 1px #ffffff0a}.focus-brief-top,.focus-facts span{color:#d8c394}.focus-facts small{color:#b8b1a4}.focus-facts strong{color:#fff5df}.focus-alert{padding:16px;background:#16181b;border-color:#303238;color:#eeeae2}.focus-alert:hover{background:#1b1d21;border-color:#6d5a37}.focus-alert strong,.ins-detail-value,.ins-trend-total b{color:#e2c27e}.focus-alert p,.focus-alert strong small,.focus-store-top>span,.focus-store-sub,.focus-store dt,.focus-filter-note,.focus-abc p,.focus-abc-groups small{color:#9f9a91}.focus-store,.focus-abc-groups button{background:#17191c;border-color:#303238;color:#eeeae2}.focus-store:hover,.focus-abc-groups button:hover{background:#1f2125;border-color:#65563a}.focus-share{background:#292b2f}.focus-periods button[aria-pressed=true],.shops button.active{background:#332b1e;border-color:#79653e;color:#edd49b}
+
+/* Charts: subdued grid, strong and distinguishable series. */
+.chart text,#ins-chart text,.net-profit-plot text{fill:#a6a198}.chart svg line,#ins-chart svg line,.net-profit-plot line{stroke:#34363b}.chart rect[fill="#6384fa"]{fill:var(--chart-total)}.chart rect[fill="#e1a26d"]{fill:#c87561}.legend i{background:var(--chart-total)}
+#ins-chart{padding-top:4px}.chart-store-picker-title,.chart-store-picker p,.ins-chart-details{color:#9f9a91}#chart-store-options label,.net-profit-options label{background:#131518;border-color:#36383d;color:#c2bdb4}#chart-store-options label:has(input:checked),.net-profit-options label:has(input:checked){background:#22211d;border-color:#665a40;color:#eee4cf}.chart-series-totals>div,.net-profit-totals>div{background:#1a1c20;border-color:#32343a}.chart-series-totals span,.chart-series-totals small,.net-profit-totals span,.net-profit-totals small{color:#aaa59c}.chart-series-totals strong,.net-profit-totals strong{color:#f0ebe2}.net-profit-inspector{background:#1a1c20;border-color:#35373c}.net-profit-state,.net-profit-source,.net-profit-hint{color:#aaa59c}
+
+/* Economics, profit comparison and marketplace sections */
+.eco-notice,.decline-note{background:#1b1d20;border-color:#3a3c41;color:#c8c2b8}.eco-metric{background:#1a1c20;border-color:#35373d}.eco-metric>span,.eco-metric>small{color:#aaa59c}.eco-metric.positive{background:#172720;border-color:#315042}.eco-metric.negative{background:#302020;border-color:#593331}.eco-equation{background:#111316;border-color:#2e3035;color:#aaa59c}.eco-equation b{color:#eee9df}.eco-method{border-color:#303238}.eco-method summary{color:#d7ba78}
+.profit-comparison{border-color:#303238}.profit-tabs{background:#111316;border-color:#36383d}.profit-tabs button{color:#bcb7ae}.profit-tabs button[aria-pressed=true]{background:#c5a466;color:#17130d}.profit-version,.profit-version.profit-true{border-color:#403b31;background:linear-gradient(135deg,#211f1a,#181a1d)}.profit-version.profit-true{border-color:#4a414d;background:linear-gradient(135deg,#211e24,#181a1d)}.profit-version h3{color:#d5cfc5}.profit-version p,.profit-state,.profit-difference p,.profit-method p,.profit-connection p{color:#aaa59c}.profit-version dl,.profit-ad-card dl{border-color:#36383c}.profit-version dt,.profit-ad-card dt{color:#aaa59c}.profit-state{background:#1b1d20}.profit-difference,.profit-ad-difference{background:#121416;border-color:#35373c}.profit-method,.profit-connection,.profit-ad-details{border-color:#37393e}.profit-advertising{border-color:#423d32;background:linear-gradient(145deg,#201d17,#15171a)}.profit-ad-card,.profit-ad-card.profit-ad-true{border-color:#3d3931;background:#1a1b1d}.profit-ad-card.profit-ad-true{border-color:#453d48}.profit-ad-source,.profit-advertising-heading h3,.profit-ad-details h4{color:#e7e0d6}.profit-included{background:#2b261b;border-color:#5b4c2f;color:#e0c486}.profit-advertising-intro,.profit-ad-card>p,.profit-ad-difference p,.profit-ad-details>p{color:#aaa59c}
+.wb-eco{padding:23px;border-color:#413b32;background:linear-gradient(145deg,#211f1a,#17181b 58%,#19171c);color:#eee9df;box-shadow:0 16px 38px #0004}.wb-eco h2,.wb-eco h3,.wb-eco-kpi strong{color:#f2ede4}.wb-eco-head p,.wb-eco-kpi>span,.wb-eco-kpi small,.wb-eco-details,.wb-eco-direct>p{color:#a8a299}.wb-eco-status{background:#29251e;border-color:#55482f;color:#ddc183}.wb-eco-message,.wb-eco-source{background:#ffffff08;color:#bbb5ab}.wb-eco-kpi{background:#111316cc;border-color:#37383c}.wb-eco-source b,.wb-eco-details summary{color:#d9bd80}.wb-eco-range{color:#c3bdb3}.wb-eco-range select{background:#111316;border-color:#3b3d42;color:#eee9df}.wb-eco-period-button{background:linear-gradient(180deg,#d2b16f,#b99454);border-color:#d0ae6c;color:#17130d}
+.decline-body>p,.decline-signals p{color:#aaa59c}.decline-signals article{background:#17191c;border-color:#b49760}.decline-panel summary,.decline-panel td a{color:#d9bd80}
+
+/* Dialogs and utility surfaces */
+dialog{background:#17191c;color:#eee9df;border-color:#45474d;border-radius:14px;box-shadow:0 28px 100px #000b}dialog::backdrop{background:#050607cf;backdrop-filter:blur(6px)}.detail-item,.detail-source,.blocked-send,#ins-widget-list label{background:#202226;color:#cbc5bb}.detail-item span{color:#aaa59c}.detail-item strong{color:#f0ebe2}.workflow{background:#1d1e1d;border-color:#3c3931;color:#c6bba5}#quick-results a{background:#191b1e;border-color:transparent}#quick-results a:hover,#quick-results a:focus-visible{background:#24231f;border-color:#625536}#toast{background:#302a20;color:#f4ead5;box-shadow:0 12px 38px #0009}
+
+footer{border-color:#303238;color:#79766f}.section-heading h2{font-size:19px}
+
+@media(max-width:1200px){.sidebar{width:218px}.sidebar nav a{padding-inline:9px}main{margin-left:218px;padding-inline:25px}}
+@media(max-width:850px){.sidebar{position:static;width:auto;padding:14px 18px;background:#101214;box-shadow:none}.sidebar nav{margin-top:10px}.sidebar nav a{min-height:38px}.sidebar nav a.active{box-shadow:inset 0 -2px #cfab65}main{margin:0;padding-inline:18px}.topbar{height:57px}.page-heading{padding-top:28px}.filter-bar{flex-wrap:wrap}.focus-brief{padding:19px}}
+@media(max-width:600px){:root{font-size:14px}body{background:#0c0d0f}main{padding-inline:14px}.page-heading{padding-top:24px}.page-heading h1{font-size:2.15rem}.filter-bar{padding:13px}.filter-bar label,.filter-bar label:nth-child(2){min-width:130px}.metric{min-height:120px}.metric-value{font-size:25px}.panel-heading,.panel-title{padding-inline:16px}.product-controls{padding-inline:16px}.focus-alerts{gap:9px}.focus-alert strong{font-size:24px}.focus-brief{border-radius:12px}.net-profit-totals{padding-inline:16px}.wb-eco{padding:17px}.profit-version{padding:17px}td,th{padding-inline:13px}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto!important}*,*::before,*::after{animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}}
+
+body:not(:has(> .sidebar)) > main{margin:0 auto;max-width:1500px;padding:25px}
+
+#ins-chart .chart-intraday .chart-point{stroke:transparent;stroke-width:9;paint-order:stroke fill;pointer-events:all}
+#ins-chart .chart-intraday .chart-point:hover,#ins-chart .chart-intraday .chart-point[aria-pressed=true]{r:3;stroke:#f0ede6;stroke-width:1.2}
+#ins-chart .chart-intraday .chart-point:focus-visible{r:3.5;stroke:#fff;stroke-width:2;outline:none}

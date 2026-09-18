@@ -68,6 +68,41 @@ function schemaMetadata(value,secret){
  const fields=v=>v&&typeof v==='object'&&!Array.isArray(v)?Object.entries(v).filter(([k])=>k!==secret&&/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(k)&&!/token|secret|key|password|auth/i.test(k)).slice(0,200).map(([name,v])=>({name,type:v===null?'null':Array.isArray(v)?'array':typeof v})):[];
  return {fields:fields(value),statsFields:fields(value?.stats),summaryFields:fields(value?.summary)};
 }
+function daysInPeriod(period){
+ if(!date(period?.from)||!date(period?.to)||period.from>period.to||(Date.parse(period.to)-Date.parse(period.from))/86400000>=90)throw failure('period','Проверьте даты отчёта: период не больше 90 дней.');
+ const result=[];for(let ms=Date.parse(period.from);ms<=Date.parse(period.to);ms+=86400000)result.push(new Date(ms).toISOString().slice(0,10));return result;
+}
+function sumMoney(values){return values.every(value=>numeric(value)!==null)?values.reduce((sum,value)=>sum+Math.round(Number(value)*100),0)/100:null;}
+// Daily row.date was verified against the official API on 2026-09-18. The
+// catalog identifies profit as "Чистая прибыль"; no inferred expense formula.
+function normalizeDaily(day,stats,catalog,{period,accountId,readiness,today,key}={}){
+ const dates=daysInPeriod(period);
+ if(day?.financialMod!==false||!Array.isArray(day.result)||!Array.isArray(day.accountIdsFilter)||day.accountIdsFilter.length!==1||day.accountIdsFilter[0]!==accountId)throw failure('scope_response','TrueStats не подтвердил точный магазин в дневном отчёте.');
+ const profitDefinition=(Array.isArray(catalog)?catalog:[]).filter(item=>item?.id==='profit'&&label(item.header||'')==='чистая прибыль'&&['₽','руб.','руб'].includes(item.meta?.suffix?.trim()));
+ if(profitDefinition.length!==1)throw failure('daily_schema','TrueStats не подтвердил определение чистой прибыли.');
+ const rows=new Map();for(const row of day.result){if(!date(row?.date)||row.date<period.from||row.date>period.to||rows.has(row.date))throw failure('daily_schema','TrueStats вернул неоднозначные даты дневного отчёта.');rows.set(row.date,row);}
+ const summary=normalize({financialMod:false,stats:day.summary},catalog,key),total=normalize(stats,catalog,key);
+ const rawProfits=dates.map(d=>rounded(rows.get(d)?.profit)),rawSum=sumMoney(rawProfits);
+ const tolerance=dates.length/100;
+ // Missing dates prevent a full-row sum check, but never excuse an explicit
+ // disagreement between the period reports or its signed expense breakdown.
+ if(total.breakdownReconciled===false||(summary.metrics.profit!==null&&total.metrics.profit!==null&&Math.abs(summary.metrics.profit-total.metrics.profit)>tolerance+1e-8))throw failure('reconciliation','Дневная прибыль TrueStats не совпала с итоговым отчётом. График не показан до сверки.');
+ const consistent=rawSum!==null&&summary.metrics.profit!==null&&total.metrics.profit!==null&&Math.abs(rawSum-summary.metrics.profit)<=tolerance+1e-8&&Math.abs(rawSum-total.metrics.profit)<=tolerance+1e-8&&total.breakdownReconciled!==false;
+ // A period mismatch invalidates the curve: operating expenses must not vanish
+ // between daily and total reports. Missing days remain individual gaps.
+ if(rawSum!==null&&!consistent)throw failure('reconciliation','Дневная прибыль TrueStats не совпала с итоговым отчётом. График не показан до сверки.');
+ const points=dates.map(d=>{
+  const row=rows.get(d),normalized=row?normalize({financialMod:false,stats:row},catalog,key).metrics:emptyMetrics();
+  let reason=null,status='ready';
+  if(d>=today){status='pending';reason='День ещё не закрыт: чистая прибыль будет доступна после получения финансовых данных.';}
+  else if(!readiness||!date(readiness.lastDataDate)){status='pending';reason='TrueStats не подтвердил дату готовности финансовых данных.';}
+  else if(d>readiness.lastDataDate||(readiness.checkedDate===d&&readiness.status!=='complete')){status='pending';reason='TrueStats ещё не подтвердил финансовые данные за этот день.';}
+  else if(!row||normalized.profit===null){status='unavailable';reason='В дневном отчёте TrueStats нет прибыли за этот день.';}
+  return {date:d,profit:status==='ready'?normalized.profit:null,status,reason,tax:status==='ready'?normalized.tax:null,operatingExpenses:status==='ready'?normalized.operatingExpenses:null};
+ });
+ const complete=points.every(point=>point.status==='ready'),known=points.filter(point=>point.status==='ready').map(point=>point.profit);
+ return {points,complete,totalProfit:complete&&consistent?sumMoney(known):null,knownProfit:known.length?sumMoney(known):null,status:complete?'ready':known.length?'partial':points.some(point=>point.status==='pending')?'pending':'unavailable',reconciled:consistent,breakdownReconciled:total.breakdownReconciled};
+}
 function create({privateDir,protect,fetchImpl=fetch,now=()=>Date.now()}){
  if(!privateDir||typeof protect!=='function')throw Error('TrueStats requires protected private storage');
  const file=path.join(privateDir,'truestats.json'),cache=new Map(),pending=new Map();
@@ -143,6 +178,35 @@ function create({privateDir,protect,fetchImpl=fetch,now=()=>Date.now()}){
   })();
   pending.set(cacheKey,work);try{return structuredClone(await work);}finally{pending.delete(cacheKey);}
  }
- return {status,connect,compare};
+ async function daily({period,store,market='Ozon'}={}){
+  const base={period:period?{from:period.from,to:period.to}:null,status:'unavailable',reason:null,points:[],totalProfit:null,knownProfit:null,complete:false,fetchedAt:null,readiness:null,source:'TrueStats API',mode:'management'};
+  const unavailable=(code,reason)=>({...base,code,reason});
+  let dates;try{dates=daysInPeriod(period);}catch(error){return unavailable(error.code,error.message);}
+  base.points=dates.map(d=>({date:d,profit:null,status:'unavailable',reason:null,tax:null,operatingExpenses:null}));
+  if(!store||!['string','number'].includes(typeof store.id)||typeof store.name!=='string'||!store.name||!['Ozon','WB'].includes(market)||(market==='WB'&&!Number.isSafeInteger(store.trueStatsAccountId)))return unavailable('scope','Нужна однозначная привязка магазина к TrueStats.');
+  if(!config)return unavailable(storageError?'storage':'not_connected',storageError?'Защищённое подключение TrueStats недоступно.':'Подключите API TrueStats для графика чистой прибыли.');
+  const startRevision=revision,saved=config,cacheKey=JSON.stringify(['daily',startRevision,market,period.from,period.to,String(store.id),store.name,store.trueStatsAccountId||null]),time=timestamp(),cached=cache.get(cacheKey);
+  if(cached&&time>=cached.at&&time-cached.at<TTL)return structuredClone({...cached.value,cached:true});
+  if(pending.has(cacheKey))return structuredClone(await pending.get(cacheKey));
+  const work=(async()=>{try{
+   let key;try{key=await protect(saved.encryptedKey,true);}catch{throw failure('storage','Не удалось открыть защищённый ключ TrueStats.');}
+   const accountType=market==='WB'?0:1,readinessType=market==='WB'?'wb_report':'ozon_report',available=await accounts(key),matched=available.filter(a=>a.accountType===accountType&&(market==='WB'?a.id===store.trueStatsAccountId:a.name===store.name));
+   if(matched.length!==1)throw failure('scope','Не удалось однозначно сопоставить магазин с TrueStats.');
+   const accountId=matched[0].id,body={dateFrom:period.from,dateTo:period.to,filters:{accountTypes:[accountType],accounts:[accountId]},financialMod:false};
+   const day=await request(key,'/reporting/aggregated-view/day',body);
+   if(day?.financialMod!==false||!Array.isArray(day.accountIdsFilter)||day.accountIdsFilter.length!==1||day.accountIdsFilter[0]!==accountId)throw failure('scope_response','TrueStats не подтвердил точный магазин в дневном отчёте.');
+   const query=new URLSearchParams();query.append('accounts[]',String(accountId));query.append('dataTypes[]',readinessType);
+   const results=await Promise.allSettled([request(key,'/reporting/main/stats',body),request(key,'/product-metrics'),request(key,'/v1/data-readiness',undefined,query.toString())]);
+   if(results[0].status==='rejected')throw results[0].reason;if(results[1].status==='rejected')throw results[1].reason;
+   const readyItems=results[2].status==='fulfilled'&&Array.isArray(results[2].value?.items)?results[2].value.items.filter(item=>item?.accountId===accountId&&item.dataType===readinessType):[];
+   const item=readyItems.length===1?readyItems[0]:null,readiness=item?{status:['pending','complete','incomplete'].includes(item.status)?item.status:'unknown',checkedDate:date(item.checkedDate)?item.checkedDate:null,lastDataDate:date(item.lastDataDate)?item.lastDataDate:null}:null;
+   const today=new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(timestamp()));
+   const normalized=normalizeDaily(day,results[0].value,results[1].value,{period,accountId,readiness,today,key});
+   if(revision!==startRevision)throw failure('connection_changed','Подключение TrueStats изменилось. Обновите отчёт.');
+   const value={...base,...normalized,accountId,readiness,fetchedAt:new Date(timestamp()).toISOString(),scopeVerified:true,cached:false};cache.set(cacheKey,{at:timestamp(),value});while(cache.size>60)cache.delete(cache.keys().next().value);return value;
+  }catch(error){return unavailable(error.public?error.code:'unavailable',error.public?error.message:'Не удалось получить дневную прибыль TrueStats.');}})();
+  pending.set(cacheKey,work);try{return structuredClone(await work);}finally{pending.delete(cacheKey);}
+ }
+ return {status,connect,compare,daily};
 }
-module.exports={create,normalize,schemaMetadata};
+module.exports={create,normalize,schemaMetadata,normalizeDaily,daysInPeriod};

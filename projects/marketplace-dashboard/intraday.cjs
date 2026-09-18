@@ -20,6 +20,7 @@ function point(source,data,products){
 // A combined point requires a new, sufficiently close observation from every selected store.
 // A failed store never becomes a zero and cannot create a false aggregate change.
 function combine(histories,source,date){
+  const interval=source==='orders'?5*60*1000:INTERVAL;
   const lists=histories.map(h=>h.filter(p=>p.date===date&&p.source===source).sort((a,b)=>a.at.localeCompare(b.at)));
   if(!lists.length||lists.some(a=>!a.length))return [];
   const indices=lists.map(()=>0),out=[];
@@ -27,7 +28,7 @@ function combine(histories,source,date){
     const end=Math.max(...lists.map((list,i)=>Date.parse(list[indices[i]].at)));
     for(let i=0;i<lists.length;i++)while(indices[i]+1<lists[i].length&&Date.parse(lists[i][indices[i]+1].at)<=end)indices[i]++;
     const selected=lists.map((list,i)=>list[indices[i]]),start=Math.min(...selected.map(p=>Date.parse(p.at)));
-    if(end-start>INTERVAL){for(let i=0;i<lists.length;i++)if(Date.parse(selected[i].at)<end-INTERVAL)indices[i]++;continue}
+    if(end-start>interval){for(let i=0;i<lists.length;i++)if(Date.parse(selected[i].at)<end-interval)indices[i]++;continue}
     const values={};for(const p of selected)for(const [k,v] of Object.entries(p.values))values[k]=(values[k]||0)+v;
     for(const k of Object.keys(values))if(k!=='orderedUnits')values[k]/=100;
     if(source==='finance'){
@@ -54,7 +55,7 @@ function create({privateDir}){
     points.sort((a,b)=>a.at.localeCompare(b.at));const newest=Date.parse(points.at(-1).at),kept=points.filter(p=>newest-Date.parse(p.at)<=32*86400000);
     fs.writeFileSync(file(id)+'.tmp',JSON.stringify({version:1,points:kept}));fs.renameSync(file(id)+'.tmp',file(id));
   }
-  function series(ids,date){const histories=ids.map(read);return {date,orders:combine(histories,'orders',date),finance:combine(histories,'finance',date),storeCount:ids.length,intervalMinutes:30}}
+  function series(ids,date){const histories=ids.map(read);return {date,orders:combine(histories,'orders',date),finance:combine(histories,'finance',date),storeCount:ids.length,intervalMinutes:30,ordersIntervalMinutes:5,financeIntervalMinutes:30}}
   return {capture,series};
 }
 module.exports={create,point,combine,day};
