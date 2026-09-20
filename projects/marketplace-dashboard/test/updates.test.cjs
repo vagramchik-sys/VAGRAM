@@ -1,8 +1,15 @@
 'use strict';
-const test=require('node:test'),assert=require('node:assert/strict');
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),path=require('node:path');
 const model=require('../dist/updates-model.js');
+const uiScript=fs.readFileSync(path.join(__dirname,'..','dist','updates.js'),'utf8');
 const entry=(id,status='progress',extra={})=>({id,status,title:'Задача '+id,details:'Описание',date:'2026-09-18T12:00:00Z',...extra});
 const document=entries=>({updatedAt:'2026-09-18T12:10:00Z',entries});
+test('product journal checks for updates every five minutes',()=>{
+ assert.equal(model.pollIntervalMs,300000);
+ assert.match(uiScript,/POLL_MS=model\.pollIntervalMs/);
+ assert.match(uiScript,/проверка каждые 5 минут/);
+ assert.doesNotMatch(uiScript,/Повторим автоматически через минуту/);
+});
 test('legacy entries gain empty sections without invented progress or deadlines',()=>{
  const value=model.normalize(document([entry('legacy','ready',{date:'2026-09-18'})])),r=value.entries[0];
  assert.deepEqual(r.completed,[]);assert.deepEqual(r.remaining,[]);assert.deepEqual(r.dependencies,[]);assert.deepEqual(r.verification,[]);assert.equal(r.estimate,null);assert.deepEqual(model.estimate(r),{text:'Завершено',basis:null});

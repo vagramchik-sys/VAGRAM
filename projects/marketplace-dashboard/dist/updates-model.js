@@ -2,6 +2,7 @@
  const model=factory();if(typeof module==='object'&&module.exports)module.exports=model;else root.PultUpdatesModel=model;
 })(typeof globalThis!=='undefined'?globalThis:this,function(){
  'use strict';
+ const pollIntervalMs=5*60*1000;
  const statuses={planned:'План',progress:'В работе',verification:'Проверка',ready:'Готово',blocked:'Заблокировано'};
  const isObject=value=>value!==null&&typeof value==='object'&&!Array.isArray(value);
  const text=value=>typeof value==='string'&&value.trim().length>0;
@@ -34,5 +35,5 @@
   return item.dependencies.map(dependency=>{const target=dependency.id?byId.get(dependency.id):null;return {...dependency,resolved:!!target,self:target?.id===item.id,status:target?.status||null,title:target?.title||null};});
  }
  const estimate=item=>item.status==='ready'?{text:'Завершено',basis:null}:item.estimate||{text:'Срок пока не оценён',basis:null};
- return {statuses,normalize,select,dependencies,estimate};
+ return {pollIntervalMs,statuses,normalize,select,dependencies,estimate};
 });
