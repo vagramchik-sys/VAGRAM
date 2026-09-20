@@ -4,16 +4,21 @@
  const short=v=>new Date(v+'T12:00:00Z').toLocaleDateString('ru-RU',{day:'2-digit',month:'short'}),time=v=>new Date(v).toLocaleTimeString('ru-RU',{timeZone:'Europe/Moscow',hour:'2-digit',minute:'2-digit'});
  const colors=['var(--chart-store-1, #158b78)','var(--chart-store-2, #9270cc)','var(--chart-store-3, #d28532)','var(--chart-store-4, #378fbd)'];
  window.createPultStoreChart=function({api,metricTitle}){
-  let report=null,catalog=[],selected=new Set(['']),cache=new Map(),version=0,catalogError=null,inspected=null;
+  let report=null,catalog=[],selected=new Set(['']),cache=new Map(),version=0,catalogError=null,inspected=null,mode='stores',categoryReport=null,selectedCategories=new Set(),categoryRequests=new Map();
   $('ins-chart').closest('.panel').id='business-chart';
   $('ins-chart').insertAdjacentHTML('afterend','<p class="chart-interaction-hint" id="chart-interaction-hint" hidden>Выберите точку мышью или касанием. С клавиатуры: Tab к графику, затем ← →.</p><div class="chart-inspector" id="chart-inspector" hidden><div id="chart-point-label" aria-live="polite"></div><div id="chart-point-value" aria-live="polite"></div><div class="chart-inspector-buttons"><button class="button secondary" id="chart-point-prev" type="button" aria-label="Предыдущая точка графика">←</button><button class="button secondary" id="chart-point-next" type="button" aria-label="Следующая точка графика">→</button></div></div>');
-  $('ins-chart').insertAdjacentHTML('beforebegin','<div class="chart-store-picker"><div class="chart-store-picker-title"><span>Магазины на графике</span><div><button id="chart-only-total" type="button">Только общий</button><button id="chart-all-stores" type="button">Все линии</button></div></div><div id="chart-store-options" role="group" aria-label="Магазины на графике"></div><p>Выбор действует только на график. Общий — все подключённые магазины Ozon.</p></div><div id="chart-store-status" role="status" aria-live="polite"></div>');
+  $('ins-chart').insertAdjacentHTML('beforebegin','<div id="chart-mode" class="chart-compare-controls" role="group" aria-label="Разрез графика"><button type="button" data-mode="stores" aria-pressed="true">По магазинам</button><button type="button" data-mode="categories" aria-pressed="false">По категориям</button></div><div class="chart-store-picker" id="chart-store-picker"><div class="chart-store-picker-title"><span>Магазины на графике</span><div><button id="chart-only-total" type="button">Только общий</button><button id="chart-all-stores" type="button">Все линии</button></div></div><div id="chart-store-options" role="group" aria-label="Магазины на графике"></div><p>Выбор действует только на график. Общий — все подключённые магазины Ozon.</p></div><div class="chart-store-picker" id="chart-category-picker" hidden><div class="chart-store-picker-title"><span>Категории на графике</span><div><button id="chart-all-categories" type="button">Все категории</button><button id="chart-no-categories" type="button">Снять выбор</button></div></div><div id="chart-category-options" role="group" aria-label="Категории на графике"></div><p>Сначала выберите нужные категории. Ozon и WB показаны отдельными линиями.</p></div><div id="chart-store-status" role="status" aria-live="polite"></div>');
   const ready=api('/api/stores').then(list=>{catalog=list.filter(s=>!s.id.startsWith('wb-'));renderOptions()}).catch(()=>{catalogError='Не удалось получить список магазинов. Обновите страницу.'});
   function options(){return [{id:'',name:'Общий · все Ozon',color:'var(--chart-total, #315efb)'},...catalog.map((s,i)=>({id:s.id,name:s.name,color:colors[i%colors.length]}))]}
   function renderOptions(){$('chart-store-options').innerHTML=options().map(s=>'<label style="--series-color:'+s.color+'"><input type="checkbox" value="'+esc(s.id)+'" '+(selected.has(s.id)?'checked':'')+'><i></i><span>'+esc(s.name)+'</span></label>').join('')}
+   function renderCategoryOptions(){const names=categoryReport?.categories||[];$('chart-category-options').innerHTML=names.map((name,i)=>'<label style="--series-color:'+colors[i%colors.length]+'"><input type="checkbox" value="'+esc(name)+'" '+(selectedCategories.has(name)?'checked':'')+'><i></i><span>'+esc(name)+'</span></label>').join('')}
   $('chart-store-options').onchange=e=>{if(e.target.type!=='checkbox')return;e.target.checked?selected.add(e.target.value):selected.delete(e.target.value);void render()};
   $('chart-only-total').onclick=()=>{selected=new Set(['']);renderOptions();void render()};
   $('chart-all-stores').onclick=()=>{selected=new Set(options().map(s=>s.id));renderOptions();void render()};
+   $('chart-mode').onclick=e=>{const button=e.target.closest('[data-mode]');if(!button||button.dataset.mode===mode)return;mode=button.dataset.mode;$('chart-mode').querySelectorAll('[data-mode]').forEach(item=>item.setAttribute('aria-pressed',String(item===button)));$('chart-store-picker').hidden=mode!=='stores';$('chart-category-picker').hidden=mode!=='categories';void render()};
+   $('chart-category-options').onchange=e=>{if(e.target.type!=='checkbox')return;e.target.checked?selectedCategories.add(e.target.value):selectedCategories.delete(e.target.value);void render()};
+   $('chart-all-categories').onclick=()=>{selectedCategories=new Set(categoryReport?.categories||[]);renderCategoryOptions();void render()};
+   $('chart-no-categories').onclick=()=>{selectedCategories.clear();renderCategoryOptions();void render()};
   const comparisons=[{id:'yesterday',days:-1,name:'Вчера',dash:'7 5',color:'#e78cb5'},{id:'week',days:-7,name:'Неделю назад',dash:'2 5',color:'#6bcfdf'}];
   $('chart-store-status').insertAdjacentHTML('beforebegin','<div id="chart-compare-controls" class="chart-compare-controls" role="group" aria-label="Сравнить сегодняшний день" hidden><span>Сравнить с</span>'+comparisons.map(c=>'<label><input type="checkbox" value="'+c.id+'" checked><i class="compare-line '+c.id+'"></i>'+c.name+'</label>').join('')+'<small>Сегодня — сплошная линия</small></div>');
   $('chart-compare-controls').onchange=()=>{void render()};
@@ -21,17 +26,19 @@
   $('chart-forecast-enabled').onchange=()=>{void render()};
   const cacheKey=(id,period)=>id+':'+period.from+':'+period.to;
   function getReport(id,period=report.current){const key=cacheKey(id,period);if(cache.has(key))return Promise.resolve(cache.get(key));const query=new URLSearchParams({from:period.from,to:period.to,store:id,hideInactive:String($('hide-inactive').checked)}),request=api('/api/insights?'+query);cache.set(key,request);return request}
+  function getCategoryReport(date){const requests=categoryRequests;if(requests.has(date))return requests.get(date);const request=Promise.resolve().then(()=>api('/api/order-categories?'+new URLSearchParams({date}))).catch(error=>{if(requests.get(date)===request)requests.delete(date);throw error});requests.set(date,request);return request}
   async function render(){
    if(!report)return;const current=report,seq=++version,key=$('ins-chart-metric').value,title=metricTitle(key),oneDay=current.days===1,ratio=key==='ourMargin'||key==='ourRoi',format=v=>v===null?'—':ratio?num.format(v)+' %':key==='orderedUnits'?integer.format(v)+' шт.':num.format(v)+' ₽';
    const formatDelta=v=>ratio?(v===null?'—':num.format(v)+' п.п.'):format(v);
    const isToday=oneDay&&current.current.from===new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
    $('ins-chart-title').textContent=oneDay?(isToday?'Динамика за сегодня':'Динамика за '+short(current.current.from)):'Динамика бизнеса';
-   $('chart-compare-controls').hidden=!isToday;
+   $('chart-compare-controls').hidden=mode!=='stores'||!isToday;
    const forecastEligible=isToday&&(key==='orderedRevenue'||key==='orderedUnits'),forecastEnabled=forecastEligible&&$('chart-forecast-enabled').checked;
    $('chart-forecast-controls').hidden=!forecastEligible;
    $('ins-chart-caption').textContent=title+' · '+(oneDay?'накопительно с начала дня · время МСК':short(current.current.from)+' — '+short(current.current.to));
    $('chart-store-status').textContent='Загружаем выбранные линии…';$('ins-chart').setAttribute('aria-busy','true');$('ins-chart').innerHTML='';$('ins-chart-details').hidden=true;$('chart-inspector').hidden=true;$('chart-interaction-hint').hidden=true;
    await ready;if(seq!==version)return;
+   if(mode==='categories'){await renderCategories({current,seq,key,title,oneDay,isToday,format});return}
    if(catalogError){$('chart-store-status').textContent=catalogError;$('ins-chart').removeAttribute('aria-busy');return}
    const chosen=options().filter(s=>selected.has(s.id));
    if(!chosen.length){$('chart-store-status').textContent='Выберите общий показатель или нужные магазины.';$('ins-chart').removeAttribute('aria-busy');return}
@@ -70,6 +77,17 @@
    }
    if(forecastEnabled)details.insertAdjacentHTML('beforeend','<div class="chart-forecast-summary"><p><b>Ориентировочный прогноз до 24:00 МСК</b> · сплошная линия — факты сегодня; цветной пунктир — ориентир. Точки видны при наведении или выборе с клавиатуры.</p>'+forecasts.map(s=>'<p><span style="color:'+s.color+'">●</span> <b>'+esc(s.name)+'</b>: '+(s.status==='available'?format(s.endValue)+' к 24:00 · среднее трёх таких же дней недели: '+format(s.average)+'<br><small>'+s.basis.map(b=>short(b.date)+': '+format(b.value)).join(' · ')+'</small>':'Недоступен: '+esc(s.reason))+'</p>').join('')+'<p>Ориентировочный прогноз: среднее того же дня недели за последние три недели, не ниже уже заказанного. Например, пятница сравнивается только с тремя предыдущими пятницами. Это ориентир: темп текущего дня, акции и праздники не учтены. Пунктир соединяет последний факт с ориентиром на конец дня; промежуточные точки не являются отдельным почасовым прогнозом. Прогноз не включён в фактические итоги.</p></div>');
    if(oneDay){const rows=series.flatMap(s=>s.points.filter(p=>p.value!==null).slice(-8).map(p=>({name:s.name,...p}))).sort((a,b)=>b.time-a.time);details.insertAdjacentHTML('beforeend','<details><summary>История загрузок</summary><div class="table-wrap"><table><thead><tr><th>Магазин</th><th>Время МСК</th><th class="numeric">Итог дня</th></tr></thead><tbody>'+rows.map(p=>'<tr><td>'+esc(p.name)+'</td><td>'+time(p.time)+'</td><td class="numeric">'+format(p.value)+'</td></tr>').join('')+'</tbody></table></div></details>')}
+  }
+  async function renderCategories({current,seq,key,title,oneDay,isToday,format}){
+   $('chart-forecast-controls').hidden=true;
+   if(!oneDay||!isToday){$('chart-store-status').textContent='Категории доступны для сегодняшних заказов по МСК.';$('ins-chart').removeAttribute('aria-busy');$('ins-chart').innerHTML='<div class="empty">Выберите период «Сегодня», чтобы увидеть категории заказов.</div>';return}
+   if(!['orderedRevenue','orderedUnits'].includes(key)){$('chart-store-status').textContent='По категориям доступны показатели «Заказано на сумму» и «Заказано товаров».';$('ins-chart').removeAttribute('aria-busy');$('ins-chart').innerHTML='<div class="empty">Для этого показателя нет сопоставимого источника заказов по категориям.</div>';return}
+   try{const loaded=await getCategoryReport(current.current.from);if(seq!==version)return;categoryReport=loaded}catch{if(seq!==version)return;$('chart-store-status').textContent='Не удалось загрузить категории заказов.';$('ins-chart').removeAttribute('aria-busy');return}
+   for(const name of [...selectedCategories])if(!categoryReport.categories.includes(name))selectedCategories.delete(name);renderCategoryOptions();
+   if(!selectedCategories.size){$('chart-store-status').textContent=['Выберите хотя бы одну категорию.',...(categoryReport.limitations||[])].filter(Boolean).join(' · ');$('ins-chart').removeAttribute('aria-busy');$('ins-chart').innerHTML='<div class="empty">Выберите хотя бы одну категорию.</div>';return}
+   const palette=new Map(categoryReport.categories.map((name,i)=>[name,colors[i%colors.length]])),series=categoryReport.series.filter(item=>selectedCategories.has(item.category)).map(item=>({id:item.market+':'+item.category,name:item.category+' · '+item.market,market:item.market,color:palette.get(item.category),dash:item.market==='WB'?'6 4':null,points:(item.points||[]).map(point=>({time:Date.parse(point.at),value:point[key]})).filter(point=>Number.isFinite(point.time)&&Number.isFinite(point.value)),total:null,amountBasis:item.amountBasis,timeBasis:item.timeBasis}));
+   $('chart-store-status').textContent=(categoryReport.limitations||[]).join(' · ');$('ins-chart').removeAttribute('aria-busy');draw(series,current,true,title,format,value=>format(value),false);
+   const details=$('ins-chart-details');details.hidden=false;details.innerHTML='<div class="chart-series-totals">'+series.map(item=>{const last=item.points.at(-1);return '<div style="--series-color:'+item.color+'"><span><i></i>'+esc(item.name)+'</span><strong>'+format(last?.value??null)+'</strong><small>'+(last?'На '+time(last.time)+' МСК · '+esc(item.timeBasis):'Нет полного наблюдения')+'</small></div>'}).join('')+'</div><p><b>Время:</b> WB построен по времени создания каждого заказа. Ozon Seller API отдаёт суточный итог по SKU, поэтому линия меняется только при сохранении нового снимка.</p><p><b>Суммы:</b> Ozon использует revenue, WB — priceWithDisc. Линии площадок не складываются. Позиции без доказуемой связи показаны как «Не сопоставлено».</p>';
   }
   function draw(series,current,oneDay,title,format,formatDelta,ratio){
    if(!series.some(s=>s.points.some(p=>p.value!==null))){$('ins-chart').innerHTML='<div class="empty">График появится после загрузки данных для выбранных магазинов.</div>';return}
@@ -148,6 +166,7 @@
    const restored=inspected?observations.findIndex(p=>p.series.id===inspected.id&&p.point.time===inspected.time):-1;
    show(restored>=0?restored:observations.findLastIndex(p=>p.series.id===observations[0]?.series.id));
   }
-  return {update(value,storeId){report=value;cache=new Map([[cacheKey(storeId||'',value.current),value]]);void render()},render};
+  return {update(value,storeId){report=value;categoryRequests=new Map();cache=new Map([[cacheKey(storeId||'',value.current),value]]);void render()},render};
  };
 })();
+
