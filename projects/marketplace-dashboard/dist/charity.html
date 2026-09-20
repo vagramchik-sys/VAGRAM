@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="theme-color" content="#101318">
+  <meta name="theme-color" content="#faf7f2">
   <title>Пульт — благотворительность</title>
   <link rel="stylesheet" href="/dashboard.css">
   <link rel="stylesheet" href="/dark.css">
@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="/navigation.css">
   <link rel="stylesheet" href="/charity.css">
 </head>
-<body>
+<body class="charity-page">
 <aside class="sidebar">
   <a class="brand" href="/">▥ пульт<span>.</span></a>
   <div class="workspace"><div>Моя компания<small>Кабинет руководителя</small></div></div>
@@ -25,36 +25,94 @@
   </nav>
   <div class="sidebar-note">Подтверждённые данные<p>История появляется только после импорта документированной выгрузки.</p></div>
 </aside>
-<main>
-  <header class="topbar"><span>Моя компания <span class="slash">/</span> Благотворительность</span><a class="button secondary" href="/">К обзору</a></header>
-  <div class="page-heading">
-    <div><div class="eyebrow">ФАКТИЧЕСКИ ВЫПОЛНЕННЫЕ ОПЕРАЦИИ</div><h1>Благотворительность</h1><p>История подтверждённых операций, их источники и полнота загруженных данных.</p></div>
-    <button id="refresh" class="button secondary" type="button">Обновить данные</button>
-  </div>
+
+<main class="charity-main">
+  <header class="topbar">
+    <span>Моя компания <span class="slash">/</span> Благотворительность</span>
+    <button id="refresh" class="button secondary refresh-button" type="button"><span aria-hidden="true">↻</span> Обновить данные</button>
+  </header>
+
+  <section class="charity-hero" aria-labelledby="charity-title">
+    <div class="hero-copy">
+      <div class="eyebrow">БЛАГОТВОРИТЕЛЬНОСТЬ</div>
+      <h1 id="charity-title">Вместе мы меняем<br>жизни к лучшему</h1>
+      <p>Помощь начинается с участия. Узнайте о программах и поддержите доброе дело.</p>
+      <div class="hero-actions">
+        <button id="support-button" class="button charity-primary" type="button"><span aria-hidden="true">♡</span> Помочь фонду</button>
+        <a class="button charity-link" href="#transparency">Подробнее <span aria-hidden="true">→</span></a>
+      </div>
+      <p class="hero-footnote"><span aria-hidden="true">●</span> Операции и источники — из загруженной истории.</p>
+    </div>
+    <div class="hero-art" aria-hidden="true">
+      <span class="art-leaf leaf-one"></span><span class="art-leaf leaf-two"></span><span class="art-leaf leaf-three"></span>
+      <svg viewBox="0 0 560 410" focusable="false">
+        <defs>
+          <linearGradient id="care-bg" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#f6d7c8"/><stop offset="1" stop-color="#dce8d9"/></linearGradient>
+          <linearGradient id="care-heart" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#ef927b"/><stop offset="1" stop-color="#d96250"/></linearGradient>
+        </defs>
+        <path d="M80 310C31 244 59 122 152 58c94-65 239-41 305 39 66 80 64 208-4 272H120c-15-18-28-38-40-59Z" fill="url(#care-bg)" opacity=".78"/>
+        <circle cx="414" cy="94" r="47" fill="#fff8ec" opacity=".82"/>
+        <path d="M368 105c23-24 52-30 73-13-9 29-38 46-73 40" fill="#b9d4b6"/>
+        <path d="M178 105c-22-35-59-45-91-22 11 42 50 65 97 52" fill="#c8ddc4"/>
+        <path d="M278 128c-30-43-102-18-95 38 7 55 95 104 95 104s88-49 95-104c7-56-65-81-95-38Z" fill="url(#care-heart)"/>
+        <path d="M63 282c48-22 91-28 125-6 30 20 50 56 94 63 17 3 30 17 28 34H130c-41-12-68-42-67-91Z" fill="#e6aa8f"/>
+        <path d="M497 282c-48-22-91-28-125-6-30 20-50 56-94 63-17 3-30 17-28 34h180c41-12 68-42 67-91Z" fill="#efbca4"/>
+        <path d="M126 293c58 17 71 62 130 67M434 293c-58 17-71 62-130 67" fill="none" stroke="#cb8069" stroke-width="4" stroke-linecap="round" opacity=".55"/>
+        <path d="M104 195c32 5 53 26 57 57M459 189c-31 8-50 31-50 63" fill="none" stroke="#6f9b78" stroke-width="8" stroke-linecap="round"/>
+        <path d="M89 177c28-11 49 1 58 31-28 9-51-1-58-31ZM474 171c-27-8-47 7-53 37 29 6 50-7 53-37Z" fill="#92b89a"/>
+        <circle cx="109" cy="77" r="9" fill="#ef927b"/><circle cx="476" cy="228" r="7" fill="#f2c27c"/>
+      </svg>
+      <div class="art-note"><span aria-hidden="true">♡</span><strong>Забота становится действием</strong><small>когда она основана на доверии</small></div>
+    </div>
+  </section>
 
   <div id="notice" role="status" aria-live="polite"></div>
 
-  <section class="panel charity-scope" aria-labelledby="scope-heading">
-    <div><div class="eyebrow">ОХВАТ И СВЕЖЕСТЬ</div><h2 id="scope-heading">Что известно о данных</h2></div>
-    <div id="scope-details" class="scope-details">Загружаем сведения…</div>
+  <section aria-labelledby="overview-heading">
+    <div class="section-intro compact-intro"><div><div class="eyebrow">ПОДТВЕРЖДЁННЫЕ ДАННЫЕ</div><h2 id="overview-heading">Коротко о помощи</h2></div><p>Валюты не пересчитываются и не складываются между собой.</p></div>
+    <div id="status-counts" class="totals-grid status-cards" aria-live="polite" aria-busy="true"><div class="loading-card">Загружаем подтверждённую историю…</div></div>
   </section>
 
-  <section class="panel charity-filters" aria-label="Фильтры истории">
-    <label>С даты<input id="filter-from" type="date"></label>
-    <label>По дату<input id="filter-to" type="date"></label>
-    <label>Магазин<select id="filter-store"><option value="">Все магазины</option></select></label>
-    <label>Статус<select id="filter-status"><option value="">Все статусы</option><option value="completed">Завершено</option><option value="executed">Исполнено</option><option value="pending">Ожидает</option><option value="cancelled">Отменено</option><option value="refunded">Возвращено</option></select></label>
-    <div class="filter-actions"><button id="apply-filters" class="button" type="button">Применить</button><button id="reset-filters" class="button secondary" type="button">Сбросить</button></div>
+  <section class="impact-grid" aria-label="Программы и прозрачность">
+    <article class="warm-card program-card">
+      <div class="card-icon coral" aria-hidden="true">♡</div><div class="card-kicker">ТЕКУЩАЯ ПРОГРАММА</div>
+      <h2>Помощь по подтверждённым направлениям</h2>
+      <p id="program-state">Название и цель текущей программы не передаются подключённым источником. Они появятся здесь после документированного подтверждения.</p>
+      <a class="inline-link" href="#history-heading">Посмотреть операции <span aria-hidden="true">→</span></a>
+    </article>
+
+    <article class="warm-card transparency-card" id="transparency">
+      <div class="card-heading"><div><div class="card-kicker">КУДА ИДУТ СРЕДСТВА</div><h2>Подтверждённые операции</h2></div><div class="card-icon sage" aria-hidden="true">◎</div></div>
+      <p>Суммы показаны раздельно по валютам и статусам. Распределение по категориям расходов источник пока не предоставляет.</p>
+      <div id="totals" class="totals-grid currency-cards" aria-live="polite" aria-busy="true"><div class="loading-card">Загружаем суммы…</div></div>
+    </article>
+
+    <article class="warm-card stories-card">
+      <div class="card-heading"><div><div class="card-kicker">ИСТОРИИ ПОМОЩИ</div><h2>Люди и результаты</h2></div><div class="card-icon peach" aria-hidden="true">✦</div></div>
+      <div class="honest-empty"><span aria-hidden="true">♡</span><p id="stories-state">Проверенных историй для публикации в подключённом источнике нет.</p></div>
+      <p class="privacy-note">Мы не создаём истории и не раскрываем личные данные без подтверждения.</p>
+    </article>
+
+    <article class="warm-card documents-card">
+      <div class="card-heading"><div><div class="card-kicker">ОТЧЁТНОСТЬ И ДОКУМЕНТЫ</div><h2>Охват данных</h2></div><div class="card-icon blue" aria-hidden="true">▤</div></div>
+      <div id="scope-details" class="scope-details" aria-live="polite" aria-busy="true"><div class="loading-card">Загружаем сведения…</div></div>
+    </article>
+
+    <article class="warm-card recent-card" aria-labelledby="recent-heading">
+      <div class="card-heading"><div><div class="card-kicker">ПОСЛЕДНИЕ ПОДТВЕРЖДЁННЫЕ ОПЕРАЦИИ</div><h2 id="recent-heading">Недавняя помощь</h2></div><a class="inline-link" href="#full-history">Вся история <span aria-hidden="true">→</span></a></div>
+      <div id="recent-operations" class="recent-operations" aria-live="polite" aria-busy="true"><div class="loading-card">Загружаем операции…</div></div>
+    </article>
   </section>
 
-  <section aria-labelledby="totals-heading">
-    <div class="section-title"><div><div class="eyebrow">ИТОГИ ПО ВЫБРАННОМУ ПЕРИОДУ</div><h2 id="totals-heading">Только подтверждённые суммы</h2><p>«Подтверждено» включает статусы «Завершено» и «Исполнено». Валюты не пересчитываются и не складываются между собой.</p></div></div>
-    <div id="status-counts" class="totals-grid" aria-live="polite"></div>
-    <div id="totals" class="totals-grid" aria-live="polite"></div>
-  </section>
-
-  <section class="panel history-panel" aria-labelledby="history-heading">
-    <div class="section-title"><div><div class="eyebrow">ИСТОРИЯ</div><h2 id="history-heading">Операции</h2></div><span id="record-count" class="record-count"></span></div>
+  <section id="full-history" class="panel history-panel" aria-labelledby="history-heading">
+    <div class="section-title history-title"><div><div class="eyebrow">ПОДРОБНАЯ ИСТОРИЯ</div><h2 id="history-heading">Все операции</h2><p>Фильтруйте подтверждённую выгрузку по периоду, магазину и статусу.</p></div><span id="record-count" class="record-count"></span></div>
+    <div class="charity-filters" aria-label="Фильтры истории">
+      <label>С даты<input id="filter-from" type="date"></label>
+      <label>По дату<input id="filter-to" type="date"></label>
+      <label>Магазин<select id="filter-store"><option value="">Все магазины</option></select></label>
+      <label>Статус<select id="filter-status"><option value="">Все статусы</option><option value="completed">Завершено</option><option value="executed">Исполнено</option><option value="pending">Ожидает</option><option value="cancelled">Отменено</option><option value="refunded">Возвращено</option></select></label>
+      <div class="filter-actions"><button id="apply-filters" class="button charity-primary" type="button">Применить</button><button id="reset-filters" class="button secondary" type="button">Сбросить</button></div>
+    </div>
     <div class="table-wrap"><table><thead><tr><th>Дата</th><th>Программа или получатель</th><th>Сумма</th><th>Статус</th><th>Источник / документ</th><th>Магазин</th></tr></thead><tbody id="history-rows"></tbody></table></div>
     <div id="history-empty" class="charity-empty" hidden></div>
   </section>
@@ -73,12 +131,25 @@
       <label>JSON-файл<input id="import-file" type="file" accept=".json,application/json"></label>
       <label>Или содержимое JSON<textarea id="import-text" rows="9" spellcheck="false" placeholder='{"records":[{"date":"2026-09-20","programOrRecipient":"Получатель","amount":"100.00","currency":"RUB","status":"completed","sourceDocument":{"label":"Документ №123"}}]}'></textarea></label>
       <p class="format-help">Поддерживается объект с массивом <code>records</code> или сам массив. Для каждой записи обязательны дата, программа или получатель, сумма как десятичная строка, валюта, статус и источник документа.</p>
-      <div class="import-actions"><button id="preview-import" class="button secondary" type="button">Проверить JSON</button><button id="confirm-import" class="button" type="button" disabled>Импортировать подтверждённые данные</button></div>
+      <div class="import-actions"><button id="preview-import" class="button secondary" type="button">Проверить JSON</button><button id="confirm-import" class="button charity-primary" type="button" disabled>Импортировать подтверждённые данные</button></div>
       <div id="import-message" role="status" aria-live="polite"></div>
       <div id="import-preview" class="import-preview" hidden></div>
     </div>
   </details>
+
+  <footer class="charity-footer"><span>Благотворительность · Пульт</span><span>Только документированные данные</span></footer>
 </main>
+
+<dialog id="support-dialog" aria-labelledby="support-dialog-title">
+  <form method="dialog" class="support-dialog-content">
+    <button class="dialog-close" value="close" aria-label="Закрыть" type="submit">×</button>
+    <div class="dialog-mark" aria-hidden="true">♡</div><div class="eyebrow">ПОДДЕРЖКА ФОНДА</div>
+    <h2 id="support-dialog-title">Способ поддержки ещё не настроен</h2>
+    <p>Проверенная страница поддержки или реквизиты пока не подключены. Здесь не выполняется платёж и не сохраняются платёжные данные.</p>
+    <button class="button charity-primary" value="close" type="submit">Понятно</button>
+  </form>
+</dialog>
+
 <script src="/navigation.js"></script><script src="/charity.js"></script>
 </body>
 </html>
