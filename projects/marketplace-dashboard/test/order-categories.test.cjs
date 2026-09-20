@@ -5,7 +5,7 @@ const DAY='2026-09-20',AT='2026-09-20T09:00:00.000Z';
 function fixture(t){const privateDir=fs.mkdtempSync(path.join(os.tmpdir(),'order-categories-'));t.after(()=>fs.rmSync(privateDir,{recursive:true,force:true}));return {privateDir}}
 function stores(){return [
  {id:'1',market:'Ozon',categoryTree:[{description_category_id:12,category_name:'Строительство',children:[{description_category_id:13,category_name:'Крепёжные изделия',children:[{type_id:14,type_name:'Саморезы'}]}]}],products:[{product_id:1,sku:101,description_category_id:13,type_id:14},{product_id:2,sku:102,description_category_id:999,type_id:999}],orders:{skuDailyCoverage:true,skuUpdatedAt:AT,skuDaily:[{date:DAY,sku:'101',revenue:120,units:2},{date:DAY,sku:'102',revenue:30,units:1}]}},
- {id:'wb-1',market:'WB',products:[{product_id:201,sku:201,subjectName:'Перчатки хозяйственные'}],orders:{complete:true,day:DAY,orders:[{at:'2026-09-20T08:30:00.000Z',amount:50,nmId:'201',category:'Хозяйственные товары',subject:'Перчатки хозяйственные'},{at:'2026-09-20T09:15:00.000Z',amount:70,nmId:'999',category:'Строительные материалы',subject:'Тенты'}]}}
+ {id:'wb-1',market:'WB',products:[{nmID:201,title:'Перчатки хозяйственные',vendorCode:'WB-201',subjectName:'Перчатки хозяйственные'}],orders:{complete:true,day:DAY,orders:[{at:'2026-09-20T08:30:00.000Z',amount:50,nmId:'201',category:'Хозяйственные товары',subject:'Перчатки хозяйственные'},{at:'2026-09-20T09:15:00.000Z',amount:70,nmId:'999',category:'Строительные материалы',subject:'Тенты'}]}}
  ]}
 test('only platform category fields and explicit assignments form broad deterministic categories',()=>{
  assert.equal(broadCategory(['Крепёжные изделия','Саморезы']),'Крепёж');assert.equal(broadCategory(['Расходные материалы','Термоэтикетки']),'Термоэтикетки');assert.equal(broadCategory([]),UNMATCHED);
@@ -55,4 +55,18 @@ test('historical points with missing amounts are rejected instead of becoming ze
  assert.throws(()=>create(f).report({stores:input,categories:[],date:DAY}),/неполные суммы/);
  assert.deepEqual(JSON.parse(fs.readFileSync(file,'utf8')),original);
 });
-
+test('reviewed hierarchy joins identical final types across markets and aggregates parents once',t=>{
+ const f=fixture(t),file=path.join(f.privateDir,'order-category-intraday.json'),input=stores();
+ input[0].products[0].name='Сетка от грызунов';input[0].products[1].name='Сетка штукатурная';input[1].products.push({nmID:999,title:'Сетка штукатурная',vendorCode:'WB-999'});
+ fs.writeFileSync(file,JSON.stringify({version:1,points:[{date:DAY,at:'2026-09-20T08:00:00.000Z',values:{'Старая категория':{orderedRevenue:999,orderedUnits:9}}}]}));
+ const registry={available:true,revision:'types-1',types:[{id:'mesh',parentId:null,name:'Сетки'},{id:'rodent-mesh',parentId:'mesh',name:'Сетка от грызунов'},{id:'plaster-mesh',parentId:'mesh',name:'Сетка штукатурная'}],assignments:{'1:1':{typeId:'rodent-mesh',source:'reviewed',evidence:null},'1:2':{typeId:'plaster-mesh',source:'reviewed',evidence:null},'wb-1:201':{typeId:'rodent-mesh',source:'reviewed',evidence:null},'wb-1:999':{typeId:'plaster-mesh',source:'reviewed',evidence:null}},rules:[]};
+ const service=create({...f,productTypes:{read:()=>registry},now:()=>Date.parse('2026-09-20T10:00:00.000Z')}),report=service.report({stores:input,categories:[],date:DAY});
+ const ozon=report.series.find(row=>row.market==='Ozon'&&row.typeId==='mesh'),wb=report.series.find(row=>row.market==='WB'&&row.typeId==='mesh');
+ assert.deepEqual(ozon.points,[{at:AT,orderedRevenue:150,orderedUnits:3}]);assert.deepEqual(wb.points.at(-1),{at:'2026-09-20T09:15:00.000Z',orderedRevenue:120,orderedUnits:2});
+ assert.equal(report.taxonomyBoundary.sourceAt,AT);assert.equal(report.taxonomyBoundary.classifiedAt,'2026-09-20T10:00:00.000Z');assert.equal(report.taxonomyBoundary.legacyPoints,1);assert.ok(!report.series.some(row=>row.category==='Старая категория'));
+});
+test('taxonomy revision creates a new honest point without rewriting prior revisions',t=>{
+ const f=fixture(t),input=stores(),base={available:true,types:[{id:'fasteners',parentId:null,name:'Крепёж'}],assignments:{'1:1':{typeId:'fasteners',source:'reviewed',evidence:null},'1:2':{typeId:'fasteners',source:'reviewed',evidence:null},'wb-1:201':{typeId:'fasteners',source:'reviewed',evidence:null}},rules:[]};let revision='types-1',clock=Date.parse('2026-09-20T10:00:00.000Z');
+ const service=create({...f,productTypes:{read:()=>({...base,revision})},now:()=>clock});service.report({stores:input,categories:[],date:DAY});revision='types-2';clock+=60000;service.report({stores:input,categories:[],date:DAY});
+ const points=service.read().points;assert.deepEqual(points.map(point=>point.taxonomyRevision),['types-1','types-2']);assert.deepEqual(points.map(point=>point.at),[AT,AT]);assert.deepEqual(points.map(point=>point.classifiedAt),['2026-09-20T10:00:00.000Z','2026-09-20T10:01:00.000Z']);
+});

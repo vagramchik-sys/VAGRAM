@@ -48,4 +48,10 @@ test('old responses cannot replace a refreshed report',async()=>{
  assert.match(app.node('chart-category-options').innerHTML,/Новая категория/);
  assert.doesNotMatch(app.node('chart-category-options').innerHTML,/Старая категория/);
 });
-
+test('choosing a child replaces its selected parent and search keeps the matching branch',async()=>{
+ const hierarchy={categories:['Сетки','Сетка от грызунов','Сетка штукатурная'],types:[{id:'mesh',parentId:null,name:'Сетки'},{id:'rodent',parentId:'mesh',name:'Сетка от грызунов'},{id:'plaster',parentId:'mesh',name:'Сетка штукатурная'}],series:[],limitations:[]};
+ const app=runtime(()=>Promise.resolve(hierarchy));app.update('2026-09-20');await flush();
+ app.node('chart-category-options').onchange({target:{type:'checkbox',value:'mesh',checked:true}});await flush();assert.match(app.node('chart-category-options').innerHTML,/value="mesh" checked/);
+ app.node('chart-category-options').onchange({target:{type:'checkbox',value:'rodent',checked:true}});await flush();assert.doesNotMatch(app.node('chart-category-options').innerHTML,/value="mesh" checked/);assert.match(app.node('chart-category-options').innerHTML,/value="rodent" checked/);
+ app.node('chart-category-search').value='грызунов';app.node('chart-category-search').oninput();assert.match(app.node('chart-category-options').innerHTML,/Сетки/);assert.match(app.node('chart-category-options').innerHTML,/Сетка от грызунов/);assert.doesNotMatch(app.node('chart-category-options').innerHTML,/Сетка штукатурная/);
+});
