@@ -5,6 +5,7 @@ test('category graph starts empty and requires an explicit choice',()=>{
  assert.doesNotMatch(source,/selectedCategories=new Set\(categoryReport\.categories\)/);
  assert.match(source,/Выберите хотя бы одну категорию/);
  assert.match(source,/chart-all-categories/);
+ assert.match(source,/\$\('chart-category-picker'\)\.hidden=true/);
 });
 test('category refresh preserves valid choices and drops missing categories',()=>{
  assert.match(source,/const valid=new Set\(categoryReport\.types\?\.length\?categoryReport\.types\.map\(type=>type\.id\):categoryReport\.categories\)/);
@@ -24,3 +25,26 @@ test('marketplaces remain separate and disclose different amount bases',()=>{
  assert.match(source,/item\.market==='WB'\?'6 4'/);
  assert.match(source,/Ozon использует revenue, WB — priceWithDisc/);
 });
+test('category table starts at two hierarchy levels and never renders SKU rows',()=>{
+ assert.match(source,/id="chart-category-table"/);
+ assert.match(source,/id="chart-category-level"/);
+ assert.match(source,/<option value="2" selected>2 уровня<\/option>/);
+ assert.match(source,/const byParent=new Map\(\)/);
+ assert.match(source,/addRows\(children,depth\+1\)/);
+ assert.doesNotMatch(source,/data-sku/);
+});
+test('category table shows units and revenue sorted by revenue for each marketplace',()=>{
+ assert.match(source,/markets=\['Ozon','WB'\]/);
+ assert.match(source,/point\?\.orderedUnits/);
+ assert.match(source,/point\?\.orderedRevenue/);
+ assert.match(source,/value\(b\)\.revenue\?\?-Infinity\)-\(value\(a\)\.revenue\?\?-Infinity/);
+ assert.match(source,/Заказано, шт\./);
+ assert.match(source,/Сумма заказов/);
+});
+test('table visibility controls use the same non-overlapping graph selection',()=>{
+ assert.match(source,/class="chart-category-visibility"/);
+ assert.match(source,/selectCategory\(visibility\.dataset\.category/);
+ assert.match(source,/selectedCategories\.has\(type\.id\)/);
+ assert.match(source,/Родитель уже включает дочерние типы/);
+});
+
