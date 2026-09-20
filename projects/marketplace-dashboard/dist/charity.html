@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101318">
+  <title>Пульт — благотворительность</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <link rel="stylesheet" href="/dark.css">
+  <link rel="stylesheet" href="/premium.css">
+  <link rel="stylesheet" href="/navigation.css">
+  <link rel="stylesheet" href="/charity.css">
+</head>
+<body>
+<aside class="sidebar">
+  <a class="brand" href="/">▥ пульт<span>.</span></a>
+  <div class="workspace"><div>Моя компания<small>Кабинет руководителя</small></div></div>
+  <div class="nav-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+  <nav>
+    <a href="/#overview">Обзор бизнеса</a>
+    <a href="/ideas.html">Идеи развития</a>
+    <a href="/suppliers.html">Кабинеты поставщиков</a>
+    <a href="/procurement.html">Закупки</a>
+    <a class="active" href="/charity.html" aria-current="page">Благотворительность</a>
+  </nav>
+  <div class="sidebar-note">Подтверждённые данные<p>История появляется только после импорта документированной выгрузки.</p></div>
+</aside>
+<main>
+  <header class="topbar"><span>Моя компания <span class="slash">/</span> Благотворительность</span><a class="button secondary" href="/">К обзору</a></header>
+  <div class="page-heading">
+    <div><div class="eyebrow">ФАКТИЧЕСКИ ВЫПОЛНЕННЫЕ ОПЕРАЦИИ</div><h1>Благотворительность</h1><p>История подтверждённых операций, их источники и полнота загруженных данных.</p></div>
+    <button id="refresh" class="button secondary" type="button">Обновить данные</button>
+  </div>
+
+  <div id="notice" role="status" aria-live="polite"></div>
+
+  <section class="panel charity-scope" aria-labelledby="scope-heading">
+    <div><div class="eyebrow">ОХВАТ И СВЕЖЕСТЬ</div><h2 id="scope-heading">Что известно о данных</h2></div>
+    <div id="scope-details" class="scope-details">Загружаем сведения…</div>
+  </section>
+
+  <section class="panel charity-filters" aria-label="Фильтры истории">
+    <label>С даты<input id="filter-from" type="date"></label>
+    <label>По дату<input id="filter-to" type="date"></label>
+    <label>Магазин<select id="filter-store"><option value="">Все магазины</option></select></label>
+    <label>Статус<select id="filter-status"><option value="">Все статусы</option><option value="completed">Завершено</option><option value="executed">Исполнено</option><option value="pending">Ожидает</option><option value="cancelled">Отменено</option><option value="refunded">Возвращено</option></select></label>
+    <div class="filter-actions"><button id="apply-filters" class="button" type="button">Применить</button><button id="reset-filters" class="button secondary" type="button">Сбросить</button></div>
+  </section>
+
+  <section aria-labelledby="totals-heading">
+    <div class="section-title"><div><div class="eyebrow">ИТОГИ ПО ВЫБРАННОМУ ПЕРИОДУ</div><h2 id="totals-heading">Только подтверждённые суммы</h2><p>«Подтверждено» включает статусы «Завершено» и «Исполнено». Валюты не пересчитываются и не складываются между собой.</p></div></div>
+    <div id="status-counts" class="totals-grid" aria-live="polite"></div>
+    <div id="totals" class="totals-grid" aria-live="polite"></div>
+  </section>
+
+  <section class="panel history-panel" aria-labelledby="history-heading">
+    <div class="section-title"><div><div class="eyebrow">ИСТОРИЯ</div><h2 id="history-heading">Операции</h2></div><span id="record-count" class="record-count"></span></div>
+    <div class="table-wrap"><table><thead><tr><th>Дата</th><th>Программа или получатель</th><th>Сумма</th><th>Статус</th><th>Источник / документ</th><th>Магазин</th></tr></thead><tbody id="history-rows"></tbody></table></div>
+    <div id="history-empty" class="charity-empty" hidden></div>
+  </section>
+
+  <details class="panel import-panel" hidden>
+    <summary><span><span class="eyebrow">ТОЛЬКО ДЛЯ ВЛАДЕЛЬЦА</span><strong>Импорт подтверждённой выгрузки</strong></span><span class="summary-hint">Локальный нормализованный JSON</span></summary>
+    <div class="import-content">
+      <p class="import-note">Пульт не получает эти данные из Ozon автоматически. Укажите источник и загрузите локальную выгрузку в поддерживаемом JSON-формате. Перед записью можно проверить состав данных.</p>
+      <div class="import-fields">
+        <label>Источник выгрузки<input id="import-source" maxlength="200" required placeholder="Например: подтверждённый отчёт, номер документа"></label>
+        <label>Снимок данных на дату<input id="import-as-of" type="date" required></label>
+        <label>Охват с даты<input id="coverage-from" type="date" required></label>
+        <label>Охват по дату<input id="coverage-to" type="date" required></label>
+      </div>
+      <label class="complete-check"><input id="coverage-complete" type="checkbox"> Выгрузка полная за указанный период</label>
+      <label>JSON-файл<input id="import-file" type="file" accept=".json,application/json"></label>
+      <label>Или содержимое JSON<textarea id="import-text" rows="9" spellcheck="false" placeholder='{"records":[{"date":"2026-09-20","programOrRecipient":"Получатель","amount":"100.00","currency":"RUB","status":"completed","sourceDocument":{"label":"Документ №123"}}]}'></textarea></label>
+      <p class="format-help">Поддерживается объект с массивом <code>records</code> или сам массив. Для каждой записи обязательны дата, программа или получатель, сумма как десятичная строка, валюта, статус и источник документа.</p>
+      <div class="import-actions"><button id="preview-import" class="button secondary" type="button">Проверить JSON</button><button id="confirm-import" class="button" type="button" disabled>Импортировать подтверждённые данные</button></div>
+      <div id="import-message" role="status" aria-live="polite"></div>
+      <div id="import-preview" class="import-preview" hidden></div>
+    </div>
+  </details>
+</main>
+<script src="/navigation.js"></script><script src="/charity.js"></script>
+</body>
+</html>

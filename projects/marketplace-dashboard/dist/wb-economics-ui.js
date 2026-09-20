@@ -54,7 +54,7 @@
   };
   $('wb-eco-seven').onclick=setSevenDays;
   $('wb-eco-range').onchange=()=>{const range=$('ins-range');range.value=$('wb-eco-range').value;range.dispatchEvent(new Event('change',{bubbles:true}))};
-  document.querySelector('[data-nav="wb-economics"]')?.addEventListener('click',()=>{if(!visibleFor(selectedScope())){$('market').value='Wildberries';$('market').dispatchEvent(new Event('change',{bubbles:true}));$('store').value='';$('store').dispatchEvent(new Event('change',{bubbles:true}))}});
+  document.querySelector('[data-nav="wb-economics"]')?.addEventListener('click',()=>{if(!visibleFor(selectedScope())){$('market').value='WB';$('market').dispatchEvent(new Event('change',{bubbles:true}));$('store').value='';$('store').dispatchEvent(new Event('change',{bubbles:true}))}});
 
   function paint(data,request){
    const {from,to,store:requestedStore}=request;

@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101318">
+  <title>Пульт — рабочее место закупщика</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <link rel="stylesheet" href="/dark.css">
+  <link rel="stylesheet" href="/premium.css">
+  <link rel="stylesheet" href="/navigation.css">
+  <link rel="stylesheet" href="/procurement.css">
+</head>
+<body>
+<aside class="sidebar">
+  <a class="brand" href="/">▥ пульт<span>.</span></a>
+  <div class="workspace"><div>Моя компания<small>Кабинет руководителя</small></div></div>
+  <div class="nav-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+  <nav>
+    <a href="/#overview">Обзор бизнеса</a>
+    <a href="/ideas.html">Идеи развития</a>
+    <a href="/suppliers.html">Кабинеты поставщиков</a>
+    <a class="active" href="/procurement.html" aria-current="page">Закупки</a>
+  </nav>
+  <div class="sidebar-note">Локальный черновик<p>Заявки и прайс-листы хранятся на этом компьютере.</p></div>
+</aside>
+<main>
+  <header class="topbar"><span>Моя компания <span class="slash">/</span> Закупки</span><a class="button secondary" href="/">К обзору</a></header>
+  <div class="page-heading">
+    <div><div class="eyebrow">СБОР И СРАВНЕНИЕ ПРЕДЛОЖЕНИЙ</div><h1>Рабочее место закупщика</h1><p>Соберите заявку, загрузите полученные прайсы и проверьте предложения построчно.</p></div>
+    <button id="refresh" class="button secondary" type="button">Обновить данные</button>
+  </div>
+  <p class="procurement-notice"><strong>Локальная подготовка без отправки поставщикам.</strong> Здесь не создаются заказы и не передаются данные. Цены из файлов пользователя не проверяются в реальном времени.</p>
+  <div id="notice" role="status" aria-live="polite"></div>
+
+  <section class="procurement-grid" aria-label="Подготовка закупки">
+    <article class="panel procurement-panel">
+      <div class="step"><span>1</span><div><div class="eyebrow">ЗАЯВКА</div><h2>Что нужно купить</h2></div></div>
+      <div class="request-mode"><strong id="request-mode">Новая заявка</strong><button id="new-request" class="button secondary" type="button" hidden>Новая заявка</button></div>
+      <label for="request-title">Название заявки</label>
+      <input id="request-title" maxlength="120" placeholder="Например: Пополнение склада — сентябрь">
+      <label for="request-text">Список товаров</label>
+      <textarea id="request-text" rows="7" placeholder="Вставьте список: название, артикул, количество, единица измерения"></textarea>
+      <div class="actions"><button id="parse-request" class="button secondary" type="button">Разобрать список</button></div>
+      <div id="parse-warnings" class="warnings" aria-live="polite"></div>
+      <div id="request-table-wrap" class="table-wrap" hidden>
+        <table><thead><tr><th>Наименование</th><th>Артикул</th><th>Кол-во</th><th>Ед.</th><th><span class="sr-only">Действия</span></th></tr></thead><tbody id="request-items"></tbody></table>
+      </div>
+      <div class="actions split"><button id="add-item" class="button secondary" type="button">Добавить строку</button><button id="save-request" class="button" type="button">Сохранить заявку</button></div>
+    </article>
+
+    <article class="panel procurement-panel">
+      <div class="step"><span>2</span><div><div class="eyebrow">ПРАЙС ПОСТАВЩИКА</div><h2>Импорт CSV или TSV</h2></div></div>
+      <p class="help">Подойдут заголовки: <code>артикул;наименование;цена;остаток;ед.изм.;НДС</code>. Файлы Excel сначала сохраните в формате CSV.</p>
+      <div class="field-row"><label>Поставщик<input id="supplier-name" maxlength="120" placeholder="Название поставщика"></label><label>Дата цен<input id="price-date" type="date"></label></div>
+      <div class="field-row"><label>НДС по умолчанию<select id="vat-basis"><option value="unknown">Неизвестно</option><option value="included">Включён в цену</option><option value="excluded">Сверх цены</option><option value="no-vat">Без НДС</option></select></label><label>Валюта по умолчанию<select id="currency"><option value="RUB">RUB — российский рубль</option><option value="USD">USD — доллар США</option><option value="EUR">EUR — евро</option><option value="CNY">CNY — китайский юань</option></select></label></div>
+      <p class="help">Если в файле есть столбцы «Валюта» или «НДС», значения в строках имеют приоритет над настройками по умолчанию.</p>
+      <label>Кодировка файла<select id="encoding"><option value="utf-8">UTF-8</option><option value="windows-1251">Windows-1251</option></select></label>
+      <label for="price-file">Файл CSV или TSV</label><input id="price-file" type="file" accept=".csv,.tsv,text/csv,text/tab-separated-values,text/plain">
+      <label for="price-text">Или вставьте содержимое</label><textarea id="price-text" rows="7" placeholder="артикул;наименование;цена;остаток;ед.изм.;НДС"></textarea>
+      <div class="actions"><button id="import-price" class="button" type="button">Импортировать прайс</button></div>
+    </article>
+  </section>
+
+  <section class="panel procurement-panel saved-panel">
+    <div class="section-heading"><div><div class="eyebrow">СОХРАНЕНО ЛОКАЛЬНО</div><h2>Заявки и прайс-листы</h2></div></div>
+    <div class="saved-grid"><div><h3>Заявки</h3><div id="request-list" class="card-list">Загружаем…</div></div><div><h3>Прайс-листы</h3><div id="price-list" class="card-list">Загружаем…</div></div></div>
+  </section>
+
+  <section id="compare-panel" class="panel procurement-panel" hidden>
+    <div class="section-heading"><div><div class="eyebrow">СРАВНЕНИЕ</div><h2 id="compare-title">Предложения поставщиков</h2></div><button id="close-compare" class="button secondary" type="button">Закрыть</button></div>
+    <p id="compare-warning" class="help"></p>
+    <div id="comparison"></div>
+  </section>
+
+  <section class="panel procurement-panel external-panel">
+    <div class="section-heading"><div><div class="eyebrow">ВНЕШНИЙ ПОИСК</div><h2>Открыть сайт вручную</h2></div></div>
+    <p class="help">Интеграции с «Русским Светом» и «ВсеИнструменты.ру» не подключены. Кнопки только открывают сайты: скопируйте запрос и найдите товар вручную. Для автоматической работы нужны соглашение по API, вход, доступ к каталогу и разрешение на специальные цены.</p>
+    <div class="manual-search"><label>Запрос для копирования<input id="external-query" placeholder="Название или артикул"></label><button id="copy-query" class="button secondary" type="button">Скопировать</button><a class="button secondary" href="https://rs24.ru/" target="_blank" rel="noopener noreferrer">Русский Свет — RS24 ↗</a><a class="button secondary" href="https://www.vseinstrumenti.ru/" target="_blank" rel="noopener noreferrer">ВсеИнструменты.ру ↗</a></div>
+  </section>
+</main>
+<script src="/navigation.js"></script><script src="/procurement.js"></script>
+</body></html>

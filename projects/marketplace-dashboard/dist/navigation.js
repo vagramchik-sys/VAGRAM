@@ -8,6 +8,9 @@
  controls.className='pult-nav-mode';controls.setAttribute('role','group');controls.setAttribute('aria-label','Расположение меню');
  controls.innerHTML='<span>Меню</span><button type="button" data-nav-mode="top" aria-pressed="false" title="Показывать меню сверху">Сверху</button><button type="button" data-nav-mode="left" aria-pressed="false" title="Показывать меню слева">Слева</button>';
  const nav=sidebar.querySelector('nav'),brand=sidebar.querySelector('.brand');
+ if(nav)for(const [href,label] of [['/partners.html','Партнёры'],['/charity.html','Благотворительность']]){
+  if(!nav.querySelector('a[href="'+href+'"]')){const link=document.createElement('a');link.href=href;link.textContent=label;if(location.pathname===href)link.setAttribute('aria-current','page');nav.append(link);}
+ }
  if(nav)sidebar.insertBefore(controls,nav);else brand?.after(controls);
  let mode='top';
  function apply(value,{save=true}={}){

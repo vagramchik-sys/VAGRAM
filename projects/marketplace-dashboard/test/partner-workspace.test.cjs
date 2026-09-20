@@ -1,0 +1,110 @@
+'use strict';
+const test = require('node:test'), assert = require('node:assert/strict'), fs = require('fs'), path = require('path'), os = require('os');
+const createWorkspace = require('../partner-workspace.cjs');
+function setup(t) {
+  const privateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-partner-test-'));
+  t.after(() => { const target = path.resolve(privateDir); if (path.dirname(target) !== path.resolve(os.tmpdir()) || !path.basename(target).startsWith('pult-partner-test-')) throw Error('Unsafe cleanup'); fs.rmSync(target, { recursive: true, force: true }); });
+  const products = [{ key: 'a:1', market: 'Ozon', name: 'Первый', quantity: 12, salesStatus: 'Продаётся', offer_id: 'A', sku: 1, storeName: 'A', clientId: 'PRIVATE-CLIENT', cost: { unitCost: 123 }, note: 'OWNER-NOTE', ownerMargin: 555 }, { key: 'b:2', market: 'Ozon', name: 'Второй', quantity: 99, offer_id: 'B', storeName: 'B', apiKey: 'PRIVATE-KEY' }, { key: 'wb:3', market: 'WB', name: 'WB' }];
+  const args = { privateDir, getProducts: () => products };
+  return { args, privateDir, products, workspace: createWorkspace(args) };
+}
+test('empty workspace does not create partners, credentials or storage', t => {
+  const { workspace, privateDir } = setup(t);
+  assert.deepEqual(workspace.ownerState().partners, []);
+  assert.equal(fs.readdirSync(privateDir).length, 0);
+  assert.equal(workspace.ownerState().assignableProducts.length, 2);
+  assert.equal(workspace.ownerState().commercialModel.basis, 'commission-rate-difference');
+  assert.equal(workspace.ownerState().commercialModel.ourCommissionPercent, null);
+  assert.equal(workspace.ownerState().commercialModel.partnerCommissionPercent, null);
+  assert.equal(workspace.ownerState().commercialModel.targetDifferencePercentagePoints, null);
+  assert.equal(workspace.ownerState().commercialModel.calculationBase, null);
+});
+test('explicit assignments only, draft default, optimistic versions and persistence', t => {
+  const { workspace, args, privateDir } = setup(t);
+  const draft = workspace.savePartner({ name: 'Партнёр A', productKeys: [] });
+  assert.equal(draft.active, false); assert.equal(draft.hasCredential, false);
+  assert.throws(() => workspace.issueCredential({ id: draft.id, version: draft.version }), /включите/);
+  assert.throws(() => workspace.savePartner({ id: draft.id, version: 0, name: 'A', productKeys: [] }), e => e.status === 409);
+  for (const keys of [['wb:3'], ['unknown'], ['a:1', 'a:1']]) assert.throws(() => workspace.savePartner({ name: 'A', productKeys: keys }));
+  const enabled = workspace.savePartner({ id: draft.id, version: draft.version, name: 'A', productKeys: ['a:1'], active: true });
+  const issued = workspace.issueCredential({ id: enabled.id, version: enabled.version });
+  const reloaded = createWorkspace(args);
+  assert.equal(reloaded.authenticateCredential(issued.credential).partnerId, draft.id);
+  assert.equal(reloaded.ownerState().partners[0].version, issued.partner.version);
+  assert.equal(JSON.stringify(reloaded.ownerState()).includes('credentialHash'), false);
+  assert.equal(fs.readFileSync(path.join(privateDir, 'partner-workspace.json'), 'utf8').includes(issued.credential), false);
+});
+test('two partners see only assigned Ozon products and no owner or other partner data', t => {
+  const { workspace, products } = setup(t);
+  const a = workspace.savePartner({ name: 'A', productKeys: ['a:1'], active: true });
+  const b = workspace.savePartner({ name: 'B', productKeys: ['b:2'], active: true });
+  assert.deepEqual(workspace.snapshotForPartner(a.id).products.map(p => p.key), ['a:1']);
+  assert.deepEqual(workspace.snapshotForPartner(b.id).products.map(p => p.key), ['b:2']);
+  assert.throws(() => workspace.snapshotForPartner('owner'), e => e.status === 401);
+  const serialized = JSON.stringify(workspace.snapshotForPartner(a.id));
+  for (const secret of ['PRIVATE-CLIENT', 'PRIVATE-KEY', 'OWNER-NOTE', 'ownerMargin', b.id, 'credentialHash', 'unitCost']) assert.equal(serialized.includes(secret), false);
+  products[0].market = 'WB'; assert.equal(workspace.snapshotForPartner(a.id).products.length, 0);
+});
+test('credential rotation, revocation and disabling invalidate old sessions across instances', t => {
+  const { workspace, args } = setup(t);
+  let p = workspace.savePartner({ name: 'A', productKeys: ['a:1'], active: true });
+  const first = workspace.issueCredential({ id: p.id, version: p.version });
+  const auth = workspace.authenticateCredential(first.credential);
+  assert.equal(workspace.authorizeSession(auth), true);
+  const another = createWorkspace(args), second = another.issueCredential({ id: p.id, version: first.partner.version });
+  assert.equal(workspace.authenticateCredential(first.credential), null);
+  assert.equal(workspace.authorizeSession(auth), false);
+  const auth2 = workspace.authenticateCredential(second.credential);
+  p = another.revokeCredential({ id: p.id, version: second.partner.version });
+  assert.equal(workspace.authorizeSession(auth2), false);
+  assert.equal(workspace.authenticateCredential(second.credential), null);
+  const third = workspace.issueCredential({ id: p.id, version: p.version });
+  const auth3 = workspace.authenticateCredential(third.credential);
+  workspace.savePartner({ id: p.id, version: third.partner.version, name: 'A', productKeys: ['a:1'], active: false });
+  assert.equal(workspace.authorizeSession(auth3), false);
+});
+test('sales require exact SKU binding and finance remains unknown without invented rates', t => {
+  const { args } = setup(t);
+  const workspace = createWorkspace({ ...args, getSales: keys => {
+    assert.deepEqual(keys, ['a:1']);
+    return [{ productKey: 'a:1', sold: 4, returned: 1, period: { from: '2026-09-01', to: '2026-09-20' }, source: 'fixture-ledger', revenue: 999, partnerName: 'SECRET' }, { productKey: 'b:2', sold: 100, returned: 20 }];
+  } });
+  const p = workspace.savePartner({ name: 'A', productKeys: ['a:1'], active: true });
+  const snapshot = workspace.snapshotForPartner(p.id), product = snapshot.products[0];
+  assert.equal(product.sales.sold, 4); assert.equal(product.sales.returned, 1);
+  assert.equal(JSON.stringify(snapshot).includes('SECRET'), false);
+  for (const [key, value] of Object.entries(product.finance)) if (key !== 'reason') assert.equal(value, null);
+  assert.equal(snapshot.commercialModel.contractCommissionPercent, null);
+  assert.equal(snapshot.commercialModel.label, 'Комиссия по договору с нами');
+  assert.equal(snapshot.commercialModel.calculationBase, null);
+  assert.equal('partnerCommissionPercent' in snapshot.commercialModel, false);
+  assert.equal('advertisingPercent' in snapshot.commercialModel, false);
+  const noSales = createWorkspace(args).snapshotForPartner(p.id);
+  assert.equal(noSales.products[0].sales.sold, null); assert.ok(noSales.products[0].sales.reason);
+});
+test('serialized partner projection never exposes internal rates, margin, owner keys or reasoning', t => {
+  const { workspace, products, privateDir } = setup(t);
+  fs.writeFileSync(path.join(privateDir, 'partner-commercial-model.json'), JSON.stringify({ ourCommissionPercent: 17.25, partnerCommissionPercent: 21.75 }));
+  assert.equal(workspace.ownerState().commercialModel.targetDifferencePercentagePoints, 4.5);
+  products[0].commercialModel = workspace.ownerState().commercialModel;
+  products[0].finance = { ourCommissionPercent: 17.25, targetDifferencePercentagePoints: 4.5, requiredAds: 9, margin: 500 };
+  const p = workspace.savePartner({ name: 'A', productKeys: ['a:1'], active: true });
+  const snapshot = workspace.snapshotForPartner(p.id), serialized = JSON.stringify(snapshot);
+  const forbidden = ['ourCommissionPercent', 'partnerCommissionPercent', 'targetDifferencePercentagePoints', 'advertisingPercent', 'requiredAds', 'commission-rate-difference', 'commissionDifferenceIncome', 'netProfit', 'ownerMargin', 'margin', '25%', '5 п.п.', '15%', 'внутренняя ставка', 'Разница комиссий'];
+  for (const value of forbidden) assert.equal(serialized.includes(value), false, 'Leaked internal value: ' + value);
+  assert.equal(snapshot.commercialModel.contractCommissionPercent, 21.75);
+  assert.equal(serialized.includes('17.25'), false);
+  assert.equal(serialized.includes('4.5'), false);
+  assert.deepEqual(Object.keys(snapshot.products[0].finance).sort(), ['advertising', 'contractCommission', 'logistics', 'reason', 'returns', 'revenue', 'settlement'].sort());
+  for (const value of Object.values(snapshot.products[0].finance).filter(value => typeof value !== 'string')) assert.equal(value, null);
+});
+test('unavailable, duplicate or malformed sales stay unknown; corrupt storage fails closed', t => {
+  const { args, workspace, privateDir } = setup(t);
+  const p = workspace.savePartner({ name: 'A', productKeys: ['a:1'], active: true });
+  for (const getSales of [() => { throw Error('PRIVATE ERROR'); }, () => [{ productKey: 'a:1', sold: 8 }], () => [{ productKey: 'a:1' }, { productKey: 'a:1' }], () => [{ productKey: 'a:1', sold: 8, returned: 0, source: 'fixture', period: { from: '2026-02-31', to: '2026-03-02' } }]]) assert.equal(createWorkspace({ ...args, getSales }).snapshotForPartner(p.id).products[0].sales.sold, null);
+  const file = path.join(privateDir, 'partner-workspace.json'); fs.writeFileSync(file, '{broken');
+  assert.throws(() => workspace.ownerState(), e => e.status === 503);
+  assert.throws(() => workspace.savePartner({ name: 'B', productKeys: [] }), e => e.status === 503);
+  assert.equal(fs.readFileSync(file, 'utf8'), '{broken');
+  assert.equal(fs.existsSync(file + '.lock'), false);
+});
