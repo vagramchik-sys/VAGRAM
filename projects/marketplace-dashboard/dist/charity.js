@@ -17,7 +17,7 @@ async function api(url, body) {
 function node(tag, className, text) { const result = document.createElement(tag); if (className) result.className = className; if (text !== undefined) result.textContent = text; return result; }
 function formatDate(value, withTime = false) {
   if (!value) return 'Не указано';
-  const date = new Date(withTime ? value : `${value}T00:00:00`);
+  const date = new Date(withTime || String(value).includes('T') ? value : `${value}T00:00:00`);
   if (Number.isNaN(date.valueOf())) return String(value);
   return date.toLocaleString('ru-RU', { timeZone: 'Europe/Moscow', dateStyle: 'medium', ...(withTime ? { timeStyle: 'short' } : {}) }) + (withTime ? ' МСК' : '');
 }
@@ -37,15 +37,45 @@ function queryUrl() {
   return `/api/charity${params.size ? `?${params}` : ''}`;
 }
 async function load({ quiet = false } = {}) {
-  $('refresh').disabled = true; $('apply-filters').disabled = true;
+  $('refresh').disabled = true; $('apply-filters').disabled = true; setBusy(true);
   try { state = await api(queryUrl()); render(); if (!quiet) showNotice('История обновлена.'); return true; }
-  catch (error) { showNotice(error.message, true); return false; }
-  finally { $('refresh').disabled = false; $('apply-filters').disabled = false; }
+  catch (error) {
+    if ([401, 403].includes(error.status)) { clearProtectedView(); showNotice('Доступ к истории запрещён. Защищённые данные скрыты.', true); }
+    else if (state) showNotice(`Не удалось обновить данные. Показана ранее загруженная версия. ${error.message}`, true);
+    else { showNotice(error.message, true); renderUnavailable(); }
+    return false;
+  }
+  finally { $('refresh').disabled = false; $('apply-filters').disabled = false; setBusy(false); }
+}
+function setBusy(value) {
+  for (const id of ['scope-details', 'status-counts', 'totals', 'recent-operations']) $(id).setAttribute('aria-busy', String(value));
+}
+function renderUnavailable() {
+  for (const id of ['scope-details', 'status-counts', 'totals', 'recent-operations']) {
+    const target = $(id); target.replaceChildren(node('div', 'data-error', 'Данные временно недоступны. Обновите страницу или повторите позже.'));
+  }
+  document.querySelector('.history-panel .table-wrap').hidden = true;
+  $('history-empty').hidden = false; $('history-empty').textContent = 'Историю не удалось загрузить.';
+}
+function clearProtectedView() {
+  state = null; previewPayload = null; knownStores.clear();
+  for (const id of ['scope-details', 'status-counts', 'totals', 'recent-operations']) {
+    const target = $(id); target.replaceChildren(node('div', 'data-error', 'Нет доступа к защищённым данным.'));
+  }
+  $('history-rows').replaceChildren(); $('record-count').textContent = '';
+  document.querySelector('.history-panel .table-wrap').hidden = true;
+  $('history-empty').hidden = false; $('history-empty').textContent = 'Нет доступа к истории операций.';
+  const store = $('filter-store'); store.replaceChildren(new Option('Все магазины', ''));
+  const panel = document.querySelector('.import-panel'); panel.hidden = true; panel.open = false;
+  $('import-preview').replaceChildren(); $('import-preview').hidden = true; $('import-message').textContent = '';
+  $('import-text').value = ''; $('import-file').value = ''; $('import-source').value = '';
+  for (const id of ['import-as-of', 'coverage-from', 'coverage-to']) $(id).value = '';
+  $('coverage-complete').checked = false; $('confirm-import').disabled = true;
 }
 function render() {
   for (const record of state.records || []) if (record.storeId) knownStores.add(record.storeId);
   document.querySelector('.import-panel').hidden = state.capabilities?.import !== true;
-  renderStoreOptions(); renderScope(); renderCounts(); renderTotals(); renderHistory();
+  renderStoreOptions(); renderScope(); renderCounts(); renderTotals(); renderHistory(); renderRecent();
 }
 function renderStoreOptions() {
   const select = $('filter-store'); const selected = select.value; select.replaceChildren(new Option('Все магазины', ''));
@@ -78,7 +108,7 @@ function renderCounts() {
   const target = $('status-counts'); target.replaceChildren();
   if (!state.counts) return;
   for (const [key, label] of [['confirmed', 'Подтверждено'], ['pending', 'Ожидает'], ['cancelled', 'Отменено'], ['refunded', 'Возвращено']]) {
-    const card = node('article', 'currency-total'); const header = node('header'); header.append(node('span', '', label)); card.append(header, node('strong', '', String(state.counts[key] || 0)), node('small', '', 'операций')); target.append(card);
+    const card = node('article', `status-card ${key}`); const header = node('header'); header.append(node('span', '', label)); card.append(header, node('strong', '', String(state.counts[key] || 0)), node('small', '', 'операций в выбранной истории')); target.append(card);
   }
 }
 function renderTotals() {
@@ -105,6 +135,19 @@ function renderHistory() {
   }
   empty.hidden = records.length > 0; document.querySelector('.history-panel .table-wrap').hidden = records.length === 0;
   if (!records.length) empty.textContent = state.state === 'history-not-loaded' ? 'История ещё не загружена' : 'По выбранным условиям операций нет.';
+}
+function renderRecent() {
+  const target = $('recent-operations'); target.replaceChildren();
+  const records = (state.records || []).filter(record => confirmedStatuses.has(record.status)).sort((a, b) => String(b.date || '').localeCompare(String(a.date || ''))).slice(0, 4);
+  if (!records.length) {
+    target.append(node('div', 'recent-empty', state.state === 'history-not-loaded' ? 'Недавние операции появятся после загрузки подтверждённой истории.' : 'По выбранным условиям подтверждённых операций нет.'));
+    return;
+  }
+  for (const record of records) {
+    const row = node('div', 'recent-row');
+    const main = node('div', 'recent-main'); main.append(node('strong', '', record.programOrRecipient), node('small', '', `${formatDate(record.date)} · ${record.storeId || 'Магазин не указан'}`));
+    row.append(main, node('span', 'status-badge confirmed', statusLabels[record.status] || record.status), node('strong', 'recent-amount', formatAmount(record.amount, record.currency))); target.append(row);
+  }
 }
 function invalidatePreview() { previewPayload = null; $('confirm-import').disabled = true; $('import-preview').hidden = true; $('import-message').textContent = ''; $('import-message').className = ''; }
 function importMetadata() {
@@ -147,7 +190,7 @@ function validateRecords(records, coverage) {
 function renderPreview(payload, errors = []) {
   const target = $('import-preview'); target.replaceChildren(); target.hidden = false;
   target.append(node('h3', '', errors.length ? 'JSON требует исправлений' : 'Выгрузка готова к импорту'));
-  target.append(node('p', errors.length ? 'Запись не выполнялась.' : `${payload.records.length} записей · источник: ${payload.source} · данные на ${formatDate(payload.asOf)}`));
+  target.append(node('p', '', errors.length ? 'Запись не выполнялась.' : `${payload.records.length} записей · источник: ${payload.source} · данные на ${formatDate(payload.asOf)}`));
   if (errors.length) { const list = node('p', 'preview-errors', errors.slice(0, 8).join(' ')); target.append(list); if (errors.length > 8) target.append(node('p', 'preview-errors', `И ещё ошибок: ${errors.length - 8}.`)); return; }
   const totals = new Map(); for (const record of payload.records) totals.set(record.currency, (totals.get(record.currency) || 0) + Number(record.amount));
   target.append(node('p', '', `Период: ${formatDate(payload.coverage.from)} — ${formatDate(payload.coverage.to)} · ${payload.coverage.complete ? 'полная' : 'частичная'} выгрузка.`));
@@ -173,5 +216,8 @@ $('reset-filters').onclick = () => { for (const id of ['filter-from', 'filter-to
 $('preview-import').onclick = previewImport; $('confirm-import').onclick = confirmImport;
 $('import-file').onchange = async event => { invalidatePreview(); const file = event.target.files[0]; if (!file) return; if (file.size > 8 * 1024 * 1024) { $('import-message').textContent = 'JSON-файл превышает допустимые 8 МБ.'; $('import-message').className = 'error'; return; } try { $('import-text').value = await file.text(); } catch { $('import-message').textContent = 'Файл не удалось прочитать.'; $('import-message').className = 'error'; } };
 for (const id of ['import-source', 'import-as-of', 'coverage-from', 'coverage-to', 'coverage-complete', 'import-text']) $(id).addEventListener(id === 'coverage-complete' ? 'change' : 'input', invalidatePreview);
+const supportButton = $('support-button'); const supportDialog = $('support-dialog');
+supportButton.addEventListener('click', () => { if (typeof supportDialog.showModal === 'function') supportDialog.showModal(); else supportDialog.setAttribute('open', ''); });
+supportDialog.addEventListener('close', () => supportButton.focus());
 window.CharityUI = { formatAmount, safeHttpUrl, validateRecords };
 load({ quiet: true });
