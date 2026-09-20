@@ -63,7 +63,7 @@ function hierarchyIndex(stores,categories,registry){
  }
  return {active:true,revision:registry.revision,types,byStore};
 }
-function ozonTotals(stores,index,targetDay){
+function ozonTotals(stores,index,targetDay,{fallback=UNMATCHED}={}){
  const totals=new Map();let at=0;
  for(const store of stores.filter(s=>s.market==='Ozon')){
   const orders=store.orders;if(orders?.skuDailyCoverage!==true||!Array.isArray(orders.skuDaily)||!orders.skuUpdatedAt)return {complete:false,reason:'Ozon: детализация заказов по SKU ещё не получена для всех магазинов.'};
@@ -71,7 +71,7 @@ function ozonTotals(stores,index,targetDay){
   const map=index.get(store.id)||new Map();
   for(const row of orders.skuDaily.filter(row=>row.date===targetDay)){
    if(!Number.isFinite(row.revenue)||!Number.isSafeInteger(row.units)||row.units<0)return {complete:false,reason:'Ozon: в детализации заказов нет сопоставимой суммы или количества.'};
-   const category=map.get(String(row.sku))||UNMATCHED,current=totals.get(category)||{orderedRevenue:0,orderedUnits:0};current.orderedRevenue=Math.round((current.orderedRevenue+row.revenue)*100)/100;current.orderedUnits+=row.units;totals.set(category,current);
+   const category=map.get(String(row.sku))||fallback,current=totals.get(category)||{orderedRevenue:0,orderedUnits:0};current.orderedRevenue=Math.round((current.orderedRevenue+row.revenue)*100)/100;current.orderedUnits+=row.units;totals.set(category,current);
   }
  }
  return {complete:true,at,totals};
@@ -94,7 +94,7 @@ function create({privateDir,productTypes,now=()=>Date.now()}){
  const read=()=>{try{const value=JSON.parse(fs.readFileSync(file,'utf8'));if(!value||typeof value!=='object'||!Array.isArray(value.points))throw Error('История категорий Ozon повреждена. Восстановите последний исправный файл.');return value}catch(error){if(error?.code==='ENOENT')return {version:1,points:[]};if(error instanceof SyntaxError)throw Error('История категорий Ozon повреждена. Восстановите последний исправный файл.');throw error}};
  function write(value){const temp=file+'.tmp';fs.writeFileSync(temp,JSON.stringify(value));fs.renameSync(temp,file)}
  function classification(stores,categories){const registry=productTypes?.read?.();return registry?.available?hierarchyIndex(stores,categories,registry):{active:false,revision:'legacy',types:[],byStore:productIndex(stores,categories)}}
- function captureOzon(stores,categories,targetDay=day(now()),current=classification(stores,categories)){const value=ozonTotals(stores,current.byStore,targetDay);if(!value.complete)return value;const state=read(),at=new Date(value.at).toISOString(),same=point=>point.date===targetDay&&point.at===at&&(current.active?point.taxonomyRevision===current.revision:!point.taxonomyRevision);if(!state.points.some(same)){const point={date:targetDay,at,values:Object.fromEntries(value.totals)};if(current.active)Object.assign(point,{taxonomyRevision:current.revision,classifiedAt:new Date(now()).toISOString(),types:current.types.map(type=>({id:type.id,parentId:type.parentId,name:type.name}))});state.version=current.active?2:state.version||1;state.points.push(point);state.points=state.points.filter(p=>value.at-Date.parse(p.at)<=32*86400000).sort((a,b)=>a.at.localeCompare(b.at));write(state)}return value}
+ function captureOzon(stores,categories,targetDay=day(now()),current=classification(stores,categories)){const value=ozonTotals(stores,current.byStore,targetDay,{fallback:current.active?UNMATCHED_ID:UNMATCHED});if(!value.complete)return value;const state=read(),at=new Date(value.at).toISOString(),same=point=>point.date===targetDay&&point.at===at&&(current.active?point.taxonomyRevision===current.revision:!point.taxonomyRevision);if(!state.points.some(same)){const point={date:targetDay,at,values:Object.fromEntries(value.totals)};if(current.active)Object.assign(point,{taxonomyRevision:current.revision,classifiedAt:new Date(now()).toISOString(),types:current.types.map(type=>({id:type.id,parentId:type.parentId,name:type.name}))});state.version=current.active?2:state.version||1;state.points.push(point);state.points=state.points.sort((a,b)=>a.at.localeCompare(b.at));write(state)}return value}
  function report({stores,categories,date:targetDay=day(Date.now())}){
    const current=classification(stores,categories),ozon=captureOzon(stores,categories,targetDay,current),state=read(),ozonNames=new Set();
    if(current.active){

@@ -23,6 +23,11 @@ test('repeated Ozon capture is idempotent and report exposes separate marketplac
  const f=fixture(t),service=create(f),input=stores();service.captureOzon(input,[]);service.captureOzon(input,[]);assert.equal(service.read().points.length,1);
  const report=service.report({stores:input,categories:[],date:DAY});assert.deepEqual(report.categories,[UNMATCHED,'Крепёж','Перчатки','Тенты'].sort((a,b)=>a===UNMATCHED?1:b===UNMATCHED?-1:a.localeCompare(b,'ru')));assert.ok(report.series.some(s=>s.market==='Ozon'&&s.category==='Крепёж'));assert.ok(report.series.some(s=>s.market==='WB'&&s.category==='Тенты'));assert.match(report.limitations.join(' '),/не складываются/);
 });
+test('capture preserves category history older than a year without duplicating the current point',t=>{
+ const f=fixture(t),file=path.join(f.privateDir,'order-category-intraday.json'),old={date:'2024-01-01',at:'2024-01-01T09:00:00.000Z',values:{Крепёж:{orderedRevenue:1,orderedUnits:1}}};
+ fs.writeFileSync(file,JSON.stringify({version:1,points:[old]}));const service=create(f),input=stores();service.captureOzon(input,[]);service.captureOzon(input,[]);
+ assert.deepEqual(service.read().points,[old,{date:DAY,at:AT,values:{Крепёж:{orderedRevenue:120,orderedUnits:2},'Не сопоставлено':{orderedRevenue:30,orderedUnits:1}}}]);
+});
 test('reviewed Ozon and WB aliases preserve intentionally separate categories',()=>{
  const fixtures=[
   ['Ozon','Клейкая лента канцелярская','Клейкие ленты'],['Ozon','Малярная лента','Клейкие ленты'],['Ozon','Монтажная лента','Клейкие ленты'],['Ozon','Краги сварщика','Перчатки'],['Ozon','Талреп','Крепёж'],['Ozon','Сетка строительная','Сетки строительные'],
@@ -64,6 +69,12 @@ test('reviewed hierarchy joins identical final types across markets and aggregat
  const ozon=report.series.find(row=>row.market==='Ozon'&&row.typeId==='mesh'),wb=report.series.find(row=>row.market==='WB'&&row.typeId==='mesh');
  assert.deepEqual(ozon.points,[{at:AT,orderedRevenue:150,orderedUnits:3}]);assert.deepEqual(wb.points.at(-1),{at:'2026-09-20T09:15:00.000Z',orderedRevenue:120,orderedUnits:2});
  assert.equal(report.taxonomyBoundary.sourceAt,AT);assert.equal(report.taxonomyBoundary.classifiedAt,'2026-09-20T10:00:00.000Z');assert.equal(report.taxonomyBoundary.legacyPoints,1);assert.ok(!report.series.some(row=>row.category==='Старая категория'));
+});
+test('active hierarchy keeps an unknown Ozon SKU under the stable unmatched id',t=>{
+ const f=fixture(t),input=stores();input[0].orders.skuDaily.push({date:DAY,sku:'999',revenue:11,units:1});
+ const registry={available:true,revision:'types-unknown',types:[{id:'fasteners',parentId:null,name:'Крепёж'}],assignments:{'1:1':{typeId:'fasteners',source:'reviewed',evidence:null},'1:2':{typeId:'fasteners',source:'reviewed',evidence:null}},rules:[]};
+ const report=create({...f,productTypes:{read:()=>registry},now:()=>Date.parse('2026-09-20T10:00:00.000Z')}).report({stores:input,categories:[],date:DAY}),unmatched=report.series.find(row=>row.market==='Ozon'&&row.typeId==='unmatched');
+ assert.deepEqual(unmatched.points,[{at:AT,orderedRevenue:11,orderedUnits:1}]);
 });
 test('taxonomy revision creates a new honest point without rewriting prior revisions',t=>{
  const f=fixture(t),input=stores(),base={available:true,types:[{id:'fasteners',parentId:null,name:'Крепёж'}],assignments:{'1:1':{typeId:'fasteners',source:'reviewed',evidence:null},'1:2':{typeId:'fasteners',source:'reviewed',evidence:null},'wb-1:201':{typeId:'fasteners',source:'reviewed',evidence:null}},rules:[]};let revision='types-1',clock=Date.parse('2026-09-20T10:00:00.000Z');
