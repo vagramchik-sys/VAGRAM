@@ -1,205 +1,55 @@
-(function (root, factory) {
-  'use strict';
-  var api = factory();
-  if (typeof module === 'object' && module.exports) module.exports = api;
-  root.PultSellerHomeView = api;
-})(typeof globalThis !== 'undefined' ? globalThis : this, function () {
-  'use strict';
+(function(root,factory){'use strict';var api=factory();if(typeof module==='object'&&module.exports)module.exports=api;root.PultSellerHomeView=api;})(typeof globalThis!=='undefined'?globalThis:this,function(){
+'use strict';
+var sequence=0;
+var esc=function(v){return String(v==null?'':v).replace(/[&<>"']/g,function(c){return{'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});};
+var finite=function(v){return typeof v==='number'&&Number.isFinite(v);};
+var nf=new Intl.NumberFormat('ru-RU',{maximumFractionDigits:0});
+var df=new Intl.NumberFormat('ru-RU',{maximumFractionDigits:1});
+var cf=new Intl.NumberFormat('ru-RU',{notation:'compact',maximumFractionDigits:1});
+var money=function(v){return finite(v)?nf.format(v)+' ₽':'—';};
+var units=function(v){return finite(v)?nf.format(v)+' шт.':'—';};
+var metric=function(source){var item=source&&typeof source==='object'?source:{};return{value:finite(item.value)?item.value:null,text:finite(item.value)&&item.text?String(item.text):'—',comparison:finite(item.value)&&item.comparison?String(item.comparison):'',tone:item.tone==='up'||item.tone==='down'?item.tone:''};};
+var parseDate=function(v){if(!v)return null;var d=new Date(String(v).slice(0,10)+'T12:00:00Z');return Number.isNaN(d.getTime())?null:d;};
+var dateText=function(v){var d=parseDate(v);return d?d.toLocaleDateString('ru-RU',{day:'numeric',month:'short',timeZone:'UTC'}):(v?String(v):'—');};
+var fullDateText=function(v){var d=parseDate(v);return d?d.toLocaleDateString('ru-RU',{day:'numeric',month:'long',year:'numeric',timeZone:'UTC'}):(v?String(v):'—');};
 
-  var esc = function (value) {
-    return String(value == null ? '' : value).replace(/[&<>"']/g, function (character) {
-      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[character];
-    });
-  };
-  var finite = function (value) { return typeof value === 'number' && Number.isFinite(value); };
-  var number = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
-  var money = function (value) { return finite(value) ? number.format(value) + ' ₽' : '—'; };
-  var metric = function (source) {
-    var item = source && typeof source === 'object' ? source : {};
-    return {
-      value: finite(item.value) ? item.value : null,
-      text: finite(item.value) && item.text ? String(item.text) : '—',
-      comparison: finite(item.value) && item.comparison ? String(item.comparison) : '',
-      tone: item.tone === 'up' || item.tone === 'down' ? item.tone : ''
-    };
-  };
-  var dateText = function (value) {
-    if (!value) return '—';
-    var parsed = new Date(String(value).slice(0, 10) + 'T12:00:00Z');
-    return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleDateString('ru-RU', { day: 'numeric', month: 'short', timeZone: 'UTC' });
-  };
-  var fullDateText = function (value) {
-    if (!value) return '—';
-    var parsed = new Date(String(value).slice(0, 10) + 'T12:00:00Z');
-    return Number.isNaN(parsed.getTime()) ? String(value) : parsed.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric', timeZone: 'UTC' });
-  };
+function icon(name){var p={refresh:'<path d="M20 11a8.1 8.1 0 1 0-2.4 5.8"/><path d="M20 4v7h-7"/>',chart:'<path d="M4 19V9m6 10V5m6 14v-7m4 7H2"/>',calculator:'<rect x="5" y="2.5" width="14" height="19" rx="2"/><path d="M8 6.5h8M8 11h.01M12 11h.01M16 11h.01M8 15h.01M12 15h.01M16 15h.01M8 19h.01M12 19h4"/>',store:'<path d="M4 10v10h16V10M3 10l2-6h14l2 6"/><path d="M3 10a3 3 0 0 0 5 2 3 3 0 0 0 4 0 3 3 0 0 0 4 0 3 3 0 0 0 5-2M9 20v-5h6v5"/>',boxes:'<path d="m12 2 8 4.5v9L12 20l-8-4.5v-9L12 2Z"/><path d="m4.5 6.8 7.5 4.3 7.5-4.3M12 11v9"/>',warning:'<path d="M12 3 2.8 20h18.4L12 3Z"/><path d="M12 9v5m0 3h.01"/>',cost:'<circle cx="12" cy="12" r="9"/><path d="M9 8h4a2.5 2.5 0 0 1 0 5H9V7m0 6h6m-6 0v4"/>',negative:'<circle cx="12" cy="12" r="9"/><path d="M8 12h8"/>',logistics:'<path d="M3 7h11v10H3zM14 10h4l3 3v4h-7z"/><circle cx="7" cy="18" r="2"/><circle cx="18" cy="18" r="2"/>',chevron:'<path d="m9 5 7 7-7 7"/>',arrow:'<path d="M5 12h14m-5-5 5 5-5 5"/>'};return'<svg class="sh-icon" aria-hidden="true" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">'+(p[name]||p.chevron)+'</svg>';}
+function periodLabel(p){if(!p||(!p.from&&!p.to))return'Период не выбран';if(p.from===p.to)return fullDateText(p.from);return dateText(p.from)+' — '+fullDateText(p.to);}
+function comparison(item){if(!item.comparison)return'';var mark=item.tone==='up'?'↑':item.tone==='down'?'↓':'';return'<span class="sh-comparison'+(item.tone?' is-'+item.tone:'')+'">'+mark+esc(item.comparison)+'</span>';}
+function metricBlock(label,item,klass){return'<div class="sh-total '+(klass||'')+'"><span>'+esc(label)+'</span><strong>'+esc(item.text)+'</strong>'+comparison(item)+'</div>';}
+function normalizeDaily(daily){return Array.isArray(daily)?daily.map(function(r){return{date:r&&r.date?String(r.date):'',orderedRevenue:finite(r&&r.orderedRevenue)?r.orderedRevenue:null,realized:finite(r&&r.realized)?r.realized:null,orderedUnits:finite(r&&r.orderedUnits)?r.orderedUnits:null};}):[];}
+function runs(points,key,x,y){var out=[],run=[];points.forEach(function(p,i){if(finite(p[key]))run.push([x(i),y(p[key])]);else if(run.length){out.push(run);run=[];}});if(run.length)out.push(run);return out;}
 
-  function periodLabel(period) {
-    if (!period || (!period.from && !period.to)) return 'Период не выбран';
-    if (period.from === period.to) return fullDateText(period.from);
-    return dateText(period.from) + ' — ' + fullDateText(period.to);
-  }
+function svg(points,mode,index,w,h,suffix){var keys=mode==='units'?['orderedUnits']:['orderedRevenue','realized'],values=[];points.forEach(function(p){keys.forEach(function(k){if(finite(p[k]))values.push(p[k]);});});if(!values.length)return'';var l=w<500?12:20,r=w<500?44:72,t=14,b=w<500?32:36,min=Math.min(0,Math.min.apply(Math,values)),max=Math.max(0,Math.max.apply(Math,values));if(min===max){min-=1;max+=1;}var spread=max-min;min-=spread*.07;max+=spread*.07;var iw=w-l-r,ih=h-t-b,x=function(i){return l+(points.length===1?iw/2:i*iw/(points.length-1));},y=function(v){return t+(max-v)*ih/(max-min);},zero=Math.max(t,Math.min(h-b,y(0))),path=function(run){return run.map(function(pt,i){return(i?'L':'M')+pt[0].toFixed(1)+' '+pt[1].toFixed(1);}).join(' ');},mainKey=mode==='units'?'orderedUnits':'orderedRevenue',mainRuns=runs(points,mainKey,x,y),realRuns=mode==='amount'?runs(points,'realized',x,y):[];
+var areas=mainRuns.map(function(run){return'<path class="sh-chart-area" d="'+path(run)+' L'+run[run.length-1][0].toFixed(1)+' '+zero.toFixed(1)+' L'+run[0][0].toFixed(1)+' '+zero.toFixed(1)+' Z"/>';}).join('');
+var lines=mainRuns.map(function(run){return'<path class="sh-line sh-line-ordered" d="'+path(run)+'"/>';}).join('')+realRuns.map(function(run){return'<path class="sh-line sh-line-realized" d="'+path(run)+'"/>';}).join('');
+var limit=w<500?4:6,count=Math.min(limit,points.length),indexes=[];for(var n=0;n<count;n++){var ix=Math.round(n*(points.length-1)/Math.max(1,count-1));if(indexes.indexOf(ix)<0)indexes.push(ix);}var ticks=indexes.map(function(i){return'<text x="'+x(i).toFixed(1)+'" y="'+(h-8)+'" text-anchor="middle">'+esc(dateText(points[i].date))+'</text>';}).join('');
+var grid=[.18,.5,.82].map(function(q){var gy=t+ih*q;return'<line x1="'+l+'" y1="'+gy.toFixed(1)+'" x2="'+(w-r)+'" y2="'+gy.toFixed(1)+'"/><text class="sh-scale" x="'+(w-r+7)+'" y="'+(gy+4).toFixed(1)+'">'+esc(cf.format(max-(max-min)*q))+'</text>';}).join('');if(min<0&&max>0)grid+='<line class="sh-zero" x1="'+l+'" y1="'+zero.toFixed(1)+'" x2="'+(w-r)+'" y2="'+zero.toFixed(1)+'"/>';
+var circles=points.map(function(p,i){return keys.map(function(k){if(!finite(p[k]))return'';return'<circle class="sh-point '+(k==='realized'?'sh-point-realized':'sh-point-ordered')+(i===index?' is-selected':'')+'" cx="'+x(i).toFixed(1)+'" cy="'+y(p[k]).toFixed(1)+'" r="'+(i===index?'4.5':'3')+'"/>';}).join('');}).join('');
+var band=points.length>1?iw/(points.length-1):iw;var hits=points.map(function(p,i){var start=Math.max(l,x(i)-band/2),end=Math.min(w-r,x(i)+band/2);return'<rect class="sh-day-hit" data-home-day="'+i+'" x="'+start.toFixed(1)+'" y="'+t+'" width="'+Math.max(1,end-start).toFixed(1)+'" height="'+ih.toFixed(1)+'"><title>'+esc(fullDateText(p.date))+'</title></rect>';}).join('');
+var hair=index>=0?'<line class="sh-hairline" x1="'+x(index).toFixed(1)+'" y1="'+t+'" x2="'+x(index).toFixed(1)+'" y2="'+(h-b)+'"/>':'';var titleId='sh-chart-title-'+suffix,descId='sh-chart-desc-'+suffix,title=mode==='units'?'Заказанные товары по дням':'Заказано и реализовано по дням',desc=mode==='units'?'Количество заказанных товаров. Пропуски показаны разрывами.':'Суммы заказов и реализации в рублях. Пропуски показаны разрывами.';
+return'<svg class="sh-chart sh-chart-'+(w<500?'mobile':'desktop')+'" viewBox="0 0 '+w+' '+h+'" role="img" aria-labelledby="'+titleId+' '+descId+'"><title id="'+titleId+'">'+title+'</title><desc id="'+descId+'">'+desc+'</desc><g class="sh-grid">'+grid+'</g>'+areas+lines+hair+circles+'<g class="sh-ticks">'+ticks+'</g><g class="sh-day-hits">'+hits+'</g></svg>';}
 
-  function comparison(item) {
-    if (!item.comparison) return '';
-    var icon = item.tone === 'up' ? '↑' : item.tone === 'down' ? '↓' : '';
-    return '<span class="sh-comparison' + (item.tone ? ' is-' + item.tone : '') + '">' + icon + esc(item.comparison) + '</span>';
-  }
+function chart(daily,ui,id){var points=normalizeDaily(daily),mode=ui&&ui.chartMode==='units'?'units':'amount',available=points.map(function(p,i){return mode==='units'?(finite(p.orderedUnits)?i:-1):(finite(p.orderedRevenue)||finite(p.realized)?i:-1);}).filter(function(i){return i>=0;}),fallback=available.length?available[available.length-1]:Math.max(0,points.length-1),requested=ui&&finite(ui.dayIndex)?Math.round(ui.dayIndex):fallback,index=points.length?Math.max(0,Math.min(points.length-1,requested)):-1,selected=index>=0?points[index]:null;
+var modes='<div class="sh-chart-modes" aria-label="Показатель графика"><button type="button" data-home-chart-mode="amount" aria-pressed="'+(mode==='amount')+'">В рублях</button><button type="button" data-home-chart-mode="units" aria-pressed="'+(mode==='units')+'">В штуках</button></div>';
+if(!points.length||!available.length)return'<div class="sh-chart-tools">'+modes+'</div><div data-home-chart-region><div class="sh-chart-empty">Нет данных по дням за выбранный период.</div></div>';
+var vals=mode==='units'?'<span><i class="is-ordered"></i>Заказано товаров <strong>'+esc(units(selected.orderedUnits))+'</strong></span>':'<span><i class="is-ordered"></i>Заказано <strong>'+esc(money(selected.orderedRevenue))+'</strong></span><span><i class="is-realized"></i>Реализовано <strong>'+esc(money(selected.realized))+'</strong></span>';
+var valueText=fullDateText(selected.date)+(mode==='units'?', заказано товаров: '+units(selected.orderedUnits):', заказано: '+money(selected.orderedRevenue)+', реализовано: '+money(selected.realized));
+var readout='<div class="sh-day-readout" data-home-readout aria-live="polite"><time datetime="'+esc(selected.date)+'">'+esc(fullDateText(selected.date))+'</time><div>'+vals+'</div></div>';
+var slider='<input class="sh-day-slider" type="range" data-home-day-slider min="0" max="'+(points.length-1)+'" value="'+index+'" aria-label="День на графике" aria-valuetext="'+esc(valueText)+'">';
+var rows=points.map(function(p){return mode==='units'?'<tr><th scope="row">'+esc(fullDateText(p.date))+'</th><td>'+esc(units(p.orderedUnits))+'</td></tr>':'<tr><th scope="row">'+esc(fullDateText(p.date))+'</th><td>'+esc(money(p.orderedRevenue))+'</td><td>'+esc(money(p.realized))+'</td></tr>';}).join('');
+var heads=mode==='units'?'<th>Дата</th><th>Заказано товаров</th>':'<th>Дата</th><th>Заказано</th><th>Реализовано</th>';
+return'<div class="sh-chart-tools">'+modes+readout+'</div><div data-home-chart-region><div class="sh-chart-wrap">'+svg(points,mode,index,920,250,id+'-desktop')+svg(points,mode,index,320,210,id+'-mobile')+'</div></div><div class="sh-slider-wrap">'+slider+'</div><details class="sh-data"><summary>Данные графика таблицей</summary><div><table><thead><tr>'+heads+'</tr></thead><tbody>'+rows+'</tbody></table></div></details>';}
 
-  function metricBlock(label, item, extraClass) {
-    return '<div class="sh-total ' + (extraClass || '') + '"><span>' + esc(label) + '</span><strong>' + esc(item.text) + '</strong>' + comparison(item) + '</div>';
-  }
+var ALERTS={stockout:{label:'Товары закончились',icon:'warning'},cost:{label:'Не указана себестоимость',icon:'cost'},negative:{label:'Отрицательный результат',icon:'negative'},logistics:{label:'Проверьте логистику',icon:'logistics'}};
+function alerts(items){var normalized=(Array.isArray(items)?items:[]).filter(function(item){return item&&ALERTS[item.id];}).map(function(item){var p=ALERTS[item.id];return{id:item.id,label:item.label?String(item.label):p.label,description:item.description?String(item.description):'',icon:p.icon,count:finite(item.count)?Math.max(0,item.count):null};});if(!normalized.length)return'<p class="sh-empty-note">Нет задач по доступным данным.</p>';return normalized.map(function(item){return'<a class="sh-task'+(finite(item.count)&&item.count>0?' is-positive':'')+'" href="/?view=analytics" data-home-filter="'+esc(item.id)+'"><span class="sh-task-icon">'+icon(item.icon)+'</span><span class="sh-task-copy"><strong>'+esc(item.label)+'</strong>'+(item.description?'<small>'+esc(item.description)+'</small>':'')+'</span><b class="sh-task-count">'+(item.count==null?'—':esc(nf.format(item.count)))+'</b>'+icon('chevron')+'</a>';}).join('');}
+function controls(model){var range=['today','yesterday','7','14','28','30','custom'].indexOf(model.range)>=0?model.range:'custom',labels={today:'Сегодня',yesterday:'Вчера','7':'7 завершённых дней','14':'14 завершённых дней','28':'28 завершённых дней','30':'30 дней, включая сегодня',custom:periodLabel(model.period)},options=Object.keys(labels).filter(function(v){return v!=='custom'||range==='custom';}).map(function(v){return'<option value="'+v+'"'+(v===range?' selected':'')+'>'+esc(labels[v])+'</option>';}).join('');return'<div class="sh-controls"><label><span>Период</span><select data-home-period aria-label="Период главной страницы">'+options+'</select></label><button class="sh-refresh" type="button" data-home-refresh aria-label="Обновить данные">'+icon('refresh')+'<span>Обновить</span></button></div>';}
+function leaders(items,model){var source=Array.isArray(items)?items.slice(0,5):[];if(!source.length){if(model.coverageState==='complete'&&finite(model.metrics&&model.metrics.realized&&model.metrics.realized.value)&&model.metrics.realized.value<=0)return'<section class="sh-card sh-leaders sh-leaders-empty"><div class="sh-section-heading"><div><span class="sh-card-label">Товары</span><h2>Лидеры по реализации</h2><p>За период нет положительной реализации по SKU.</p></div></div></section>';return'';}var rows=source.map(function(item){item=item&&typeof item==='object'?item:{};var sku=item.sku==null?'':String(item.sku),product=item.name||item.offerId||sku||'Товар',details=[item.offerId?'Артикул '+item.offerId:'',sku?'SKU '+sku:'',item.storeName||''].filter(Boolean).join(' · '),share=finite(item.share)?Math.max(0,item.share):null;return'<tr><th scope="row"><a href="/?view=analytics" data-home-search="'+esc(sku)+'"><span>'+esc(product)+'</span>'+(details?'<small>'+esc(details)+'</small>':'')+'</a></th><td><strong>'+esc(item.realizedText||'—')+'</strong></td><td><span class="sh-share"><i style="--share:'+(share==null?0:Math.min(100,share))+'%"></i><b>'+(share==null?'—':esc(df.format(share))+'%')+'</b></span></td></tr>';}).join('');return'<section class="sh-card sh-leaders"><div class="sh-section-heading"><div><span class="sh-card-label">Товары</span><h2>Лидеры по реализации</h2><p>Доля в положительной реализации по SKU</p></div><a href="/?view=analytics" data-home-search="">Все товары '+icon('chevron')+'</a></div><div class="sh-leaders-table"><table><thead><tr><th>Товар</th><th>Реализовано</th><th>Доля</th></tr></thead><tbody>'+rows+'</tbody></table></div></section>';}
+function stateView(model){var state=model.state||'loading',defaults={loading:['Собираем главную страницу','Загружаем данные выбранного кабинета и периода.'],error:['Не удалось загрузить данные','Повторите загрузку или откройте аналитику, чтобы проверить доступность отчётов.'],unsupported:['Для выбранной площадки эта главная пока недоступна','Откройте экономику Wildberries или выберите кабинет Ozon в общих фильтрах.']},copy=defaults[state]||defaults.error,message=model.message?String(model.message):copy[1],action=state==='unsupported'?'<a class="sh-primary-action" href="/?view=wb-economics">Открыть экономику Wildberries</a>':state==='error'?'<button class="sh-primary-action" type="button" data-home-refresh>Повторить загрузку</button><a class="sh-secondary-action" href="/?view=analytics">Открыть аналитику</a>':'<span class="sh-loader" aria-hidden="true"></span>';return'<div class="sh-content is-'+esc(state)+'" aria-live="polite" aria-busy="'+(state==='loading'?'true':'false')+'"><div class="sh-state"><span class="sh-state-mark" aria-hidden="true">'+(state==='error'?'!':state==='unsupported'?'↗':'')+'</span><h1>'+esc(copy[0])+'</h1><p>'+esc(message)+'</p><div class="sh-state-actions">'+action+'</div></div></div>';}
 
-  function seriesRuns(points, key, x, y) {
-    var runs = [], current = [];
-    points.forEach(function (point, index) {
-      if (finite(point[key])) current.push([x(index), y(point[key])]);
-      else if (current.length) { runs.push(current); current = []; }
-    });
-    if (current.length) runs.push(current);
-    return runs;
-  }
-
-  function chart(daily) {
-    var points = Array.isArray(daily) ? daily.map(function (row) {
-      return {
-        date: row && row.date ? String(row.date) : '',
-        orderedRevenue: finite(row && row.orderedRevenue) ? row.orderedRevenue : null,
-        realized: finite(row && row.realized) ? row.realized : null
-      };
-    }) : [];
-    var values = [];
-    points.forEach(function (point) {
-      if (finite(point.orderedRevenue)) values.push(point.orderedRevenue);
-      if (finite(point.realized)) values.push(point.realized);
-    });
-    if (!points.length || !values.length) {
-      return '<div class="sh-chart-empty">Нет данных по дням за выбранный период.</div>';
-    }
-
-    var width = 920, height = 286, left = 20, right = 80, top = 18, bottom = 38;
-    var min = Math.min(0, Math.min.apply(Math, values));
-    var max = Math.max(0, Math.max.apply(Math, values));
-    if (min === max) { min -= 1; max += 1; }
-    var spread = max - min;
-    min -= spread * 0.08;
-    max += spread * 0.08;
-    var innerWidth = width - left - right, innerHeight = height - top - bottom;
-    var x = function (index) { return left + (points.length === 1 ? innerWidth / 2 : index * innerWidth / (points.length - 1)); };
-    var y = function (value) { return top + (max - value) * innerHeight / (max - min); };
-    var zeroY = Math.max(top, Math.min(height - bottom, y(0)));
-    var orderedRuns = seriesRuns(points, 'orderedRevenue', x, y);
-    var realizedRuns = seriesRuns(points, 'realized', x, y);
-    var linePath = function (run) { return run.map(function (point, index) { return (index ? 'L' : 'M') + point[0].toFixed(1) + ' ' + point[1].toFixed(1); }).join(' '); };
-    var areas = orderedRuns.map(function (run) {
-      var line = linePath(run);
-      return '<path class="sh-chart-area" d="' + line + ' L' + run[run.length - 1][0].toFixed(1) + ' ' + zeroY.toFixed(1) + ' L' + run[0][0].toFixed(1) + ' ' + zeroY.toFixed(1) + ' Z"/>';
-    }).join('');
-    var orderedLines = orderedRuns.map(function (run) { return '<path class="sh-line sh-line-ordered" d="' + linePath(run) + '"/>'; }).join('');
-    var realizedLines = realizedRuns.map(function (run) { return '<path class="sh-line sh-line-realized" d="' + linePath(run) + '"/>'; }).join('');
-    var tickCount = Math.min(6, points.length);
-    var tickIndexes = [];
-    for (var tick = 0; tick < tickCount; tick += 1) {
-      var tickIndex = Math.round(tick * (points.length - 1) / Math.max(1, tickCount - 1));
-      if (tickIndexes.indexOf(tickIndex) === -1) tickIndexes.push(tickIndex);
-    }
-    var ticks = tickIndexes.map(function (index) {
-      return '<text x="' + x(index).toFixed(1) + '" y="' + (height - 10) + '" text-anchor="middle">' + esc(dateText(points[index].date)) + '</text>';
-    }).join('');
-    var scaleLabel = function (value) { return new Intl.NumberFormat('ru-RU', { notation: 'compact', maximumFractionDigits: 1 }).format(value); };
-    var grid = [0.2, 0.5, 0.8].map(function (ratio) {
-      var gy = top + innerHeight * ratio;
-      return '<line x1="' + left + '" y1="' + gy.toFixed(1) + '" x2="' + (width - right) + '" y2="' + gy.toFixed(1) + '"/><text class="sh-scale" x="' + (width - right + 10) + '" y="' + (gy + 4).toFixed(1) + '">' + esc(scaleLabel(max - (max - min) * ratio)) + '</text>'; 
-    }).join('');
-    if (min < 0 && max > 0) grid += '<line class="sh-zero" x1="' + left + '" y1="' + zeroY.toFixed(1) + '" x2="' + (width - right) + '" y2="' + zeroY.toFixed(1) + '"/>';
-    var pointMarkup = points.map(function (point, index) {
-      return ['orderedRevenue', 'realized'].map(function (key) {
-        if (!finite(point[key])) return '';
-        var label = key === 'orderedRevenue' ? 'Заказано' : 'Реализовано';
-        var css = key === 'orderedRevenue' ? 'sh-point-ordered' : 'sh-point-realized';
-        return '<circle class="sh-point ' + css + '" cx="' + x(index).toFixed(1) + '" cy="' + y(point[key]).toFixed(1) + '" r="4" tabindex="0"><title>' + esc(fullDateText(point.date) + ' · ' + label + ': ' + money(point[key])) + '</title></circle>';
-      }).join('');
-    }).join('');
-    var rows = points.map(function (point) {
-      return '<tr><th scope="row">' + esc(fullDateText(point.date)) + '</th><td>' + esc(money(point.orderedRevenue)) + '</td><td>' + esc(money(point.realized)) + '</td></tr>';
-    }).join('');
-    return '<div class="sh-chart-wrap"><svg class="sh-chart" viewBox="0 0 ' + width + ' ' + height + '" role="img" aria-labelledby="sh-chart-title sh-chart-desc"><title id="sh-chart-title">Заказано и реализовано по дням</title><desc id="sh-chart-desc">Линейный график. Пропуски данных показаны разрывами.</desc><g class="sh-grid">' + grid + '</g>' + areas + orderedLines + realizedLines + pointMarkup + '<g class="sh-ticks">' + ticks + '</g></svg></div><details class="sh-data"><summary>Данные графика таблицей</summary><div><table><thead><tr><th>Дата</th><th>Заказано</th><th>Реализовано</th></tr></thead><tbody>' + rows + '</tbody></table></div></details>';
-  }
-
-  var ALERTS = {
-    stockout: { label: 'Товары закончились', symbol: '!' },
-    cost: { label: 'Не указана себестоимость', symbol: '₽' },
-    negative: { label: 'Отрицательный результат', symbol: '−' },
-    logistics: { label: 'Проверьте логистику', symbol: '↗' }
-  };
-
-  function alerts(items) {
-    var source = Array.isArray(items) ? items : [];
-    var normalized = source.filter(function (item) { return item && ALERTS[item.id]; }).map(function (item) {
-      var preset = ALERTS[item.id];
-      return {
-        id: item.id,
-        label: item.label ? String(item.label) : preset.label,
-        symbol: preset.symbol,
-        count: finite(item.count) ? item.count : null
-      };
-    });
-    if (!normalized.length) return '<p class="sh-empty-note">Нет задач по доступным данным.</p>';
-    return normalized.map(function (item) {
-      return '<a class="sh-task" href="/?view=analytics" data-home-filter="' + esc(item.id) + '"><span class="sh-task-icon" aria-hidden="true">' + esc(item.symbol) + '</span><span>' + esc(item.label) + '</span><strong>' + (item.count == null ? '—' : esc(number.format(item.count))) + '</strong><span class="sh-arrow" aria-hidden="true">›</span></a>';
-    }).join('');
-  }
-
-  function controls(model) {
-    var range = ['today', 'yesterday', '7', '14', '28', '30', 'custom'].indexOf(model.range) >= 0 ? model.range : 'custom';
-    var labels = {
-      today: 'Сегодня', yesterday: 'Вчера', '7': '7 завершённых дней', '14': '14 завершённых дней', '28': '28 завершённых дней',
-      '30': '30 дней, включая сегодня', custom: periodLabel(model.period)
-    };
-    var options = Object.keys(labels).filter(function (value) { return value !== 'custom' || range === 'custom'; }).map(function (value) {
-      return '<option value="' + value + '"' + (value === range ? ' selected' : '') + '>' + esc(labels[value]) + '</option>';
-    }).join('');
-    return '<div class="sh-controls"><label><span>Период</span><select data-home-period aria-label="Период главной страницы">' + options + '</select></label><button class="sh-refresh" type="button" data-home-refresh aria-label="Обновить данные"><span aria-hidden="true">↻</span><span>Обновить</span></button></div>';
-  }
-
-  function stateView(model) {
-    var state = model.state || 'loading';
-    var defaults = {
-      loading: ['Собираем главную страницу', 'Загружаем данные выбранного кабинета и периода.'],
-      error: ['Не удалось загрузить данные', 'Повторите загрузку или откройте аналитику, чтобы проверить доступность отчётов.'],
-      unsupported: ['Для выбранной площадки эта главная пока недоступна', 'Откройте экономику Wildberries или выберите кабинет Ozon в общих фильтрах.']
-    };
-    var copy = defaults[state] || defaults.error;
-    var message = model.message ? String(model.message) : copy[1];
-    var action = state === 'unsupported'
-      ? '<a class="sh-primary-action" href="/?view=wb-economics">Открыть экономику Wildberries</a>'
-      : state === 'error'
-        ? '<button class="sh-primary-action" type="button" data-home-refresh>Повторить загрузку</button><a class="sh-secondary-action" href="/?view=analytics">Открыть аналитику</a>'
-        : '<span class="sh-loader" aria-hidden="true"></span>';
-    return '<div class="sh-content is-' + esc(state) + '" aria-live="polite" aria-busy="' + (state === 'loading' ? 'true' : 'false') + '"><div class="sh-state"><span class="sh-state-mark" aria-hidden="true">' + (state === 'error' ? '!' : state === 'unsupported' ? '↗' : '') + '</span><h1>' + esc(copy[0]) + '</h1><p>' + esc(message) + '</p><div class="sh-state-actions">' + action + '</div></div></div>';
-  }
-
-  function render(input) {
-    var model = input && typeof input === 'object' ? input : { state: 'loading' };
-    if (model.state !== 'ready') return stateView(model);
-    var metrics = model.metrics && typeof model.metrics === 'object' ? model.metrics : {};
-    var orderedRevenue = metric(metrics.orderedRevenue);
-    var orderedUnits = metric(metrics.orderedUnits);
-    var realized = metric(metrics.realized);
-    var net = metric(metrics.net);
-    var ads = metric(metrics.ads);
-    var stocks = metric(metrics.stocks);
-    var stores = finite(model.stores) ? Math.max(0, model.stores) : null;
-    var supporting = [
-      ['Реклама', ads, '/?view=economics'],
-      ['Известные остатки', stocks, '/?view=products'],
-      ['Магазины', { text: stores == null ? '—' : number.format(stores), comparison: '', tone: '' }, '/?view=stores']
-    ].map(function (item) {
-      return '<a class="sh-mini-metric" href="' + item[2] + '"><span>' + item[0] + '</span><strong>' + esc(item[1].text) + '</strong><i aria-hidden="true">›</i></a>';
-    }).join('');
-    var scope = model.scope ? String(model.scope) : 'Ozon';
-    return '<div class="sh-content" aria-label="Главная продавца"><header class="sh-head"><div><span class="sh-kicker">ГЛАВНАЯ</span><h1>Пульс продаж</h1><p>' + esc(scope) + ' · ' + esc(periodLabel(model.period)) + '</p></div>' + controls(model) + '</header><div class="sh-layout"><article class="sh-card sh-sales"><div class="sh-card-cap"><div><span class="sh-card-label">Продажи</span><h2>Заказано и реализовано</h2></div><div class="sh-legend" aria-label="Легенда"><span><i class="is-ordered"></i>Заказано</span><span><i class="is-realized"></i>Реализовано</span></div></div>' + chart(model.daily) + '<div class="sh-totals">' + metricBlock('Заказано', orderedRevenue) + metricBlock('Товаров заказано', orderedUnits) + metricBlock('Реализовано', realized) + '</div></article><aside class="sh-side"><article class="sh-card sh-finance"><div class="sh-side-heading"><span class="sh-card-label">Финансы</span><a href="/?view=finance">Подробнее <span aria-hidden="true">›</span></a></div><h2>Итог начислений</h2><strong class="sh-finance-value">' + esc(net.text) + '</strong>' + comparison(net) + '<p>После удержаний Ozon · не чистая прибыль</p></article><article class="sh-card sh-tasks"><div class="sh-side-heading"><div><span class="sh-card-label">Задачи</span><h2>Требуют внимания</h2></div><a href="/?view=analytics" data-home-filter="">Все <span aria-hidden="true">›</span></a></div><div class="sh-task-list">' + alerts(model.alerts) + '</div></article></aside></div><nav class="sh-quick" aria-label="Быстрые переходы"><a href="/?view=overview&amp;section=business-chart"><span aria-hidden="true">⌁</span><strong>Графики бизнеса</strong><i aria-hidden="true">›</i></a><a href="/?view=economics"><span aria-hidden="true">₽</span><strong>Юнит-экономика</strong><i aria-hidden="true">›</i></a><a href="/?view=stores"><span aria-hidden="true">◇</span><strong>Магазины</strong><i aria-hidden="true">›</i></a><a href="/?view=wb-economics"><span aria-hidden="true">W</span><strong>Экономика WB</strong><i aria-hidden="true">›</i></a></nav><section class="sh-banner"><div><span class="sh-kicker">СВЕЖЕСТЬ ДАННЫХ</span><h2>Данные ваших магазинов</h2><p class="sh-freshness">' + esc(model.freshness || 'Время обновления уточняется') + '</p><p>' + esc(model.coverageNote || 'Полный период по всем выбранным магазинам Ozon. Заказы — до отмен и возвратов; реализация — по дате начисления.') + '</p></div><a href="/?view=finance">Проверить начисления <span aria-hidden="true">→</span></a></section><div class="sh-supporting" aria-label="Дополнительные показатели">' + supporting + '</div></div>';
-  }
-
-  return { render: render };
+function render(input,ui){var model=input&&typeof input==='object'?input:{state:'loading'};if(model.state!=='ready')return stateView(model);sequence+=1;var metrics=model.metrics&&typeof model.metrics==='object'?model.metrics:{},orderedRevenue=metric(metrics.orderedRevenue),orderedUnits=metric(metrics.orderedUnits),realized=metric(metrics.realized),net=metric(metrics.net),ads=metric(metrics.ads),stocks=metric(metrics.stocks),stores=finite(model.stores)?Math.max(0,model.stores):null,attentionCount=finite(model.attentionCount)?Math.max(0,model.attentionCount):null;
+var supporting=[['Реклама',ads,'/?view=economics'],['Известные остатки',stocks,'/?view=products'],['Магазины',{text:stores==null?'—':nf.format(stores)},'/?view=stores']].map(function(item){return'<a class="sh-mini-metric" href="'+item[2]+'"><span>'+esc(item[0])+'</span><strong>'+esc(item[1].text)+'</strong>'+icon('chevron')+'</a>';}).join('');
+var mode=ui&&ui.chartMode==='units'?'units':'amount',legend=mode==='units'?'<span><i class="is-ordered"></i>Заказано товаров</span>':'<span><i class="is-ordered"></i>Заказано</span><span><i class="is-realized"></i>Реализовано</span>',coverage=['complete','partial','open'].indexOf(model.coverageState)>=0?model.coverageState:'open',coverageLabel=model.coverageLabel?String(model.coverageLabel):(coverage==='complete'?'Полное покрытие':coverage==='partial'?'Частичные данные':'Покрытие уточняется'),attention=attentionCount!=null&&attentionCount>0?'<span class="sh-attention-count">'+esc(nf.format(attentionCount))+' позиций</span>':'',quick=[['chart','Графики бизнеса','/?view=overview&amp;section=business-chart'],['calculator','Юнит-экономика','/?view=economics'],['store','Магазины','/?view=stores'],['boxes','Экономика WB','/?view=wb-economics']].map(function(item){return'<a href="'+item[2]+'"><span>'+icon(item[0])+'</span><strong>'+item[1]+'</strong>'+icon('chevron')+'</a>';}).join('');
+return'<div class="sh-content" aria-label="Главная продавца"><header class="sh-head"><div><span class="sh-kicker">ГЛАВНАЯ</span><h1>Пульс продаж</h1><p>'+esc(model.scope?String(model.scope):'Ozon')+' · '+esc(periodLabel(model.period))+'</p></div>'+controls(model)+'</header><div class="sh-layout"><article class="sh-card sh-sales"><div class="sh-card-cap"><div><span class="sh-card-label">Продажи</span><h2>Заказано и реализовано</h2></div><div class="sh-legend" aria-label="Легенда">'+legend+'</div></div><div class="sh-totals">'+metricBlock('Заказано',orderedRevenue,'is-primary')+metricBlock('Товаров заказано',orderedUnits)+metricBlock('Реализовано',realized)+'</div>'+chart(model.daily,ui||{},'r'+sequence)+'</article><aside class="sh-side"><article class="sh-card sh-finance"><div class="sh-side-heading"><span class="sh-card-label">Финансы</span><a href="/?view=finance">Подробнее '+icon('chevron')+'</a></div><h2>Итог начислений</h2><strong class="sh-finance-value">'+esc(net.text)+'</strong>'+comparison(net)+'<p>После удержаний Ozon · не чистая прибыль</p></article><article class="sh-card sh-tasks"><div class="sh-side-heading"><div><span class="sh-card-label">Задачи</span><h2>Требуют внимания '+attention+'</h2></div><a href="/?view=analytics" data-home-filter="">Все '+icon('chevron')+'</a></div><div class="sh-task-list">'+alerts(model.alerts)+'</div></article></aside></div><nav class="sh-quick" aria-label="Быстрые переходы">'+quick+'</nav><section class="sh-status is-'+coverage+'"><span class="sh-status-dot" aria-hidden="true"></span><div><strong>'+esc(coverageLabel)+'</strong><span>'+esc(model.freshness||'Время обновления уточняется')+'</span></div><p>'+esc(model.coverageNote||'Заказы — до отмен и возвратов; реализация — по дате начисления.')+'</p><a href="/?view=finance">Проверить начисления '+icon('arrow')+'</a></section>'+leaders(model.leaders,model)+'<div class="sh-supporting" aria-label="Дополнительные показатели">'+supporting+'</div></div>';}
+return{render:render};
 });

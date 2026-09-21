@@ -55,6 +55,30 @@ test('all-platform scope identifies Ozon and the oldest available history freshn
   assert.match(model.freshness, /19 сент/);
   assert.match(model.freshness, /Начисления: нет полного снимка/);
 });
+test('attention count deduplicates overlapping signals and leaders use only positive SKU realization', () => {
+  const data = report();
+  data.products.push({ storeId: 'a', sku: 2, name: 'Второй товар', realized: 20, net: 15, quantity: 5, cost: 5, logistics: 2 });
+  data.products.push({ storeId: 'a', sku: 3, name: 'Корректировка', realized: -10, net: 0, logistics: 0 });
+  const model = build({ state: 'ready', report: data }, now);
+  assert.equal(model.attentionCount, 1);
+  assert.equal(model.alerts.filter(a => a.count > 0).length, 3);
+  assert.deepEqual(model.leaders.map(p => p.sku), ['1', '2']);
+  assert.deepEqual(model.leaders.map(p => p.share), [80, 20]);
+  assert.equal(model.coverageState, 'complete');
+  data.coverage.finance = false;
+  const incomplete = build({ state: 'ready', report: data }, now);
+  assert.equal(incomplete.attentionCount, null);
+  assert.deepEqual(incomplete.leaders, []);
+  assert.equal(incomplete.coverageState, 'partial');
+});
+test('unit chart keeps confirmed zero separate from missing and does not borrow amounts', () => {
+  const data = report();
+  data.daily[0].orderedUnits = 0;
+  data.daily[1].orderedUnits = null;
+  assert.deepEqual(build({ state: 'ready', report: data }, now).daily.map(d => d.orderedUnits), [0, null]);
+  data.coverage.orders = false;
+  assert.ok(build({ state: 'ready', report: data }, now).daily.every(d => d.orderedUnits === null));
+});
 test('view keeps graph gaps and escapes imported names without exposing an old report in error states', () => {
   const view = require('../dist/seller-home-view.js');
   const data = report();
@@ -64,11 +88,30 @@ test('view keeps graph gaps and escapes imported names without exposing an old r
   const html = view.render(model);
   assert.doesNotMatch(html, /<img/);
   assert.match(html, /&lt;img/);
-  assert.equal((html.match(/class="sh-line sh-line-ordered"/g) || []).length, 2);
-  assert.equal((html.match(/class="sh-line sh-line-realized"/g) || []).length, 2);
+  const graphs = html.match(/<svg class="sh-chart [\s\S]*?<\/svg>/g);
+  assert.equal(graphs.length, 2);
+  for (const graph of graphs) {
+    assert.equal((graph.match(/class="sh-line sh-line-ordered"/g) || []).length, 2);
+    assert.equal((graph.match(/class="sh-line sh-line-realized"/g) || []).length, 2);
+  }
   assert.doesNotMatch(html, /(?:NaN|Infinity)/);
   for (const state of ['loading', 'error', 'unsupported']) {
     const other = view.render({ ...model, state });
     assert.doesNotMatch(other, /sh-finance-value|sh-chart|sh-task-list/);
   }
+});
+test('chart mode selects the correct units and day without putting monetary values on the unit scale', () => {
+  const view = require('../dist/seller-home-view.js');
+  const data = report(); data.daily[0].orderedUnits = 0;
+  const model = build({ state: 'ready', report: data }, now);
+  const unitsHtml = view.render(model, { chartMode: 'units' });
+  const readout = unitsHtml.slice(unitsHtml.indexOf('data-home-readout'), unitsHtml.indexOf('<div data-home-chart-region>'));
+  assert.match(readout, /14 сентября 2026/);
+  assert.match(readout, /0 шт\./);
+  assert.doesNotMatch(readout, /₽|Реализовано/);
+  for (const graph of unitsHtml.match(/<svg class="sh-chart [\s\S]*?<\/svg>/g)) assert.doesNotMatch(graph, /sh-line-realized|Суммы.*рублях/);
+  const absentDay = view.render(model, { chartMode: 'amount', dayIndex: 1 });
+  const absentReadout = absentDay.slice(absentDay.indexOf('data-home-readout'), absentDay.indexOf('<div data-home-chart-region>'));
+  assert.match(absentReadout, /15 сентября 2026/);
+  assert.match(absentReadout, /<strong>—<\/strong>/);
 });

@@ -6,20 +6,62 @@
   host.setAttribute('aria-label', 'Главная страница Пульта');
   document.querySelector('main').append(host);
   let lastReady = null;
+  let model = null, currentScope = '', loading = true, lastRender = '';
+  const ui = { chartMode: 'amount', dayIndex: null };
   const scopeKey = input => [input.market, input.store, input.range, input.from, input.to, input.hideInactive].join('|');
-  function update(input) {
-    const refreshing = input.state === 'loading' && lastReady && scopeKey(input) === scopeKey(lastReady);
-    if (input.state === 'ready') lastReady = input;
-    else if (!refreshing) lastReady = null;
+  function draw({ preserveFocus = true } = {}) {
+    const signature = JSON.stringify([model, ui]);
+    if (signature === lastRender) { syncLoading(); return; }
     // Restore keyboard focus after a report refresh replaces the card markup.
-    const active = host.contains(document.activeElement) ? document.activeElement : null;
-    const selector = active?.hasAttribute('data-home-period') ? '[data-home-period]' : active?.hasAttribute('data-home-refresh') ? '[data-home-refresh]' : null;
-    host.innerHTML = window.PultSellerHomeView.render(window.PultSellerHomeModel.build(refreshing ? lastReady : input));
-    host.setAttribute('aria-busy', String(input.state === 'loading'));
-    const refresh = host.querySelector('[data-home-refresh]');
-    if (refresh) refresh.disabled = input.state === 'loading';
+    const active = preserveFocus && host.contains(document.activeElement) ? document.activeElement : null;
+    const selector = active?.hasAttribute('data-home-period') ? '[data-home-period]' : active?.hasAttribute('data-home-refresh') ? '[data-home-refresh]' : active?.hasAttribute('data-home-day-slider') ? '[data-home-day-slider]' : active?.hasAttribute('data-home-chart-mode') ? '[data-home-chart-mode="' + ui.chartMode + '"]' : null;
+    const tableOpen = host.querySelector('.sh-data')?.open;
+    host.innerHTML = window.PultSellerHomeView.render(model, ui);
+    lastRender = signature;
+    if (tableOpen && host.querySelector('.sh-data')) host.querySelector('.sh-data').open = true;
+    syncLoading();
     if (selector) host.querySelector(selector)?.focus({ preventScroll: true });
   }
+  function syncLoading() {
+    host.setAttribute('aria-busy', String(loading));
+    const refresh = host.querySelector('[data-home-refresh]');
+    if (refresh) { refresh.disabled = loading; refresh.setAttribute('aria-label', loading ? 'Данные обновляются' : 'Обновить данные'); }
+  }
+  function update(input) {
+    const nextScope = scopeKey(input);
+    if (nextScope !== currentScope) { ui.dayIndex = null; currentScope = nextScope; }
+    const refreshing = input.state === 'loading' && lastReady && nextScope === scopeKey(lastReady);
+    if (input.state === 'ready') lastReady = input;
+    else if (!refreshing) lastReady = null;
+    loading = input.state === 'loading';
+    model = window.PultSellerHomeModel.build(refreshing ? lastReady : input);
+    draw();
+  }
+  function selectDay(value) {
+    const index = Number(value);
+    if (!Number.isInteger(index) || !model?.daily.length || index < 0 || index >= model.daily.length || index === ui.dayIndex) return;
+    ui.dayIndex = index;
+    // Keep the native slider attached during a drag; update only the readout and SVG.
+    const next = document.createElement('div');
+    next.innerHTML = window.PultSellerHomeView.render(model, ui);
+    for (const selector of ['[data-home-chart-region]', '[data-home-readout]']) {
+      const previous = host.querySelector(selector), replacement = next.querySelector(selector);
+      if (previous && replacement) previous.replaceWith(replacement);
+    }
+    const slider = host.querySelector('[data-home-day-slider]'), nextSlider = next.querySelector('[data-home-day-slider]');
+    if (slider && nextSlider) {
+      slider.value = nextSlider.value;
+      slider.setAttribute('aria-valuetext', nextSlider.getAttribute('aria-valuetext') || '');
+    }
+    lastRender = JSON.stringify([model, ui]);
+  }
+  host.addEventListener('input', event => {
+    if (event.target.matches('[data-home-day-slider]')) selectDay(event.target.value);
+  });
+  host.addEventListener('pointermove', event => {
+    const day = event.target.closest('[data-home-day]');
+    if (day && event.pointerType !== 'touch') selectDay(day.dataset.homeDay);
+  });
   host.addEventListener('change', event => {
     if (!event.target.matches('[data-home-period]')) return;
     const period = document.getElementById('ins-range');
@@ -28,6 +70,13 @@
     period.dispatchEvent(new Event('change'));
   });
   host.addEventListener('click', event => {
+    const day = event.target.closest('[data-home-day]');
+    if (day) { selectDay(day.dataset.homeDay); return; }
+    const chartMode = event.target.closest('[data-home-chart-mode]');
+    if (chartMode) {
+      if (['amount', 'units'].includes(chartMode.dataset.homeChartMode)) { ui.chartMode = chartMode.dataset.homeChartMode; draw(); }
+      return;
+    }
     if (event.target.closest('[data-home-refresh]')) {
       window.dispatchEvent(new Event('pult:home-refresh'));
       return;
@@ -42,6 +91,11 @@
       const select = document.getElementById('ins-filter');
       document.getElementById('ins-search').value = '';
       select.value = filter; select.dispatchEvent(new Event('change'));
+    }
+    if (link.hasAttribute('data-home-search')) {
+      const search = document.getElementById('ins-search');
+      document.getElementById('ins-filter').value = '';
+      search.value = link.dataset.homeSearch; search.dispatchEvent(new Event('input'));
     }
     window.PultPageLayout.navigate(url.searchParams.get('view') || 'overview', { section: url.searchParams.get('section') || '' });
   });
