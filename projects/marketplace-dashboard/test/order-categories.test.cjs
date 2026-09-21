@@ -2,7 +2,7 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
 const {create,broadCategory,canonicalCategory,productIndex,ozonTotals,wbSeries,UNMATCHED}=require('../order-categories.cjs');
 const DAY='2026-09-20',AT='2026-09-20T09:00:00.000Z';
-function fixture(t){const privateDir=fs.mkdtempSync(path.join(os.tmpdir(),'order-categories-'));t.after(()=>fs.rmSync(privateDir,{recursive:true,force:true}));return {privateDir}}
+function fixture(t){const privateDir=fs.mkdtempSync(path.join(os.tmpdir(),'order-categories-'));t.after(()=>fs.rmSync(privateDir,{recursive:true,force:true}));return {privateDir,now:()=>Date.parse(AT)}}
 function stores(){return [
  {id:'1',market:'Ozon',categoryTree:[{description_category_id:12,category_name:'Строительство',children:[{description_category_id:13,category_name:'Крепёжные изделия',children:[{type_id:14,type_name:'Саморезы'}]}]}],products:[{product_id:1,sku:101,description_category_id:13,type_id:14},{product_id:2,sku:102,description_category_id:999,type_id:999}],orders:{skuDailyCoverage:true,skuUpdatedAt:AT,skuDaily:[{date:DAY,sku:'101',revenue:120,units:2},{date:DAY,sku:'102',revenue:30,units:1}]}},
  {id:'wb-1',market:'WB',products:[{nmID:201,title:'Перчатки хозяйственные',vendorCode:'WB-201',subjectName:'Перчатки хозяйственные'}],orders:{complete:true,day:DAY,orders:[{at:'2026-09-20T08:30:00.000Z',amount:50,nmId:'201',category:'Хозяйственные товары',subject:'Перчатки хозяйственные'},{at:'2026-09-20T09:15:00.000Z',amount:70,nmId:'999',category:'Строительные материалы',subject:'Тенты'}]}}

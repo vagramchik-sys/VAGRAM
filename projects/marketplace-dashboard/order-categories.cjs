@@ -87,8 +87,16 @@ function wbSeries(stores,index,targetDay,{fallback=true}={}){
  return {complete:true,series};
 }
 function descendants(types,parentId){const children=new Map();for(const type of types){const list=children.get(type.parentId)||[];list.push(type.id);children.set(type.parentId,list)}const out=[];function visit(id){const next=children.get(id)||[];if(!next.length){out.push(id);return}for(const child of next)visit(child)}visit(parentId);return out}
-function sumSeries(items,type,market){const times=[...new Set(items.flatMap(item=>item.points.map(point=>Date.parse(point.at))).filter(Number.isFinite))].sort((a,b)=>a-b),points=[];for(const at of times){let orderedRevenue=0,orderedUnits=0,observed=false;for(const item of items){const point=item.points.filter(row=>Date.parse(row.at)<=at).at(-1);if(point){observed=true;orderedRevenue+=point.orderedRevenue;orderedUnits+=point.orderedUnits}}if(observed)points.push({at:new Date(at).toISOString(),orderedRevenue:Math.round(orderedRevenue*100)/100,orderedUnits})}return {category:type.name,typeId:type.id,market,aggregate:true,leafCount:items.length,amountBasis:market==='Ozon'?'revenue':'priceWithDisc',timeBasis:market==='Ozon'?'Время снимка аналитики Ozon':'Время создания заказа WB',points}}
-function withParents(series,types){const parents=new Set(types.map(type=>type.parentId).filter(Boolean)),out=[...series];for(const id of parents){const type=types.find(item=>item.id===id),leaves=new Set(descendants(types,id));for(const market of ['Ozon','WB']){const items=series.filter(item=>item.market===market&&leaves.has(item.typeId));if(items.length)out.push(sumSeries(items,type,market))}}return out}
+function sumSeries(items,type,market){
+ const times=[...new Set(items.flatMap(item=>item.points.map(point=>Date.parse(point.at))).filter(Number.isFinite))].sort((a,b)=>a-b),points=[];
+ for(const at of times){let orderedRevenue=0,orderedUnits=0,observed=false;for(const item of items){const point=item.points.filter(row=>Date.parse(row.at)<=at).at(-1);if(point){observed=true;orderedRevenue+=point.orderedRevenue;orderedUnits+=point.orderedUnits}}if(observed)points.push({at:new Date(at).toISOString(),orderedRevenue:Math.round(orderedRevenue*100)/100,orderedUnits})}
+ return {category:type.name,typeId:type.id,market,aggregate:true,leafCount:items.length,amountBasis:market==='Ozon'?'revenue':'priceWithDisc',timeBasis:market==='Ozon'?'Время снимка аналитики Ozon':'Время создания заказа WB',points};
+}
+function withParents(series,types){
+ const parents=new Set(types.map(type=>type.parentId).filter(Boolean)),out=[...series];
+ for(const id of parents){const type=types.find(item=>item.id===id),leaves=new Set(descendants(types,id));for(const market of ['Ozon','WB']){const items=series.filter(item=>item.market===market&&leaves.has(item.typeId));if(items.length)out.push(sumSeries(items,type,market))}}
+ return out;
+}
 function create({privateDir,productTypes,now=()=>Date.now()}){
  const file=path.join(privateDir,'order-category-intraday.json');
  const read=()=>{try{const value=JSON.parse(fs.readFileSync(file,'utf8'));if(!value||typeof value!=='object'||!Array.isArray(value.points))throw Error('История категорий Ozon повреждена. Восстановите последний исправный файл.');return value}catch(error){if(error?.code==='ENOENT')return {version:1,points:[]};if(error instanceof SyntaxError)throw Error('История категорий Ozon повреждена. Восстановите последний исправный файл.');throw error}};

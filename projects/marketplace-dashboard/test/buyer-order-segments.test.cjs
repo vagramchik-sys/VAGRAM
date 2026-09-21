@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs'), os = require('node:os'), path = require('node:path');
-const { wbBuyerType, ozonBuyerType, projectWbOrder, projectOzonPosting, aggregate, merge, create, moscowDay } = require('../buyer-order-segments.cjs');
+const { wbBuyerType, ozonBuyerType, projectWbOrder, projectOzonPosting, projectOzonProductOrders, mergeProductOrders, aggregate, merge, create, moscowDay } = require('../buyer-order-segments.cjs');
 
 test('WB classification requires the scheme-specific explicit boolean and protects historical false', () => {
   assert.equal(wbBuyerType({ options: { isB2B: true } }, 'FBS', '2026-09-01T00:00:00.000Z').buyerType, 'legal');
@@ -87,4 +87,18 @@ test('reader never stretches a TODAY snapshot over another period', t => {
 test('an unavailable loaded store remains visible with null totals', () => {
   const result = aggregate([], { from: '2026-09-20', to: '2026-09-20', sources: [{ market: 'WB', scheme: 'FBS', storeId: 'wb', name: 'WB', available: false, complete: false, from: '2026-09-20', to: '2026-09-20' }] });
   assert.equal(result.status, 'unavailable'); assert.equal(result.byStore.length, 1); assert.equal(result.byStore[0].totals, null);
+});
+
+test('product order projection aggregates repeated SKU without buyer data or invented money', () => {
+  const posting = { posting_number: 'p1', order_number: 'o1', created_at: '2026-09-20T10:00:00Z', status: 'awaiting_deliver', products: [{ sku: 5, quantity: 2, price: '10.50', currency: 'RUB', name: 'secret' }, { sku: 5, quantity: 3, price: '10.50', currency: 'RUB' }, { sku: 6, quantity: 1, price: '9.00' }] };
+  const rows = projectOzonProductOrders(posting, { scheme: 'FBO', storeId: 'one', updatedAt: '2026-09-20T11:00:00Z' });
+  assert.equal(rows.length, 2); assert.equal(rows[0].units, 5); assert.equal(rows[0].amountRub, 52.5); assert.equal(rows[1].amountRub, null);
+  assert.doesNotMatch(JSON.stringify(rows), /secret/);
+  const merged = mergeProductOrders([...rows, { ...rows[0], postingId: 'p2', units: 1, amountRub: 10.5 }]);
+  assert.equal(merged.find(row => row.productId === '5').units, 6);
+});
+
+test('FBS product time remains unavailable when created_at is absent', () => {
+  const rows = projectOzonProductOrders({ posting_number: 'p', order_number: 'o', in_process_at: '2026-09-20T10:00:00Z', products: [{ sku: 1, quantity: 1 }] }, { scheme: 'FBS', storeId: 'one' });
+  assert.equal(rows[0].orderedAt, null);
 });

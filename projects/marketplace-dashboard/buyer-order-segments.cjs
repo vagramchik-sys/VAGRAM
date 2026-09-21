@@ -118,6 +118,67 @@ function projectOzonPosting(posting, { scheme = 'FBO' } = {}) {
   };
 }
 
+function rubUnitPrice(product) {
+  const price = product?.price;
+  if (price && typeof price === 'object' && price.currency_code === 'RUB' && /^-?\d+$/.test(String(price.units ?? '')) && Number.isInteger(Number(price.nanos || 0))) {
+    const value = Number(price.units) + Number(price.nanos || 0) / 1e9;
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  }
+  if (product?.currency !== 'RUB' || (typeof price !== 'number' && (typeof price !== 'string' || !/^\d+(?:\.\d+)?$/.test(price)))) return null;
+  const value = Number(price);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function projectOzonProductOrders(posting, { scheme = 'FBO', storeId = null, updatedAt = null } = {}) {
+  if (!posting || typeof posting !== 'object' || !Array.isArray(posting.products)) return [];
+  const orderId = id(posting.order_number) || id(posting.posting_number), postingId = id(posting.posting_number);
+  if (!orderId || !postingId) return [];
+  const orderedAt = isoInstant(posting.created_at), fetchedAt = isoInstant(updatedAt);
+  const cancelled = typeof posting.status === 'string' ? cancellation({ market: 'Ozon', value: posting.status }) : null;
+  const segment = ozonBuyerType(posting);
+  const grouped = new Map();
+  for (const product of posting.products) {
+    const productId = id(product?.sku), units = count(product?.quantity);
+    if (!productId || units === null) continue;
+    const unitPrice = rubUnitPrice(product), amountRub = unitPrice === null ? null : Math.round(unitPrice * units * 100) / 100;
+    const previous = grouped.get(productId);
+    if (!previous) grouped.set(productId, { market: 'Ozon', storeId: id(storeId), scheme, orderId, postingId, productId, orderedAt, units, amountRub, buyerType: segment.buyerType, classificationField: segment.classificationField, cancelled, updatedAt: fetchedAt, source: CONTRACTS[scheme === 'FBO' ? 'ozonFbo' : 'ozonFbs'].route });
+    else {
+      previous.units += units;
+      previous.amountRub = previous.amountRub === null || amountRub === null ? null : Math.round((previous.amountRub + amountRub) * 100) / 100;
+    }
+  }
+  return [...grouped.values()];
+}
+
+function projectWbProductOrder(order, { scheme = 'FBS', storeId = null, status = null, updatedAt = null } = {}) {
+  const orderId = id(order?.orderUid) || id(order?.id), productId = id(order?.nmId), orderedAt = isoInstant(order?.createdAt);
+  if (!orderId || !productId || !orderedAt) return null;
+  const segment = wbBuyerType(order, scheme, orderedAt);
+  return { market: 'WB', storeId: id(storeId), scheme, orderId, postingId: id(order.id), productId, orderedAt, units: 1, amountRub: null, buyerType: segment.buyerType, classificationField: segment.classificationField, cancelled: cancellation(status), updatedAt: isoInstant(updatedAt), source: CONTRACTS[scheme === 'DBS' ? 'wbDbs' : 'wbFbs'].route };
+}
+
+function mergeProductOrders(rows) {
+  const merged = new Map();
+  for (const row of Array.isArray(rows) ? rows : []) {
+    if (!row || !row.market || !row.storeId || !row.scheme || !row.orderId || !row.productId || count(row.units) === null) continue;
+    const key = [row.market, row.storeId, row.scheme, row.orderId, row.productId].join(':');
+    const previous = merged.get(key);
+    if (!previous) merged.set(key, { ...row });
+    else {
+      if (!Number.isSafeInteger(previous.units + row.units)) continue;
+      previous.units += row.units;
+      previous.amountRub = previous.amountRub === null || row.amountRub === null ? null : Math.round((previous.amountRub + row.amountRub) * 100) / 100;
+      previous.buyerType = previous.buyerType === row.buyerType ? previous.buyerType : 'unknown';
+      previous.classificationField = previous.classificationField === row.classificationField ? previous.classificationField : null;
+      previous.cancelled = previous.cancelled === false || row.cancelled === false ? false : previous.cancelled === null || row.cancelled === null ? null : true;
+      if (!previous.orderedAt && row.orderedAt) previous.orderedAt = row.orderedAt;
+      if (row.updatedAt && (!previous.updatedAt || row.updatedAt > previous.updatedAt)) previous.updatedAt = row.updatedAt;
+    }
+  }
+  return [...merged.values()].sort((a, b) => String(a.orderedAt || '').localeCompare(String(b.orderedAt || '')) || a.orderId.localeCompare(b.orderId) || a.productId.localeCompare(b.productId));
+}
+
 function aggregate(records, { from, to, sources = [] } = {}) {
   from = validDay(from); to = validDay(to);
   if (!from || !to || from > to) throw new Error('Некорректный период заказов');
@@ -236,4 +297,4 @@ function merge(records) {
   return [...result.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt) || a.id.localeCompare(b.id));
 }
 
-module.exports = { CONTRACTS, wbBuyerType, ozonBuyerType, projectWbOrder, projectOzonPosting, aggregate, merge, create, moscowDay };
+module.exports = { CONTRACTS, wbBuyerType, ozonBuyerType, projectWbOrder, projectOzonPosting, projectOzonProductOrders, projectWbProductOrder, mergeProductOrders, aggregate, merge, create, moscowDay };

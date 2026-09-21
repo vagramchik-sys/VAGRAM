@@ -11,7 +11,7 @@ function runtime() {
   const nodes = new Map();
   const classes = new Map();
   const wbReports = [];
-  let fetches = 0;
+  const fetches = [];
 
   class FakeElement {
     constructor(id = '') {
@@ -92,7 +92,7 @@ function runtime() {
     setTimeout: () => 1,
     clearTimeout() {},
     setInterval: () => 1,
-    fetch() { fetches++; return new Promise(() => {}); },
+    fetch(url) { fetches.push(String(url)); return new Promise(() => {}); },
     createPultWBEconomics() { return { render(report) { wbReports.push(report); } }; },
     createPultEconomics: inertView,
     createPultSalesDecline: inertView,
@@ -102,7 +102,7 @@ function runtime() {
   });
 
   vm.runInContext(ui, context, { filename: 'insights-ui.js' });
-  return { nodes, wbReports, get fetches() { return fetches; } };
+  return { nodes, wbReports, fetches };
 }
 
 test('UI loads on WB and can switch to Ozon without a removed placeholder crash', () => {
@@ -110,13 +110,19 @@ test('UI loads on WB and can switch to Ozon without a removed placeholder crash'
 
   assert.equal(app.wbReports.length, 1);
   assert.equal(app.nodes.get('executive').hidden, true);
-  assert.equal(app.fetches, 0);
+  assert.equal(app.fetches.length, 1);
+  assert.match(app.fetches[0], /^\/api\/profit-series\?/);
+  assert.match(app.fetches[0], /market=WB/);
+  assert.match(app.fetches[0], /from=\d{4}-\d{2}-\d{2}/);
+  assert.match(app.fetches[0], /to=\d{4}-\d{2}-\d{2}/);
+  assert.equal(app.fetches.some(url => url.startsWith('/api/insights?')), false);
 
   const market = app.nodes.get('market');
   market.value = 'Ozon';
   assert.doesNotThrow(() => market.dispatchEvent({ type: 'change' }));
   assert.equal(app.nodes.get('executive').hidden, false);
-  assert.equal(app.fetches, 1);
+  assert.equal(app.fetches.length, 2);
+  assert.match(app.fetches[1], /^\/api\/insights\?/);
 });
 
 test('WB keeps its canonical selector value and dedicated report labels', () => {
@@ -124,4 +130,43 @@ test('WB keeps its canonical selector value and dedicated report labels', () => 
   assert.doesNotMatch(ui, /ins-wb/);
   assert.match(wbUi, /TRUESTATS · WILDBERRIES/);
   assert.match(wbUi, /Прямой отчёт WB/);
+});
+
+test('business chart exposes WB honestly and removes yesterday and week reference controls', () => {
+  const chart = fs.readFileSync(require.resolve('../dist/turnover-chart.js'), 'utf8');
+  assert.match(chart, /catalog=list/);
+  assert.match(chart, /\/api\/wb\/orders\?/);
+  assert.match(chart, /WB: сумма по priceWithDisc, без отменённых заказов/);
+  assert.match(chart, /одна строка API равна одной заказанной единице/);
+  assert.doesNotMatch(chart, /id="chart-compare-controls"/);
+  assert.doesNotMatch(chart, /Неделю назад/);
+  assert.doesNotMatch(chart, /name:'Вчера'/);
+  assert.match(chart, /chart-forecast-enabled/);
+});
+
+test('business chart switches to categories without losing the store selection or inventing Ozon order times', () => {
+  const chart = fs.readFileSync(require.resolve('../dist/turnover-chart.js'), 'utf8');
+  assert.match(chart, /chart-mode-categories/);
+  assert.match(chart, /\/api\/order-categories\?/);
+  assert.match(chart, /selectedCategories/);
+  assert.match(chart, /Исторические дни используют текущую подтверждённую классификацию/);
+  assert.match(chart, /каждая точка соответствует дню/);
+  assert.match(chart, /Ozon и Wildberries объединены по нашим типам/);
+  assert.match(chart, /сумма остаётся пустой, если рублёвая сумма не подтверждена/);
+  assert.match(chart, /не выдаётся за полный итог/);
+  assert.match(chart, /function setMode\(next\)\{mode=next/);
+});
+
+test('category chart starts empty and only changes selection by explicit user action', () => {
+  const chart = fs.readFileSync(require.resolve('../dist/turnover-chart.js'), 'utf8');
+  assert.match(chart, /selectedCategories=new Set\(\)/);
+  assert.doesNotMatch(chart, /if\(!selectedCategories\.size\)\{selectedCategories=new Set\(categoryReport\.categories\)\}/);
+  assert.match(chart, /const valid=new Set\(\(daily\.types\|\|\[\]\)\.map\(type=>type\.id\)\)/);
+  assert.match(chart, /valid\.add\('store:'\+item\.storeId\+'\:'\+item\.typeId\)/);
+  assert.match(chart, /chart-all-categories'[)]\.onclick=\(\)=>\{const types=categoryReport\?\.types\|\|\[\]/);
+  assert.match(chart, /for\(const parent of ancestors\(id,map\)\)selectedCategories\.delete\(parent\)/);
+  assert.match(chart, /for\(const child of descendants\(id\)\)selectedCategories\.delete\(child\)/);
+  assert.match(chart, /chart-category-search/);
+  assert.match(chart, /Сначала выберите нужные категории/);
+  assert.match(chart, /Выберите категорию или магазин в таблице/);
 });
