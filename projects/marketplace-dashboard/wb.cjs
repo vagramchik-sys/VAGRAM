@@ -26,7 +26,7 @@ module.exports=function({stores,jobs,protect,save,privateDir}){
       key=await protect(s.key,true);
       await section('products',async()=>{let cursor={limit:100};const seen=new Set();for(let page=0;page<10000;page++){
         const v=await request(key,'content','/content/v2/get/cards/list',{settings:{cursor,filter:{withPhoto:-1}}});if(!Array.isArray(v.cards))throw Error('WB: неизвестный формат карточек');
-        data.products.push(...v.cards.map(p=>({product_id:p.nmID,sku:p.nmID,name:p.title,offer_id:p.vendorCode,brand:p.brand,sizes:p.sizes})));job.count=data.products.length;
+        data.products.push(...v.cards.map(p=>({product_id:p.nmID,sku:p.nmID,name:p.title,offer_id:p.vendorCode,brand:p.brand,sizes:p.sizes,subjectID:p.subjectID,subjectName:p.subjectName})));job.count=data.products.length;
         if(v.cards.length<100)break;
         const next={limit:100,updatedAt:v.cursor?.updatedAt,nmID:v.cursor?.nmID},marker=JSON.stringify(next);if(!next.updatedAt||seen.has(marker)||page===9999)throw Error('WB: не все страницы товаров получены');seen.add(marker);cursor=next;await delay(650);
       }});

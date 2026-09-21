@@ -7,6 +7,14 @@ test('missing series stays unavailable rather than becoming a zero',()=>{
  assert.deepEqual(model.points({days:1,intraday:{orders:[]}},'net'),[]);assert.equal(model.totals({metrics:{realized:{current:null}}},'realized'),null);
  assert.equal(model.totals({metrics:{realized:{current:0}}},'realized'),0);
 });
+test('category daily known total distinguishes missing values from observed zero',()=>{
+ const missing=model.categoryDailyLine([{points:[{date:'2026-09-14',orderedRevenue:null,complete:false}]}],'orderedRevenue','2026-09-14','2026-09-14',1);
+ assert.equal(missing.points[0].value,null);assert.equal(missing.known,null);assert.equal(missing.total,null);assert.equal(missing.complete,false);
+ const zero=model.categoryDailyLine([{points:[{date:'2026-09-14',orderedRevenue:0,complete:true}]}],'orderedRevenue','2026-09-14','2026-09-14',1);
+ assert.equal(zero.points[0].value,0);assert.equal(zero.known,0);assert.equal(zero.total,0);assert.equal(zero.complete,true);
+ const mixed=model.categoryDailyLine([{points:[{date:'2026-09-14',orderedRevenue:125,complete:true},{date:'2026-09-15',orderedRevenue:null,complete:false}]}],'orderedRevenue','2026-09-14','2026-09-15',2);
+ assert.deepEqual(mixed.points.map(point=>point.value),[125,null]);assert.equal(mixed.known,125);assert.equal(mixed.total,null);assert.equal(mixed.complete,false);
+});
 test('daily gaps split line segments; negative values remain visible on a common axis',()=>{
  const points=model.points({days:3,daily:[{date:'2026-09-14',net:30},{date:'2026-09-15',net:null},{date:'2026-09-16',net:-10}]},'net');
  assert.deepEqual(model.segments(points).map(s=>s.map(p=>p.value)),[[30],[-10]]);assert.deepEqual(model.domain([{points},{points:[{value:100}]}]),{min:-10,max:100});

@@ -1,6 +1,6 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path');
-const {INTERVAL}=require('./refresh-policy.cjs');
+const {INTERVAL,ORDERS_INTERVAL}=require('./refresh-policy.cjs');
 const day=date=>new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
 const covers=(s,d)=>s?.period?.from<=d&&s?.period?.to>=d;
 function point(source,data,products){
@@ -20,7 +20,7 @@ function point(source,data,products){
 // A combined point requires a new, sufficiently close observation from every selected store.
 // A failed store never becomes a zero and cannot create a false aggregate change.
 function combine(histories,source,date){
-  const interval=source==='orders'?5*60*1000:INTERVAL;
+  const interval=source==='orders'?ORDERS_INTERVAL:INTERVAL;
   const lists=histories.map(h=>h.filter(p=>p.date===date&&p.source===source).sort((a,b)=>a.at.localeCompare(b.at)));
   if(!lists.length||lists.some(a=>!a.length))return [];
   const indices=lists.map(()=>0),out=[];
@@ -52,10 +52,10 @@ function create({privateDir}){
       points.push(next);changed=true;
     }
     if(!changed)return;
-    points.sort((a,b)=>a.at.localeCompare(b.at));const newest=Date.parse(points.at(-1).at),kept=points.filter(p=>newest-Date.parse(p.at)<=32*86400000);
-    fs.writeFileSync(file(id)+'.tmp',JSON.stringify({version:1,points:kept}));fs.renameSync(file(id)+'.tmp',file(id));
+    points.sort((a,b)=>a.at.localeCompare(b.at));
+    fs.writeFileSync(file(id)+'.tmp',JSON.stringify({version:1,points}));fs.renameSync(file(id)+'.tmp',file(id));
   }
-  function series(ids,date){const histories=ids.map(read);return {date,orders:combine(histories,'orders',date),finance:combine(histories,'finance',date),storeCount:ids.length,intervalMinutes:30,ordersIntervalMinutes:5,financeIntervalMinutes:30}}
+  function series(ids,date){const histories=ids.map(read);return {date,orders:combine(histories,'orders',date),finance:combine(histories,'finance',date),storeCount:ids.length,intervalMinutes:30,ordersIntervalMinutes:ORDERS_INTERVAL/60000,financeIntervalMinutes:30}}
   return {capture,series};
 }
 module.exports={create,point,combine,day};

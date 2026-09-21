@@ -4,6 +4,12 @@
   return (report.daily||[]).map(p=>({time:Date.parse(p.date+'T12:00:00Z'),label:p.date,value:Number.isFinite(p[key])?p[key]:null}));
  }
  function totals(report,key){const value=report.metrics?.[key]?.current;return Number.isFinite(value)?value:null}
+ function categoryDailyLine(items,key,from,to,expectedDays){
+  const dates=[];for(let at=Date.parse(from+'T12:00:00Z'),last=Date.parse(to+'T12:00:00Z');at<=last;at+=86400000)dates.push(new Date(at).toISOString().slice(0,10));
+  const points=dates.map(date=>{const matches=items.map(item=>(item.points||[]).find(point=>point.date===date)).filter(Boolean),values=matches.map(point=>point[key]).filter(Number.isFinite);return {time:Date.parse(date+'T12:00:00Z'),label:date,value:values.length?values.reduce((sum,value)=>sum+value,0):null,partial:matches.some(point=>point.complete!==true)}});
+  const knownValues=points.filter(point=>Number.isFinite(point.value)).map(point=>point.value),known=knownValues.length?knownValues.reduce((sum,value)=>sum+value,0):null,complete=points.length===expectedDays&&points.every(point=>Number.isFinite(point.value)&&!point.partial);
+  return {points,total:complete?known:null,known,complete};
+ }
  function segments(values){const out=[];let current=[];for(const p of values){if(p.value===null){if(current.length)out.push(current);current=[]}else current.push(p)}if(current.length)out.push(current);return out}
  function domain(series){const values=series.flatMap(s=>s.points.filter(p=>p.value!==null).map(p=>p.value));return {min:Math.min(0,...values),max:Math.max(1,...values)}}
  function observation(values,index){
@@ -48,5 +54,5 @@
   projected.push({time:end,label:'24:00 МСК',value:endValue,forecast:true});
   return {status:'available',reason:null,points:projected,average,endValue,basis,method:'same-weekday-three-weeks'};
  }
- const model={points,totals,segments,domain,observation,shiftDate,alignedPoints,comparison,orderForecast};if(typeof module!=='undefined'&&module.exports)module.exports=model;else root.PultStoreChart=model;
+ const model={points,totals,categoryDailyLine,segments,domain,observation,shiftDate,alignedPoints,comparison,orderForecast};if(typeof module!=='undefined'&&module.exports)module.exports=model;else root.PultStoreChart=model;
 })(typeof window==='undefined'?{}:window);

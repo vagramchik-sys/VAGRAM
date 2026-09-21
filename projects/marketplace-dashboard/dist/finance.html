@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Пульт — финансы</title>
+<link rel="icon" type="image/svg+xml" href="/favicons/finance.svg">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/dark.css">
+<link rel="stylesheet" href="/premium.css">
+<link rel="stylesheet" href="/finance.css">
+<link rel="stylesheet" href="/updates.css">
+<link rel="stylesheet" href="/navigation.css">
+<link rel="stylesheet" href="/overview-light.css">
+<link rel="stylesheet" href="/seller-shell.css">
+<link rel="stylesheet" href="/seller-workspace.css"><link rel="stylesheet" href="/seller-analytics.css"></head>
+<body class="finance-page">
+<aside class="sidebar">
+<a class="brand" href="/#overview"><span class="brand-icon">▥</span> пульт<span>.</span></a>
+<div class="workspace"><span class="workspace-icon">М</span><div>Моя компания<small>Кабинет руководителя</small></div></div>
+<div class="nav-label">РАБОЧЕЕ ПРОСТРАНСТВО</div>
+<nav>
+<a href="/#overview" data-nav="overview">◫ <span>Обзор бизнеса</span></a>
+<a href="/#focus-priorities" data-nav="focus-priorities">◎ <span>Приоритеты</span></a>
+<a href="/#ins-products-panel" data-nav="ins-products-panel">◩ <span>Аналитика товаров</span></a>
+<a href="/#products" data-nav="products">▦ <span>Товары и себестоимость</span></a>
+<a href="/manage.html">⇅ <span>Управление товарами</span></a>
+<a href="/#wb-economics" data-nav="wb-economics">◈ <span>Wildberries: прибыль</span></a>
+<a href="/#sales-decline" data-nav="sales-decline">↘ <span>Падение продаж</span></a>
+<a href="/#economics" data-nav="economics">◈ <span>Прибыль и экономика</span></a>
+<a class="active" aria-current="page" href="/finance.html">₽ <span>Финансы</span></a>
+<a href="/#stores" data-nav="stores">⇄ <span>Магазины</span></a>
+<a href="/ideas.html">✧ <span>Реестр идей</span></a>
+<a href="/procurement.html">▤ <span>Закупки B2B</span></a>
+<a href="/suppliers.html">◇ <span>Поставщики</span></a>
+<a href="/connections.html">⚙ <span>Подключения</span></a>
+</nav>
+</aside>
+<main>
+<header class="topbar">
+<a href="/">← Рабочий обзор</a>
+<span class="source-pill">Реальные данные · локально</span>
+</header>
+<section class="hero">
+<div>
+<span class="eyebrow">ФИНАНСЫ КОМПАНИИ</span>
+<h1>Деньги без смешения понятий</h1>
+<p>Начисления площадки, движение по банку, прибыль и займы показаны отдельно.</p>
+</div>
+<form id="period">
+<label>С<input id="from" type="date" required>
+</label>
+<label>По<input id="to" type="date" required>
+</label>
+<button>Показать</button>
+</form>
+</section>
+<div id="message" role="status">
+</div>
+<section class="metrics" id="metrics">
+</section>
+<section class="panel">
+<div class="panel-head">
+<div>
+<h2>Динамика начислений Ozon</h2>
+<p id="coverage">Проверяем период и источники</p>
+</div>
+<div class="legend">
+<span class="positive">Положительный итог дня</span>
+<span class="negative">Отрицательный итог дня</span>
+</div>
+</div>
+<div class="chart" id="chart">
+</div>
+<p class="note">Это начисления Ozon после удержаний и корректировок. Они не подтверждают поступление денег в банк и не равны прибыли.</p>
+<div id="sources" class="sources">
+</div>
+</section>
+<section class="panel debt">
+<div class="panel-head">
+<div>
+<h2>Кредиты и займы компании</h2>
+<p id="debt-source">
+</p>
+</div>
+<div class="row-actions">
+<button id="upload-contract" class="secondary">↑ Загрузить файл</button>
+<input id="contract-file" type="file" accept=".pdf,.docx,.jpg,.jpeg,.png,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png" hidden>
+<button id="show-loan" class="secondary">+ Ввести вручную</button>
+</div>
+</div>
+<div id="debt-metrics" class="metrics compact">
+</div>
+<section class="contract-import">
+<h3>Черновики из файлов</h3>
+<p class="note">PDF и DOCX разбираются локально. JPG, PNG и сканированные PDF требуют локального OCR. Распознанные поля не попадают в реестр без вашей проверки.</p>
+<div id="contract-drafts" class="draft-list">
+</div>
+</section>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Кредитор / договор</th>
+<th>Дата</th>
+<th class="num">Сумма договора</th>
+<th class="num">Основной долг</th>
+<th class="num">Ставка</th>
+<th>Подтверждение</th>
+<th>
+</th>
+</tr>
+</thead>
+<tbody id="loans">
+</tbody>
+</table>
+</div>
+<h3>Платежи за выбранный период</h3>
+<div class="table-wrap">
+<table>
+<thead>
+<tr>
+<th>Дата</th>
+<th>Договор</th>
+<th class="num">Тело</th>
+<th class="num">Проценты</th>
+<th class="num">Комиссии</th>
+<th>Подтверждение</th>
+</tr>
+</thead>
+<tbody id="payments">
+</tbody>
+</table>
+</div>
+<p class="note">Погашение тела займа показано как финансовый денежный поток. В расходы попадают только проценты и комиссии. Остаток долга вводится по документу и не пересчитывается автоматически.</p>
+</section>
+</main>
+<dialog id="loan-dialog">
+<form id="loan-form" method="dialog">
+<div class="dialog-head">
+<h2>Договор кредита или займа</h2>
+<button type="button" class="icon" data-close>×</button>
+</div>
+<div id="draft-review" class="draft-review" hidden>
+</div>
+<div class="form-grid">
+<label>Кредитор<input name="lender" required maxlength="160">
+</label>
+<label>Номер договора<input name="agreementNumber" required maxlength="160">
+</label>
+<label>Дата договора<input name="signedDate" type="date" required>
+</label>
+<label>Сумма договора, ₽<input name="originalPrincipal" type="number" min="0.01" step="0.01" required>
+</label>
+<label>Остаток основного долга, ₽<input name="outstandingPrincipal" type="number" min="0" step="0.01" placeholder="Неизвестно">
+</label>
+<label>Ставка, % годовых<input name="annualRatePercent" type="number" min="0" step="0.01" placeholder="Неизвестно">
+</label>
+<label>Следующий платёж<input name="nextPaymentDate" type="date">
+</label>
+<label>Состояние<select name="status">
+<option value="active">Действует</option>
+<option value="closed">Закрыт</option>
+</select>
+</label>
+<label class="wide">Источник подтверждения<input name="sourceNote" required maxlength="300" placeholder="Договор, справка банка, дата документа">
+</label>
+</div>
+<div class="actions">
+<button type="button" class="secondary" data-close>Отмена</button>
+<button id="loan-save" value="save">Сохранить</button>
+</div>
+</form>
+</dialog>
+<dialog id="payment-dialog">
+<form id="payment-form" method="dialog">
+<div class="dialog-head">
+<h2>Подтверждённый платёж</h2>
+<button type="button" class="icon" data-close>×</button>
+</div>
+<input name="loanId" type="hidden">
+<div class="form-grid">
+<label>Дата платежа<input name="date" type="date" required>
+</label>
+<label>Погашение тела, ₽<input name="principal" type="number" min="0" step="0.01" value="0" required>
+</label>
+<label>Проценты, ₽<input name="interest" type="number" min="0" step="0.01" value="0" required>
+</label>
+<label>Комиссии, ₽<input name="fee" type="number" min="0" step="0.01" value="0" required>
+</label>
+<label class="wide">Источник подтверждения<input name="sourceNote" required maxlength="300" placeholder="Банковская выписка, платёжное поручение">
+</label>
+</div>
+<div class="actions">
+<button type="button" class="secondary" data-close>Отмена</button>
+<button value="save">Сохранить</button>
+</div>
+</form>
+</dialog>
+<script src="/finance.js">
+</script>
+<script src="/updates-model.js">
+</script>
+<script src="/updates.js">
+</script>
+<script src="/navigation.js">
+</script>
+<script src="/seller-page-shell.js">
+</script>
+<script src="/seller-workspace.js"></script></body>
+</html>

@@ -80,6 +80,7 @@
     dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
     document.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); openSearch(); } });
   }
+  sidebar.querySelector('.pult-shell-search')?.setAttribute('aria-label', 'Поиск по Пульту');
   if (actions && !actions.querySelector('.seller-company')) {
     const company = document.createElement('a');
     company.className = 'seller-company'; company.href = '/?view=stores';

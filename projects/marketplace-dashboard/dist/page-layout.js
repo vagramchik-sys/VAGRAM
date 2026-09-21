@@ -15,6 +15,8 @@
  const collectRoute=route=>{const nodes=[];for(const id of IDS[route]||[]){let node=id==='attention'?document.getElementById('attention')?.closest('.attention'):document.getElementById(id);node=shell(node);if(node&&!nodes.includes(node))nodes.push(node)}return nodes};
  const routeNodes=new Map(Object.keys(IDS).map(route=>[route,collectRoute(route)]));
  const managed=new Set([...routeNodes.values()].flat());
+ function registerBusinessChart(){const node=shell(document.getElementById('business-chart'));if(node)managed.add(node)}
+ registerBusinessChart();
  if(executive)for(const child of [...executive.children])managed.add(child);
  for(const node of [document.getElementById('metrics'),overview.querySelector('.overview-grid'),overview.querySelector('.catalog-visibility')])if(node)managed.add(node);
  for(const node of main.querySelectorAll(':scope > section:not(#overview)'))managed.add(node);
@@ -35,7 +37,7 @@
  function registerLateNodes(){for(const route of Object.keys(IDS)){const nodes=collectRoute(route);routeNodes.set(route,nodes);for(const node of nodes)managed.add(node)}if(executive)for(const child of [...executive.children])managed.add(child);for(const node of main.querySelectorAll(':scope > section:not(#overview)'))managed.add(node);for(const node of managed)node.classList.add('pult-route-managed')}
  function overviewSelection(section){if(!section)return routeNodes.get('overview')||[];if(section==='business-chart'){const nodes=['ins-period-shortcuts','ins-range','ins-today-note','ins-state','ins-metrics','business-chart'].map(id=>id==='ins-range'?document.getElementById(id)?.closest('.ins-period'):document.getElementById(id)).map(shell).filter(Boolean);return [...new Set(nodes)]}if(section==='executive')return [...executive?.children||[]].filter(node=>!node.matches('#ins-products-panel,#focus-priorities,.ins-expense-details')&&!node.querySelector?.('#ins-products-panel,#focus-priorities,.ins-expense-details'));const node=shell(document.getElementById(section));return node?[node]:[]}
  function render(view,{focus=false,section=''}={}){
-  view=ROUTES.has(view)?view:'overview';document.body.dataset.pultView=view;registerLateNodes();
+  view=ROUTES.has(view)?view:'overview';document.body.dataset.pultView=view;registerBusinessChart();registerLateNodes();
   viewTabs.hidden=!['overview','attention','funnel'].includes(view);
   for(const node of managed){node.classList.remove('pult-view-visible');node.classList.add('pult-view-hidden')}
   const selected=view==='overview'?overviewSelection(section):(routeNodes.get(view)||[]);for(const node of selected){node.classList.remove('pult-view-hidden');node.classList.add('pult-view-visible');if(node.parentElement!==stage)stage.append(node)}

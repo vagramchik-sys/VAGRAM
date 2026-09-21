@@ -2,3 +2,5 @@ work/
 outputs/
 .sites-runtime/
 .private/
+__pycache__/
+*.pyc

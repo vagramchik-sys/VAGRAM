@@ -47,22 +47,23 @@ module.exports=function({stores,protect,api,privateDir,now=Date.now,sleep=pause,
         out.types=result.accrual_types;out.sections.types={ok:true,updatedAt:iso()};await save();
       }catch(e){out.sections.types={ok:false,error:e.message,lastSuccessAt:previous?.sections?.types?.updatedAt||previous?.sections?.types?.lastSuccessAt}}
       job.stage=full?'Заказы по дням за 60 дней':'Заказы за сегодня';
-      const values=[],seen=new Set();
+      const values=[],skuValues=[],seen=new Set(),detail=!full;
       for(let offset=0;offset<10000;offset+=1000){
         const wait=gate(out)-now();if(wait>0)await sleep(wait);
         out.analyticsAttemptAt=iso();await save();
-        const r=await api(store,key,'/v1/analytics/data',{date_from:from,date_to:to,metrics:['revenue','ordered_units'],dimension:['day'],filters:[],sort:[{key:'revenue',order:'DESC'}],limit:1000,offset});
+        const r=await api(store,key,'/v1/analytics/data',{date_from:from,date_to:to,metrics:['revenue','ordered_units'],dimension:detail?['sku','day']:['day'],filters:[],sort:[{key:'revenue',order:'DESC'}],limit:1000,offset});
         if(!Array.isArray(r.result?.data))throw Error('Ozon: неизвестный формат аналитики заказов');
         for(const row of r.result.data){
-          const date=row.dimensions?.[0]?.id;
-          if(!/^\d{4}-\d{2}-\d{2}$/.test(date)||date<from||date>to||shift(date,0)!==date||seen.has(date)||!Array.isArray(row.metrics)||row.metrics.length!==2||!row.metrics.every(Number.isFinite))throw Error('Ozon: проверьте структуру ежедневной аналитики');
-          seen.add(date);values.push({date,revenue:row.metrics[0],units:row.metrics[1]});
+          const dimensions=Array.isArray(row.dimensions)?row.dimensions:[],date=dimensions.map(v=>String(v?.id??'')).find(v=>/^\d{4}-\d{2}-\d{2}$/.test(v)),sku=detail?dimensions.map(v=>String(v?.id??'')).find(v=>v!==date&&/^\d+$/.test(v)):null,key=detail?date+':'+sku:date;
+          if(!date||(detail&&!sku)||date<from||date>to||shift(date,0)!==date||seen.has(key)||!Array.isArray(row.metrics)||row.metrics.length!==2||!row.metrics.every(Number.isFinite)||!Number.isSafeInteger(row.metrics[1])||row.metrics[1]<0)throw Error('Ozon: проверьте структуру аналитики заказов'+(detail?' по SKU':''));
+          seen.add(key);(detail?skuValues:values).push(detail?{date,sku,revenue:row.metrics[0],units:row.metrics[1]}:{date,revenue:row.metrics[0],units:row.metrics[1]});
         }
         if(r.result.data.length<1000)break;
         if(offset===9000)throw Error('Ozon: аналитика загружена не полностью');
       }
-      const updatedAt=iso(),daily=full?values:[...previous.orders.daily.filter(row=>row.date!==to),...values];
-      out.orders={period:{from:full?from:previous.orders.period.from,to},daily:daily.sort((a,b)=>a.date.localeCompare(b.date)),updatedAt,historyUpdatedAt:full?updatedAt:previous.orders.historyUpdatedAt||previous.orders.updatedAt,todayUpdatedAt:updatedAt,todayDate:to,source:'/v1/analytics/data · revenue, ordered_units'};
+      if(detail){const aggregate=new Map();for(const row of skuValues){const value=aggregate.get(row.date)||{date:row.date,revenue:0,units:0};value.revenue=Math.round((value.revenue+row.revenue)*100)/100;value.units+=row.units;aggregate.set(row.date,value)}values.push(...aggregate.values())}
+      const updatedAt=iso(),daily=full?values:[...(previous?.orders?.daily||[]).filter(row=>row.date!==to),...values],skuDaily=detail?[...(previous?.orders?.skuDaily||[]).filter(row=>row.date!==to),...skuValues]:(previous?.orders?.todayDate===to?previous?.orders?.skuDaily||[]:[]),skuDailyCoverage=detail||previous?.orders?.todayDate===to&&previous?.orders?.skuDailyCoverage===true;
+      out.orders={period:{from:full?from:previous?.orders?.period?.from||from,to},daily:daily.sort((a,b)=>a.date.localeCompare(b.date)),skuDaily:skuDaily.sort((a,b)=>a.date.localeCompare(b.date)||String(a.sku).localeCompare(String(b.sku))),skuDailyCoverage,skuUpdatedAt:detail?updatedAt:previous?.orders?.skuUpdatedAt||null,updatedAt,historyUpdatedAt:full?updatedAt:previous?.orders?.historyUpdatedAt||previous?.orders?.updatedAt,todayUpdatedAt:updatedAt,todayDate:to,source:'/v1/analytics/data · revenue, ordered_units'+(skuDailyCoverage?' · today by sku':'')};
       out.sections.orders={ok:true,updatedAt};delete out.analyticsRetryAt;
       out.errors=errors();if(full)out.completedAt=updatedAt;
       await save();job.status=out.errors.length?'partial':'done';job.stage=out.errors.length?'Не все разделы обновлены':full?'Аналитика обновлена':'Заказы за сегодня обновлены';job.errors=out.errors;
@@ -81,7 +82,7 @@ module.exports=function({stores,protect,api,privateDir,now=Date.now,sleep=pause,
     // Supplemental analytics never take a slot already due for either orders job.
     if(refresh.due(state(id,'full',snapshot),now())||refresh.due(state(id,'orders',snapshot),now(),refresh.ORDERS_INTERVAL)||!funnel.due(id))return;
     // Reserve the next slot when orders are due within one API spacing interval.
-    // Otherwise a supplemental request at 04:59 would defer the 05:00 refresh.
+    // Otherwise a supplemental request immediately before the ten-minute refresh would defer orders.
     if(Date.parse(refresh.nextAt(state(id,'orders',snapshot),now(),refresh.ORDERS_INTERVAL))<now()+ANALYTICS_GAP)return;
     const job={status:'running',mode:'funnel',stage:'Воронка Ozon по SKU',startedAt:iso()};jobs.set(id,job);
     const out={...snapshot};let key;

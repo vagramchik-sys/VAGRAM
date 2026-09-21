@@ -1,5 +1,5 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),os=require('node:os'),path=require('node:path');
-const {point,combine,create,day}=require('../intraday.cjs'),{due,nextAt,INTERVAL}=require('../refresh-policy.cjs');
+const {point,combine,create,day}=require('../intraday.cjs'),{due,nextAt,INTERVAL,ORDERS_INTERVAL}=require('../refresh-policy.cjs');
 const date='2026-09-16',at=h=>`${date}T${h}:00:00.000Z`;
 const sample=(h,revenue,units=1)=>({date,source:'orders',at:at(h),values:{orderedRevenue:revenue*100,orderedUnits:units}});
 test('30 minute refresh uses attempt start, survives restart, skips overlap and retries failed attempts on schedule',()=>{
@@ -28,19 +28,31 @@ test('a stale store does not cause a fabricated combined point; later matching s
  const a=[sample('10',100),sample('12',200)],b=[sample('11',300),sample('12',400)];
  const r=combine([a,b],'orders',date);assert.equal(r.length,1);assert.equal(r[0].orderedRevenue,600);assert.equal(r[0].at,at('12'));
 });
-test('orders combine only observations within five minutes while finance keeps thirty minutes',()=>{
- const a=sample('10',100),b={...sample('10',200),at:'2026-09-16T10:05:00Z'};
+test('orders combine only observations within the shared ten-minute interval while finance keeps thirty minutes',()=>{
+ assert.equal(ORDERS_INTERVAL,10*60*1000);
+ const a=sample('10',100),b={...sample('10',200),at:'2026-09-16T10:10:00Z'};
  assert.equal(combine([[a],[b]],'orders',date)[0].orderedRevenue,300);
- b.at='2026-09-16T10:05:01Z';assert.equal(combine([[a],[b]],'orders',date).length,0);
+ b.at='2026-09-16T10:10:01Z';assert.equal(combine([[a],[b]],'orders',date).length,0);
  a.source=b.source='finance';assert.equal(combine([[a],[b]],'finance',date).length,1);
 });
 test('history is durable, repeated reads do not add points, and unchanged imported values produce a flat next point',()=>{
  const parent=fs.realpathSync(os.tmpdir()),dir=fs.mkdtempSync(path.join(parent,'pult-intraday-test-'));
  try{const h=create({privateDir:dir}),orders={period:{from:date,to:date},updatedAt:at('10'),daily:[{date,revenue:10,units:2}]};
- h.capture('1',{orders});h.capture('1',{orders});assert.equal(h.series(['1'],date).orders.length,1);
+ h.capture('1',{orders});h.capture('1',{orders});assert.equal(h.series(['1'],date).orders.length,1);assert.equal(h.series(['1'],date).ordersIntervalMinutes,10);assert.equal(h.series(['1'],date).financeIntervalMinutes,30);
  orders.updatedAt=at('11');h.capture('1',{orders});const restored=create({privateDir:dir}).series(['1'],date).orders;
  assert.deepEqual(restored.map(p=>p.orderedRevenue),[10,10]);assert.equal(restored.length,2);
  }finally{const target=path.resolve(dir);assert.equal(path.dirname(target),parent);assert.ok(path.basename(target).startsWith('pult-intraday-test-'));fs.rmSync(target,{recursive:true,force:true})}
+});
+
+test('intraday history keeps observations older than a year while sorting and deduplicating them',()=>{
+ const dir=fs.mkdtempSync(path.join(os.tmpdir(),'pult-intraday-retention-'));
+ try{const h=create({privateDir:dir}),oldDate='2025-01-01',recentDate=date;
+  const old={period:{from:oldDate,to:oldDate},updatedAt:'2025-01-01T10:00:00.000Z',daily:[{date:oldDate,revenue:5,units:1}]};
+  const recent={period:{from:recentDate,to:recentDate},updatedAt:at('10'),daily:[{date:recentDate,revenue:10,units:2}]};
+  h.capture('1',{orders:recent});h.capture('1',{orders:old});h.capture('1',{orders:old});
+  const saved=JSON.parse(fs.readFileSync(path.join(dir,'intraday-1.json'),'utf8')).points;
+  assert.equal(saved.length,2);assert.deepEqual(saved.map(item=>item.at),['2025-01-01T10:00:00.000Z',at('10')]);
+ }finally{assert.equal(path.dirname(path.resolve(dir)),path.resolve(os.tmpdir()));assert.ok(path.basename(dir).startsWith('pult-intraday-retention-'));fs.rmSync(dir,{recursive:true,force:true})}
 });
 
 test('intraday economics uses combined bases and leaves legacy or incomplete snapshots unavailable',()=>{
