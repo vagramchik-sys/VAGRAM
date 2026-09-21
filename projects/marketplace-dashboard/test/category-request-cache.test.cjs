@@ -1,0 +1,57 @@
+const test=require('node:test');
+const assert=require('node:assert/strict');
+const fs=require('node:fs');
+const vm=require('node:vm');
+const source=fs.readFileSync(require.resolve('../dist/turnover-chart.js'),'utf8');
+const flush=()=>new Promise(resolve=>setImmediate(()=>setImmediate(resolve)));
+function runtime(load){
+ const nodes=new Map();
+ const node=id=>{if(!nodes.has(id))nodes.set(id,{id,value:id==='ins-chart-metric'?'orderedRevenue':'',checked:false,hidden:false,innerHTML:'',textContent:'',insertAdjacentHTML(){},setAttribute(){},removeAttribute(){},closest(){return this}});return nodes.get(id)};
+ let calls=0;
+ class Clock extends Date {constructor(...args){super(...(args.length?args:['2026-09-20T12:00:00Z']))}static now(){return Date.parse('2026-09-20T12:00:00Z')}}
+ const context={document:{getElementById:node},window:{},Intl,Date:Clock,URLSearchParams,Promise,Map,Set,console};
+ vm.runInNewContext(source,context);
+ const chart=context.window.createPultStoreChart({api:url=>url==='/api/stores'?Promise.resolve([]):(calls++,load(url)),metricTitle:()=> 'Сумма'});
+ node('chart-mode-categories').onclick();
+ return {chart,node,calls:()=>calls,update:date=>chart.update({days:1,current:{from:date,to:date}})};
+}
+const empty={categories:['Перчатки','Крепёж'],types:[{id:'Перчатки',parentId:null,name:'Перчатки'},{id:'Крепёж',parentId:null,name:'Крепёж'}],series:[],byStore:[],coverage:{complete:true},period:{days:1},limitations:[]};
+test('checkboxes and metric changes reuse the loaded report; data refresh invalidates it',async()=>{
+ const app=runtime(()=>Promise.resolve(empty));
+ app.update('2026-09-19');await flush();assert.equal(app.calls(),1);
+ app.node('chart-category-options').onchange({target:{type:'checkbox',value:'Перчатки',checked:true}});await flush();
+ app.node('ins-chart-metric').value='orderedUnits';await app.chart.render();
+ app.node('chart-category-options').onchange({target:{type:'checkbox',value:'Крепёж',checked:true}});await flush();
+ assert.equal(app.calls(),1);
+ app.update('2026-09-19');await flush();assert.equal(app.calls(),2);
+ assert.match(app.node('chart-category-options').innerHTML,/value="Перчатки" checked/);
+ app.update('2026-09-18');await flush();assert.equal(app.calls(),3);
+});
+test('concurrent renders share a request and a failed request can be retried',async()=>{
+ let resolve,reject;
+ const app=runtime(()=>new Promise((yes,no)=>{resolve=yes;reject=no}));
+ app.update('2026-09-19');await flush();
+ const second=app.chart.render(),third=app.chart.render();await flush();assert.equal(app.calls(),1);
+ reject(Error('offline'));await Promise.all([second,third]);
+ assert.match(app.node('chart-store-status').textContent,/Не удалось/);
+ const retry=app.chart.render();await flush();assert.equal(app.calls(),2);
+ resolve(empty);await retry;
+ assert.match(app.node('chart-store-status').textContent,/Выберите категорию или магазин/);
+});
+test('old responses cannot replace a refreshed report',async()=>{
+ const pending=[];
+ const app=runtime(()=>new Promise(resolve=>pending.push(resolve)));
+ app.update('2026-09-19');await flush();
+ app.update('2026-09-19');await flush();
+ pending[1]({categories:['Новая категория'],series:[],limitations:[]});await flush();
+ pending[0]({categories:['Старая категория'],series:[],limitations:[]});await flush();
+ assert.match(app.node('chart-category-options').innerHTML,/Новая категория/);
+ assert.doesNotMatch(app.node('chart-category-options').innerHTML,/Старая категория/);
+});
+test('choosing a child replaces its selected parent and search keeps the matching branch',async()=>{
+ const hierarchy={categories:['Сетки','Сетка от грызунов','Сетка штукатурная'],types:[{id:'mesh',parentId:null,name:'Сетки'},{id:'rodent',parentId:'mesh',name:'Сетка от грызунов'},{id:'plaster',parentId:'mesh',name:'Сетка штукатурная'}],series:[],limitations:[]};
+ const app=runtime(()=>Promise.resolve(hierarchy));app.update('2026-09-19');await flush();
+ app.node('chart-category-options').onchange({target:{type:'checkbox',value:'mesh',checked:true}});await flush();assert.match(app.node('chart-category-options').innerHTML,/value="mesh" checked/);
+ app.node('chart-category-options').onchange({target:{type:'checkbox',value:'rodent',checked:true}});await flush();assert.doesNotMatch(app.node('chart-category-options').innerHTML,/value="mesh" checked/);assert.match(app.node('chart-category-options').innerHTML,/value="rodent" checked/);
+ app.node('chart-category-search').value='грызунов';app.node('chart-category-search').oninput();assert.match(app.node('chart-category-options').innerHTML,/Сетки/);assert.match(app.node('chart-category-options').innerHTML,/Сетка от грызунов/);assert.doesNotMatch(app.node('chart-category-options').innerHTML,/Сетка штукатурная/);
+});
