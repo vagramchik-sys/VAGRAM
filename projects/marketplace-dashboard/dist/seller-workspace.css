@@ -111,3 +111,6 @@ body.pult-seller-workspace .pult-updates-launch { top: auto !important; right: 2
   body.pult-seller-workspace .page-heading h1 { font-size: 29px; }
   body.pult-seller-workspace .topbar { font-size: 12px; }
 }
+
+.seller-navigation > .seller-home-link { display: flex; align-items: center; align-self: stretch; margin: 0; padding: 0; height: auto; border-bottom: 2px solid transparent; font-size: 15px; line-height: 24px; font-weight: 400; white-space: nowrap; }
+.seller-navigation > .seller-home-link.is-active { border-bottom-color: var(--seller-blue,#216bff); color: #070707; }

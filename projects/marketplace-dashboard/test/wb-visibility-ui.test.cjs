@@ -7,11 +7,12 @@ const ui = fs.readFileSync(require.resolve('../dist/insights-ui.js'), 'utf8');
 const wbUi = fs.readFileSync(require.resolve('../dist/wb-economics-ui.js'), 'utf8');
 const index = fs.readFileSync(require.resolve('../dist/index.html'), 'utf8');
 
-function runtime() {
+function runtime({ href = 'http://127.0.0.1:4317/' } = {}) {
   const nodes = new Map();
   const classes = new Map();
   const wbReports = [];
   const fetches = [];
+  const homeUpdates = [];
 
   class FakeElement {
     constructor(id = '') {
@@ -79,9 +80,9 @@ function runtime() {
   const inertView = () => ({ render() {} });
   const context = vm.createContext({
     document,
-    window: {},
+    window: { addEventListener() {}, PultSellerHome: { update(value) { homeUpdates.push(value); } } },
     localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
-    location: { hash: '' },
+    location: { hash: new URL(href).hash, href },
     Event: class Event { constructor(type) { this.type = type; } },
     URL,
     URLSearchParams,
@@ -102,7 +103,7 @@ function runtime() {
   });
 
   vm.runInContext(ui, context, { filename: 'insights-ui.js' });
-  return { nodes, wbReports, fetches };
+  return { nodes, wbReports, fetches, homeUpdates };
 }
 
 test('UI loads on WB and can switch to Ozon without a removed placeholder crash', () => {
@@ -116,6 +117,7 @@ test('UI loads on WB and can switch to Ozon without a removed placeholder crash'
   assert.match(app.fetches[0], /from=\d{4}-\d{2}-\d{2}/);
   assert.match(app.fetches[0], /to=\d{4}-\d{2}-\d{2}/);
   assert.equal(app.fetches.some(url => url.startsWith('/api/insights?')), false);
+  assert.equal(app.homeUpdates.at(-1).state, 'unsupported');
 
   const market = app.nodes.get('market');
   market.value = 'Ozon';
@@ -123,6 +125,17 @@ test('UI loads on WB and can switch to Ozon without a removed placeholder crash'
   assert.equal(app.nodes.get('executive').hidden, false);
   assert.equal(app.fetches.length, 2);
   assert.match(app.fetches[1], /^\/api\/insights\?/);
+  assert.equal(app.homeUpdates.at(-1).state, 'loading');
+  assert.equal(app.homeUpdates.at(-1).market, 'Ozon');
+});
+
+test('homepage starts with completed days while existing deep links retain their default period', () => {
+  const home = runtime();
+  assert.equal(home.nodes.get('ins-range').value, '28');
+  const dates = home.wbReports[0].current;
+  assert.equal((Date.parse(dates.to) - Date.parse(dates.from)) / 86400000, 27);
+  const analytics = runtime({ href: 'http://127.0.0.1:4317/?view=overview&section=business-chart' });
+  assert.equal(analytics.nodes.get('ins-range').value, 'today');
 });
 
 test('WB keeps its canonical selector value and dedicated report labels', () => {

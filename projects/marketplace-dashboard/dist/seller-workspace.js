@@ -50,8 +50,8 @@
   originalNav?.classList.add('seller-original-nav');
   const brand = sidebar.querySelector('.brand');
   if (brand) {
-    brand.href = '/?view=overview&section=business-chart';
-    brand.setAttribute('aria-label', 'Пульт — обзор бизнеса');
+    brand.href = '/';
+    brand.setAttribute('aria-label', 'Пульт — главная');
     brand.innerHTML = '<span class="seller-wordmark">ПУЛЬТ</span><span class="seller-brand-caption">Seller</span>';
   }
   const controls = sidebar.querySelector('.pult-nav-mode');
@@ -98,6 +98,9 @@
   navigation.className = 'seller-navigation';
   navigation.setAttribute('role', 'navigation');
   navigation.setAttribute('aria-label', 'Основные разделы Пульта');
+  const homeLink = document.createElement('a');
+  homeLink.className = 'seller-nav-link seller-home-link'; homeLink.href = '/'; homeLink.textContent = 'Главная';
+  navigation.append(homeLink);
   let opened = null;
   let closeTimer = 0;
   function cancelClose() { window.clearTimeout(closeTimer); }
@@ -172,14 +175,17 @@
     const hashViews = { overview: 'overview', 'business-chart': 'overview', 'management-summary': 'overview', executive: 'overview', 'focus-priorities': 'priorities', 'ins-products-panel': 'analytics', products: 'products', finance: 'finance', economics: 'economics', 'wb-economics': 'wb-economics', 'sales-decline': 'sales-decline', stores: 'stores', 'conversion-panel': 'funnel', attention: 'attention' };
     const currentView = hashViews[url.hash.slice(1)] || view;
     const section = url.searchParams.get('section') || (['business-chart', 'executive', 'management-summary'].includes(url.hash.slice(1)) ? url.hash.slice(1) : '');
+    const homeActive = (url.pathname === '/' || url.pathname === '/index.html') && currentView === 'overview' && !section;
+    homeLink.classList.toggle('is-active', homeActive);
+    if (homeActive) homeLink.setAttribute('aria-current', 'page'); else homeLink.removeAttribute('aria-current');
     for (const item of items) {
       let active = false;
       for (const child of item.panel.querySelectorAll('a')) {
         const target = new URL(child.href);
         const sameView = (url.pathname === '/' || url.pathname === '/index.html') && target.pathname === '/' && (target.searchParams.get('view') || 'overview') === currentView;
-        const exact = sameView ? (target.searchParams.get('section') || '') === (section || (currentView === 'overview' ? 'management-summary' : '')) : target.pathname !== '/' && target.pathname === url.pathname;
+        const exact = sameView ? (target.searchParams.get('section') || '') === section : target.pathname !== '/' && target.pathname === url.pathname;
         if (exact) child.setAttribute('aria-current', 'page'); else child.removeAttribute('aria-current');
-        active ||= sameView || exact;
+        active ||= !homeActive && (sameView || exact);
       }
       if (url.pathname === '/partner.html' && item.id === 'more') active = true;
       item.node.classList.toggle('is-active', active);

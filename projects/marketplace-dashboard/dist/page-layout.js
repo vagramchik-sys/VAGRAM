@@ -5,7 +5,7 @@
  const NAV_ROUTE={overview:'overview','focus-priorities':'priorities','ins-products-panel':'analytics',products:'products',finance:'finance',stores:'stores','sales-decline':'sales-decline',economics:'economics','wb-economics':'wb-economics'};
  const OVERVIEW_SECTION=new Set(['management-summary','executive','business-chart']);
  const TITLES={overview:['ОБЗОР БИЗНЕСА','Обзор бизнеса'],priorities:['ТОЧКИ КОНТРОЛЯ','Приоритеты'],analytics:['ТОВАРНАЯ АНАЛИТИКА','Аналитика товаров'],products:['КАТАЛОГ','Товары и себестоимость'],finance:['ФИНАНСЫ','Финансы по магазинам'],stores:['КАБИНЕТЫ','Подключённые магазины'],'sales-decline':['ДИНАМИКА ТОВАРОВ','Падение продаж'],economics:['ЭКОНОМИКА','Прибыль и экономика'],'wb-economics':['WILDBERRIES','Продажи и прибыль WB'],attention:['ОБЗОР БИЗНЕСА','Требует внимания'],funnel:['ОБЗОР БИЗНЕСА','Воронка по товарам']};
- const IDS={overview:['focus-brief','management-summary'],priorities:['focus-priorities'],analytics:['ins-products-panel'],products:['products'],finance:['finance'],stores:['stores'],'sales-decline':['sales-decline'],economics:['economics'],'wb-economics':['wb-economics'],attention:['attention'],funnel:['conversion-panel']};
+ const IDS={overview:['seller-home'],priorities:['focus-priorities'],analytics:['ins-products-panel'],products:['products'],finance:['finance'],stores:['stores'],'sales-decline':['sales-decline'],economics:['economics'],'wb-economics':['wb-economics'],attention:['attention'],funnel:['conversion-panel']};
  const main=document.querySelector('main'),overview=document.getElementById('overview'),executive=document.getElementById('executive');if(!main||!overview)return null;
 
  // Keep the existing controls and their handlers in one Seller-style toolbar.
@@ -34,7 +34,7 @@
  function registerBusinessChart(){const node=shell(document.getElementById('business-chart'));if(node)managed.add(node)}
  registerBusinessChart();
  if(executive)for(const child of [...executive.children]){managed.add(child);executiveNodes.add(child)}
- for(const node of [document.getElementById('metrics'),overview.querySelector('.overview-grid'),overview.querySelector('.catalog-visibility')])if(node)managed.add(node);
+ for(const node of [document.getElementById('management-summary'),document.getElementById('metrics'),overview.querySelector('.overview-grid'),overview.querySelector('.catalog-visibility')])if(node)managed.add(node);
  for(const node of main.querySelectorAll(':scope > section:not(#overview)'))managed.add(node);
  for(const node of managed)node.classList.add('pult-route-managed');
  const stage=document.createElement('div');stage.className='pult-route-stage';stage.setAttribute('aria-live','polite');(overview.querySelector('.filter-bar')||overview.querySelector('.page-heading')).after(stage);
@@ -55,7 +55,7 @@
  function render(view,{focus=false,section=''}={}){
   view=ROUTES.has(view)?view:'overview';document.body.dataset.pultView=view;document.body.dataset.pultSection=section;registerBusinessChart();registerLateNodes();
   const productAnalytics=['analytics','sales-decline'].includes(view);
-  viewTabs.hidden=!['overview','attention','funnel','analytics','sales-decline'].includes(view);
+  viewTabs.hidden=(view==='overview'&&!section)||!['overview','attention','funnel','analytics','sales-decline'].includes(view);
   const tabFamily=productAnalytics?'products':'overview';
   if(viewTabs.dataset.family!==tabFamily){
    viewTabs.dataset.family=tabFamily;
@@ -67,7 +67,7 @@
   const selectedOrder=[...stage.children].filter(node=>selected.includes(node));if(selectedOrder.some((node,index)=>node!==selected[index]))for(const node of selected)stage.append(node);
   if(scopeFilters){if(selected.includes(analyticsToolbar)&&analyticsToolbar){analyticsToolbar.after(scopeFilters);}else{stage.before(scopeFilters);}}
   overview.classList.toggle('pult-overview-compact',view==='overview');
-  const [eyebrow,baseTitle]=TITLES[view],title=view==='overview'&&section==='business-chart'?'Динамика бизнеса':baseTitle;const h1=overview.querySelector('.page-heading h1'),eye=overview.querySelector('.page-heading .eyebrow');if(h1&&h1.textContent!==title)h1.textContent=title;if(eye&&eye.textContent!==eyebrow)eye.textContent=eyebrow;
+  const [eyebrow,baseTitle]=TITLES[view],title=view==='overview'&&!section?'Главная':view==='overview'&&section==='business-chart'?'Динамика бизнеса':baseTitle;const h1=overview.querySelector('.page-heading h1'),eye=overview.querySelector('.page-heading .eyebrow');if(h1&&h1.textContent!==title)h1.textContent=title;if(eye&&eye.textContent!==eyebrow)eye.textContent=eyebrow;
   const crumb='Моя компания <span class="slash">/</span> '+title;if(breadcrumb&&breadcrumb.innerHTML!==crumb)breadcrumb.innerHTML=crumb;
   updateNavigation(view);for(const link of document.querySelectorAll('.pult-overview-subnav a[data-overview-target]'))link.classList.toggle('active',view==='overview'&&link.dataset.overviewTarget===section);for(const link of viewTabs.querySelectorAll('a')){const active=link.dataset.pageView?link.dataset.pageView===view:view==='overview'&&link.dataset.pageSection===section;link.classList.toggle('active',active);if(active)link.setAttribute('aria-current','page');else link.removeAttribute('aria-current')}document.title=title+' — Пульт';const routeKey=view+'\n'+section;if(routeKey!==lastDispatchedRoute){lastDispatchedRoute=routeKey;window.dispatchEvent(new CustomEvent('pult:view-change',{detail:{view,section}}))}if(focus){h1?.focus?.();window.scrollTo({top:0,behavior:'auto'})}
   return view;
