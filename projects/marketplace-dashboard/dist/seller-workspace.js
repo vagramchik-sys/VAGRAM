@@ -56,13 +56,17 @@
   }
   const controls = sidebar.querySelector('.pult-nav-mode');
   const customize = controls?.querySelector('.pult-nav-customize-button');
-  if (customize) { customize.textContent = 'Порядок блоков'; customize.title = 'Настроить порядок разделов и блоков обзора'; }
+  if (customize) {
+    customize.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 8.5a3.5 3.5 0 1 0 0 7 3.5 3.5 0 0 0 0-7Zm8 3.5-2.1-1.2.1-2.4-2.4-2.4-2.4.1L12 4 10.8 6.1 8.4 6 6 8.4l.1 2.4L4 12l2.1 1.2L6 15.6 8.4 18l2.4-.1L12 20l1.2-2.1 2.4.1 2.4-2.4-.1-2.4L20 12Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg><span class="seller-action-label">Настроить меню</span>';
+    customize.setAttribute('aria-label', 'Настроить порядок разделов и блоков');
+    customize.title = 'Настроить порядок разделов и блоков';
+  }
   let actions = sidebar.querySelector('.pult-shell-actions');
   if (!actions) { actions = document.createElement('div'); actions.className = 'pult-shell-actions'; sidebar.append(actions); }
   if (!sidebar.querySelector('.pult-shell-search')) {
     const search = document.createElement('button'); search.type = 'button'; search.className = 'pult-shell-search';
     search.setAttribute('aria-label', 'Поиск по разделам Пульта');
-    search.innerHTML = '<span aria-hidden="true">⌕</span><span>Поиск по Пульту</span><kbd>Ctrl K</kbd>';
+    search.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m16 16 4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>Поиск по Пульту</span><kbd>Ctrl K</kbd>';
     sidebar.insertBefore(search, actions);
     const dialog = document.createElement('dialog'); dialog.className = 'seller-search-dialog';
     dialog.innerHTML = '<div class="seller-search-heading"><label>Поиск по разделам<input type="search" placeholder="Название раздела" autocomplete="off"></label><button type="button" aria-label="Закрыть поиск">×</button></div><div class="seller-search-results"></div>';
@@ -80,11 +84,14 @@
     dialog.addEventListener('click', event => { if (event.target === dialog) dialog.close(); });
     document.addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); openSearch(); } });
   }
-  sidebar.querySelector('.pult-shell-search')?.setAttribute('aria-label', 'Поиск по Пульту');
+  const shellSearch = sidebar.querySelector('.pult-shell-search');
+  shellSearch?.setAttribute('aria-label', 'Поиск по Пульту');
+  if (shellSearch && !shellSearch.querySelector('svg')) shellSearch.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.8" cy="10.8" r="6.8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="m16 16 4 4" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg><span>Поиск по Пульту</span><kbd>Ctrl K</kbd>';
   if (actions && !actions.querySelector('.seller-company')) {
     const company = document.createElement('a');
     company.className = 'seller-company'; company.href = '/?view=stores';
-    company.innerHTML = '<span class="seller-company-avatar" aria-hidden="true">М</span><span>Моя компания<small>Кабинет продавца</small></span><span aria-hidden="true">⌄</span>';
+    company.innerHTML = '<span>Моя компания</span><svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+    company.setAttribute('aria-label', 'Моя компания — подключённые магазины');
     actions.prepend(company);
   }
   const navigation = document.createElement('div');
@@ -92,6 +99,8 @@
   navigation.setAttribute('role', 'navigation');
   navigation.setAttribute('aria-label', 'Основные разделы Пульта');
   let opened = null;
+  let closeTimer = 0;
+  function cancelClose() { window.clearTimeout(closeTimer); }
   function closeMenu({ focus = false } = {}) {
     if (!opened) return;
     const previous = opened; opened = null;
@@ -105,6 +114,7 @@
     item.panel.style.top = rect.bottom + 'px';
   }
   function openMenu(item, focus = false) {
+    cancelClose();
     if (opened !== item) closeMenu();
     opened = item; item.panel.hidden = false; item.toggle.setAttribute('aria-expanded', 'true');
     item.node.classList.add('is-open'); placeMenu(item);
@@ -124,10 +134,17 @@
     const item = { id, links, node, link, toggle, panel };
     toggle.addEventListener('click', () => opened === item ? closeMenu() : openMenu(item));
     link.addEventListener('pointerenter', event => { if (event.pointerType === 'mouse') openMenu(item); });
-    node.addEventListener('pointerleave', event => { if (event.pointerType === 'mouse' && !node.contains(document.activeElement)) closeMenu(); });
+    node.addEventListener('pointerenter', cancelClose);
+    node.addEventListener('pointerleave', event => { if (event.pointerType === 'mouse' && !node.contains(document.activeElement)) closeTimer = window.setTimeout(() => closeMenu(), 140); });
     node.addEventListener('keydown', event => {
       if (event.key === 'Escape') { event.preventDefault(); closeMenu({ focus: true }); }
       if (event.key === 'ArrowDown' && event.target !== panel && !panel.contains(event.target)) { event.preventDefault(); openMenu(item, true); }
+      if (panel.contains(event.target) && ['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) {
+        event.preventDefault();
+        const linksInMenu = [...panel.querySelectorAll('a')], current = linksInMenu.indexOf(document.activeElement);
+        const next = event.key === 'Home' ? 0 : event.key === 'End' ? linksInMenu.length - 1 : (current + (event.key === 'ArrowDown' ? 1 : -1) + linksInMenu.length) % linksInMenu.length;
+        linksInMenu[next]?.focus();
+      }
     });
     return item;
   });
@@ -166,7 +183,7 @@
       }
       if (url.pathname === '/partner.html' && item.id === 'more') active = true;
       item.node.classList.toggle('is-active', active);
-      if (active) item.link.setAttribute('aria-current', 'true'); else item.link.removeAttribute('aria-current');
+      if (active) item.link.setAttribute('aria-current', 'page'); else item.link.removeAttribute('aria-current');
     }
   }
   window.addEventListener('pult:view-change', syncActive);

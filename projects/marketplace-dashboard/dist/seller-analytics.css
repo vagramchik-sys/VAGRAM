@@ -9,7 +9,8 @@ body.pult-seller-workspace.pult-seller-shell #chart-store-picker button {
   font-size: 13px;
 }
 body.pult-seller-workspace {
-  --seller-blue: #005bff;
+  --seller-blue: #216bff;
+  --chart-total: #216bff;
   --blue: #005bff;
   --accent: #005bff;
   --seller-ink: #111111;
@@ -27,7 +28,7 @@ body.pult-seller-workspace {
   --border: #e5e7eb;
   background: #ffffff;
   color: #111111;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: Onest, Arial, Helvetica, sans-serif;
   color-scheme: light;
 }
 
@@ -35,7 +36,7 @@ body.pult-seller-workspace button,
 body.pult-seller-workspace input,
 body.pult-seller-workspace select,
 body.pult-seller-workspace textarea {
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: Onest, Arial, Helvetica, sans-serif;
 }
 
 body.pult-seller-workspace > main {
@@ -379,7 +380,7 @@ body.pult-seller-workspace #business-chart #ins-chart {
 body.pult-seller-workspace #ins-chart text,
 body.pult-seller-workspace .category-sales-chart text {
   fill: #667085;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: Onest, Arial, Helvetica, sans-serif;
   font-size: 12px;
 }
 
@@ -641,3 +642,94 @@ body.pult-seller-workspace :focus-visible {
     padding-inline: 14px;
   }
 }
+
+
+/* Seller report layout: section tabs, one period row, then scope filters. */
+body.pult-seller-workspace.pult-seller-shell .pult-overview-compact .pult-route-stage { max-width: none; }
+body.pult-seller-workspace.pult-seller-shell .page-heading { padding: 22px 0 26px; border: 0; }
+body.pult-seller-workspace.pult-seller-shell .page-heading h1 { font-family: Onest,Arial,sans-serif; font-size: 36px; font-weight: 700; line-height: 1.2; letter-spacing: -1px; }
+body.pult-seller-workspace.pult-seller-shell .page-heading p { font-size: 13px; margin-top: 10px; }
+body.pult-seller-workspace.pult-seller-shell .page-heading .button { background: #f4f5f7 !important; border: 0 !important; color: #070707 !important; font-weight: 600; }
+body.pult-seller-workspace.pult-seller-shell .pult-view-tabs { width: max-content; max-width: 100%; gap: 0; margin: 0 0 22px; padding: 0; border: 1px solid #dde3eb; border-radius: 8px; background: #fff; scrollbar-width: thin; }
+body.pult-seller-workspace.pult-seller-shell .pult-view-tabs a { min-height: 46px; padding: 10px 18px; border: 2px solid transparent !important; border-radius: 7px !important; color: #768390 !important; font-size: 15px; }
+body.pult-seller-workspace.pult-seller-shell .pult-view-tabs a.active,
+body.pult-seller-workspace.pult-seller-shell .pult-view-tabs a[aria-current=page] { border-color: #216bff !important; color: #070707 !important; background: #f9fbff !important; }
+body.pult-seller-workspace.pult-seller-shell .seller-analytics-toolbar.pult-view-visible { display: flex; align-items: center; flex-wrap: wrap; gap: 10px 20px; margin: 0 0 16px; }
+body.pult-seller-workspace.pult-seller-shell .seller-analytics-toolbar #ins-period-shortcuts { display: flex; flex-wrap: wrap; gap: 8px; margin: 0; }
+body.pult-seller-workspace.pult-seller-shell .seller-analytics-toolbar .focus-periods button { min-height: 38px; height: 38px; padding: 0 16px; background: #fff !important; border: 1px solid #dce3ed !important; border-radius: 999px !important; color: #216bff !important; font-size: 15px; font-weight: 600; }
+body.pult-seller-workspace.pult-seller-shell[data-pult-view] .seller-analytics-toolbar .focus-periods button[aria-pressed=true] { color: #fff !important; background: #216bff !important; border-color: #216bff !important; }
+body.pult-seller-workspace.pult-seller-shell .seller-analytics-toolbar .ins-period { display: contents !important; }
+body.pult-seller-workspace.pult-seller-shell .seller-analytics-toolbar .seller-period-select { display: none; }
+body.pult-seller-workspace.pult-seller-shell .seller-date-range { display: flex; align-items: center; gap: 8px; margin: 0; padding: 0 10px; border-radius: 5px; background: #f4f5f7; }
+body.pult-seller-workspace.pult-seller-shell .seller-date-range label { display: flex; align-items: center; gap: 5px; width: auto; min-width: 0; font-size: 12px; }
+body.pult-seller-workspace.pult-seller-shell .seller-date-range input { width: 124px; max-width: 124px; min-height: 38px; padding: 5px 2px; border: 0; border-radius: 0; background: transparent !important; color: #536176 !important; font-size: 13px; font-weight: 600; }
+body.pult-seller-workspace.pult-seller-shell .seller-timezone { color: #8995a3; font-size: 12px; white-space: nowrap; }
+body.pult-seller-workspace.pult-seller-shell .seller-analytics-toolbar #ins-comparison { order: 5; flex: 1 0 100%; margin: 0; padding: 0; color: #8995a3; font-size: 12px; }
+body.pult-seller-workspace.pult-seller-shell #overview .filter-bar { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; margin: 0 0 20px; padding: 0 0 18px; border: 0; border-bottom: 1px solid #edf0f4; background: #fff; }
+body.pult-seller-workspace.pult-seller-shell #overview .filter-bar label { gap: 6px; font-size: 12px; }
+body.pult-seller-workspace.pult-seller-shell #overview .filter-bar select { min-height: 38px; height: 38px; border-color: #c9d9fb; border-radius: 5px; color: #216bff !important; font-size: 13px; }
+body.pult-seller-workspace.pult-seller-shell #freshness { margin-left: auto; max-width: 100%; color: #8995a3; font-size: 11px; }
+body.pult-seller-workspace.pult-seller-shell #ins-state { margin: 12px 0; padding: 10px 14px; border-radius: 7px; font-size: 12px; }
+body.pult-seller-workspace.pult-seller-shell #ins-metrics.pult-view-visible { display: grid; grid-template-columns: repeat(6,minmax(0,1fr)); gap: 12px; margin: 20px 0 24px; }
+body.pult-seller-workspace.pult-seller-shell .ins-metric { min-height: 118px; padding: 16px; border: 1px solid #e6eaf0 !important; border-radius: 8px; background: #fff !important; text-align: left; }
+body.pult-seller-workspace.pult-seller-shell .ins-metric:hover { border-color: #216bff !important; background: #f8fbff !important; }
+body.pult-seller-workspace.pult-seller-shell .ins-metric-name { min-height: 32px; color: #596777; font-size: 12px; line-height: 1.4; }
+body.pult-seller-workspace.pult-seller-shell .ins-metric strong { margin: 10px 0 6px; font-size: 22px; font-weight: 600; letter-spacing: -.6px; }
+body.pult-seller-workspace.pult-seller-shell .ins-delta { font-size: 11px; line-height: 1.5; }
+body.pult-seller-workspace.pult-seller-shell .ins-metric.good .ins-delta { color: #168b57; }
+body.pult-seller-workspace.pult-seller-shell .ins-metric.bad .ins-delta { color: #d44343; }
+body.pult-seller-workspace.pult-seller-shell #business-chart .panel-heading { min-height: 64px; padding-top: 8px; padding-bottom: 16px; }
+body.pult-seller-workspace.pult-seller-shell #business-chart h2 { font-size: 23px; font-weight: 600; }
+body.pult-seller-workspace.pult-seller-shell .chart-mode-picker { display: flex; gap: 0; width: max-content; max-width: 100%; margin: 10px 0 16px; padding: 0; border: 1px solid #dce3ed; border-radius: 7px; }
+body.pult-seller-workspace.pult-seller-shell .chart-mode-picker button { min-height: 38px; border: 2px solid transparent !important; border-radius: 6px !important; background: #fff !important; color: #758292 !important; font-size: 14px; }
+body.pult-seller-workspace.pult-seller-shell .chart-mode-picker button[aria-pressed=true] { border-color: #216bff !important; color: #070707 !important; }
+body.pult-seller-workspace.pult-seller-shell .table-wrap { border-top: 1px solid #e8ecf1; }
+body.pult-seller-workspace.pult-seller-shell th { background: #f5f7f9; color: #6b7888; font-size: 12px; font-weight: 500; text-transform: none; letter-spacing: 0; }
+body.pult-seller-workspace.pult-seller-shell td { color: #182535; font-size: 13px; }
+body.pult-seller-workspace.pult-seller-shell .ins-chart-label select { min-height: 38px; height: 38px; border-radius: 5px; }
+@media(max-width:1100px) {
+ body.pult-seller-workspace.pult-seller-shell #ins-metrics.pult-view-visible { grid-template-columns: repeat(3,minmax(0,1fr)); }
+}
+@media(max-width:650px) {
+ body.pult-seller-workspace.pult-seller-shell .page-heading h1 { font-size: 29px; }
+ body.pult-seller-workspace.pult-seller-shell .page-heading { gap: 14px; padding: 18px 0 22px; }
+ body.pult-seller-workspace.pult-seller-shell .pult-view-tabs { width: 100%; margin-bottom: 18px; }
+ body.pult-seller-workspace.pult-seller-shell .pult-view-tabs a { padding: 9px 13px; font-size: 14px; }
+ body.pult-seller-workspace.pult-seller-shell .seller-analytics-toolbar.pult-view-visible { gap: 12px; }
+ body.pult-seller-workspace.pult-seller-shell .seller-analytics-toolbar .focus-periods button { padding-inline: 13px; font-size: 13px; min-height: 36px; height: 36px; }
+ body.pult-seller-workspace.pult-seller-shell .seller-date-range { width: 100%; justify-content: space-between; padding-inline: 8px; }
+ body.pult-seller-workspace.pult-seller-shell .seller-date-range input { min-width: 0; width: 120px; max-width: 120px; }
+ body.pult-seller-workspace.pult-seller-shell .seller-timezone { font-size: 11px; }
+ body.pult-seller-workspace.pult-seller-shell #overview .filter-bar label { flex: 1 1 140px; min-width: 0; }
+ body.pult-seller-workspace.pult-seller-shell #overview .filter-bar select { width: 100%; max-width: 100%; }
+ body.pult-seller-workspace.pult-seller-shell #freshness { flex-basis: 100%; margin-left: 0; }
+ body.pult-seller-workspace.pult-seller-shell #ins-metrics.pult-view-visible { grid-template-columns: repeat(2,minmax(0,1fr)); }
+ body.pult-seller-workspace.pult-seller-shell .ins-metric { padding: 12px; }
+ body.pult-seller-workspace.pult-seller-shell .ins-metric strong { font-size: 21px; }
+}
+
+/* Insights refresh replaces the status class; route visibility must not depend on it. */
+body.pult-seller-workspace[data-pult-view]:not([data-pult-view="analytics"]):not([data-pult-view="overview"]) #ins-state,
+body.pult-seller-workspace[data-pult-view="overview"]:not([data-pult-section="business-chart"]):not([data-pult-section="executive"]) #ins-state { display: none !important; }
+
+body.pult-seller-workspace.pult-seller-shell .focus-abc-groups button,
+body.pult-seller-workspace.pult-seller-shell .pagination { background: #fff !important; border-color: #e6eaf0 !important; color: #536176 !important; }
+body.pult-seller-workspace.pult-seller-shell .focus-abc { padding-top: 18px; }
+body.pult-seller-workspace.pult-seller-shell .focus-abc>div>b,
+body.pult-seller-workspace.pult-seller-shell .focus-abc-groups strong { color: #172b40 !important; font-size: 13px; }
+body.pult-seller-workspace.pult-seller-shell .focus-abc p,
+body.pult-seller-workspace.pult-seller-shell .focus-abc-groups small { color: #768390 !important; font-size: 11px; }
+body.pult-seller-workspace.pult-seller-shell .focus-abc-groups button:hover { background: #f5f9ff !important; border-color: #216bff !important; }
+@media(max-width:650px) { body.pult-seller-workspace.pult-seller-shell .pult-view-tabs { scrollbar-width: none; } body.pult-seller-workspace.pult-seller-shell .pult-view-tabs::-webkit-scrollbar { display:none; } }
+
+body.pult-seller-workspace.pult-seller-shell .focus-alert { background: #fff !important; border-radius: 8px; }
+body.pult-seller-workspace.pult-seller-shell .focus-alert b { font-size: 14px; }
+body.pult-seller-workspace.pult-seller-shell .focus-alert p { font-size: 12px; line-height: 1.5; }
+body.pult-seller-workspace.pult-seller-shell .focus-alert strong { color: #172b40; font-weight: 600; }
+body.pult-seller-workspace.pult-seller-shell .focus-open { color: #216bff !important; font-size: 12px; }
+body.pult-seller-workspace.pult-seller-shell .focus-tag { color: #768390; font-size: 10px; }
+body.pult-seller-workspace.pult-seller-shell .focus-eyebrow { color: #8995a3; font-size: 10px; }
+
+body.pult-seller-workspace.pult-seller-shell #ins-chart svg line,
+body.pult-seller-workspace.pult-seller-shell .chart svg line,
+body.pult-seller-workspace.pult-seller-shell .net-profit-plot line { stroke: #e8edf3; }
