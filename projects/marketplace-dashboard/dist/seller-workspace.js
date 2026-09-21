@@ -27,6 +27,7 @@
     ]],
     ['analytics', 'Аналитика', [
       ['Аналитика товаров', '/?view=analytics'],
+      ['Физлица и юрлица', '/?view=buyers'],
       ['Воронка по товарам', '/?view=funnel'],
       ['Падение продаж', '/?view=sales-decline']
     ]],
@@ -172,7 +173,7 @@
   navigation.addEventListener('scroll', () => closeMenu());
   function syncActive() {
     const url = new URL(location.href), view = document.body.dataset.pultView || url.searchParams.get('view') || 'overview';
-    const hashViews = { overview: 'overview', 'business-chart': 'overview', 'management-summary': 'overview', executive: 'overview', 'focus-priorities': 'priorities', 'ins-products-panel': 'analytics', products: 'products', finance: 'finance', economics: 'economics', 'wb-economics': 'wb-economics', 'sales-decline': 'sales-decline', stores: 'stores', 'conversion-panel': 'funnel', attention: 'attention' };
+    const hashViews = { overview: 'overview', 'business-chart': 'overview', 'management-summary': 'overview', executive: 'overview', 'focus-priorities': 'priorities', 'ins-products-panel': 'analytics', 'buyer-order-segments': 'buyers', products: 'products', finance: 'finance', economics: 'economics', 'wb-economics': 'wb-economics', 'sales-decline': 'sales-decline', stores: 'stores', 'conversion-panel': 'funnel', attention: 'attention' };
     const currentView = hashViews[url.hash.slice(1)] || view;
     const section = url.searchParams.get('section') || (['business-chart', 'executive', 'management-summary'].includes(url.hash.slice(1)) ? url.hash.slice(1) : '');
     const homeActive = (url.pathname === '/' || url.pathname === '/index.html') && currentView === 'overview' && !section;
