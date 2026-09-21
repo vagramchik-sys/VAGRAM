@@ -22,9 +22,67 @@ test('missing stock is distinct from zero and cost filter excludes unmatched WB'
  snapshots.get('1').sections.stocks.ok=false;
  assert.equal(model.rowsFor(stores,snapshots)[0].quantity,null);
 });
+test('stock rows keep present and reserved separate with strict numeric values',()=>{
+ const stores=[{id:'1',name:'Ozon'}],snapshots=new Map([['1',{sections:{stocks:{ok:true}},products:[{product_id:1,name:'A'}],stocks:[{product_id:1,stocks:[
+  {type:'fbo',present:'4',reserved:'2'}, {warehouse_id:7,type:'fbs',present:3,reserved:1}
+ ]}]}]]);
+ const row=model.rowsFor(stores,snapshots)[0];
+ assert.equal(row.quantity,7);assert.equal(row.reservedQuantity,3);
+ assert.deepEqual(row.stockBreakdown,{rows:[
+  {name:'FBO',kind:'type',present:4,reserved:2},
+  {name:'7 · FBS',kind:'warehouse',present:3,reserved:1}
+ ],complete:true,reason:null});
+});
+test('grouped stock objects normalize without mutating the source',()=>{
+ const source={fbo:[{present:2,reserved:1}],fbs:{present:'3',reserved:'0'}};
+ const before=structuredClone(source),breakdown=model.stockBreakdown(source);
+ assert.deepEqual(source,before);
+ assert.deepEqual(breakdown.rows.map(row=>[row.name,row.kind,row.present,row.reserved]),[
+  ['FBO','type',2,1],['FBS','type',3,0]
+ ]);
+ assert.equal(breakdown.complete,true);
+});
+test('empty, malformed and duplicate stock records stay unknown while a real zero is known',()=>{
+ assert.equal(model.stockBreakdown([]).reason,'missing_stock_rows');
+ for(const present of [null,undefined,'',-1,1.5,Infinity,false]) {
+  const value=model.stockBreakdown([{present,reserved:0}]);
+  assert.equal(value.complete,false);assert.equal(value.reason,'invalid_present');
+ }
+ const overflow=model.stockBreakdown([{present:Number.MAX_SAFE_INTEGER,reserved:0},{present:1,reserved:0}]);
+ assert.equal(overflow.complete,false);assert.equal(overflow.reason,'stock_total_out_of_range');
+ const stores=[{id:'1',name:'Ozon'}],base={sections:{stocks:{ok:true}},products:[{product_id:1,name:'A'}]};
+ const zero=model.rowsFor(stores,new Map([['1',{...base,stocks:[{product_id:1,stocks:[{present:0,reserved:0}]}]}]]))[0];
+ assert.equal(zero.quantity,0);assert.equal(zero.reservedQuantity,0);assert.equal(zero.stockBreakdown.complete,true);
+ const duplicate=model.rowsFor(stores,new Map([['1',{...base,stocks:[
+  {product_id:1,stocks:[{present:2,reserved:0}]},{product_id:1,stocks:[{present:3,reserved:0}]}
+ ]}]]))[0];
+ assert.equal(duplicate.quantity,null);assert.equal(duplicate.reservedQuantity,null);
+ assert.equal(duplicate.stockBreakdown.reason,'duplicate_product_record');
+});
+test('malformed rows never turn a partial stock sum into a complete result',()=>{
+ const stores=[{id:'1',name:'Ozon'}];
+ for(const stocks of [[{present:5,reserved:1},null],[{present:5,reserved:1},false],{fbo:[{present:5,reserved:1},'bad']},{fbo:{present:5,reserved:1},fbs:null}]){
+  const row=model.rowsFor(stores,new Map([['1',{sections:{stocks:{ok:true}},products:[{product_id:1}],stocks:[{product_id:1,stocks}]}]]))[0];
+  assert.equal(row.quantity,null);assert.equal(row.reservedQuantity,null);assert.equal(row.stockBreakdown.complete,false);
+ }
+});
+
+test('missing section invalidates both totals while missing reserve preserves a known present total',()=>{
+ const stores=[{id:'1',name:'Ozon'}],snapshot={products:[{product_id:1}],stocks:[{product_id:1,stocks:[{present:5,reserved:2},{present:7}]}]};
+ const read=()=>model.rowsFor(stores,new Map([['1',snapshot]]))[0];
+ assert.equal(read().quantity,null);assert.equal(read().reservedQuantity,null);
+ assert.equal(read().stockBreakdown.reason,'stock_section_unavailable');
+ snapshot.sections={stocks:{ok:false}};
+ assert.equal(read().quantity,null);assert.equal(read().reservedQuantity,null);
+ snapshot.sections.stocks.ok=true;
+ assert.equal(read().quantity,12);assert.equal(read().reservedQuantity,null);
+ assert.equal(read().stockBreakdown.reason,'invalid_reserved');
+});
+
 test('CSV exports all supplied rows and escapes spreadsheet formulas and quotes',()=>{
- const csv=model.csv([{name:'=1+1',offer_id:'A"B',storeName:'Store',quantity:null},{name:'\t@SUM(A1)',quantity:0}]);
+ const csv=model.csv([{name:'=1+1',offer_id:'A"B',storeName:'Store',quantity:null,reservedQuantity:null},{name:'\t@SUM(A1)',quantity:0,reservedQuantity:2}]);
  assert.ok(csv.startsWith('\ufeff'));assert.ok(csv.includes('"\'=1+1"'));assert.ok(csv.includes('"A""B"'));assert.ok(csv.includes("'\t@SUM(A1)"));assert.equal(csv.split('\r\n').length,3);
+ assert.ok(csv.includes('"Зарезервировано"'));assert.ok(csv.includes('"2"'));
 });
 test('inactive filter preserves ready products and unknown WB statuses and is reversible',()=>{
  const rows=[
