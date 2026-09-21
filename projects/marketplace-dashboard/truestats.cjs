@@ -106,14 +106,16 @@ function normalizeDaily(day,stats,catalog,{period,accountId,readiness,today,key}
 function create({privateDir,protect,fetchImpl=fetch,now=()=>Date.now()}){
  if(!privateDir||typeof protect!=='function')throw Error('TrueStats requires protected private storage');
  const file=path.join(privateDir,'truestats.json'),cache=new Map(),pending=new Map();
- let config=null,storageError=false,revision=0,connectQueue=Promise.resolve();
+ let config=null,storageError=false,revision=0,connectQueue=Promise.resolve(),retryAt=0;
  try{if(fs.existsSync(file)){const saved=JSON.parse(fs.readFileSync(file,'utf8'));if(saved.version!==1||typeof saved.encryptedKey!=='string'||!saved.encryptedKey)throw Error();config=saved;}}catch{storageError=true;}
  const timestamp=()=>Number(new Date(now()));
- const status=()=>({connected:!!config,connectedAt:config?.connectedAt||null,source:'TrueStats API',mode:'management',error:storageError?'Защищённое подключение TrueStats недоступно.':null});
+ const status=()=>({connected:!!config,connectedAt:config?.connectedAt||null,source:'TrueStats API',mode:'management',error:storageError?'Защищённое подключение TrueStats недоступно.':null,retryAt:retryAt>timestamp()?new Date(retryAt).toISOString():null});
  async function request(key,route,body,query=''){
   if(!ROUTES.has(route))throw failure('route','Метод TrueStats недоступен.');
+  if(retryAt>timestamp()){const error=failure('rate_limit','TrueStats ограничил частоту запросов. Повторная загрузка отложена.');error.retryAt=new Date(retryAt).toISOString();throw error;}
   let response;
   try{response=await fetchImpl(BASE+route+(query?'?'+query:''),{method:body===undefined?'GET':'POST',headers:{'X-Api-Token':key,'Accept':'application/json',...(body===undefined?{}:{'Content-Type':'application/json'})},...(body===undefined?{}:{body:JSON.stringify(body)}),redirect:'error',signal:AbortSignal.timeout(25000)});}catch{throw failure('network','TrueStats недоступен. Повторите запрос позже.');}
+  if(response.status===429){const raw=response.headers.get('Retry-After'),seconds=Number(raw),dateValue=Date.parse(raw),delay=raw&&Number.isFinite(seconds)?seconds*1000:Number.isFinite(dateValue)?dateValue-timestamp():30*60*1000;retryAt=Math.max(retryAt,timestamp()+Math.max(5*60*1000,delay));const error=failure('rate_limit','TrueStats ограничил частоту запросов. Повторная загрузка отложена.');error.retryAt=new Date(retryAt).toISOString();throw error;}
   if(!response.ok)throw failure(response.status===401?'unauthorized':response.status===403?'forbidden':'upstream',response.status===401?'Ключ TrueStats отклонён. Подключите новый ключ.':response.status===403?'TrueStats не разрешает доступ к отчёту для этого ключа или тарифа.':'Не удалось получить отчёт TrueStats (HTTP '+Number(response.status)+').');
   try{const bodyText=await response.text();if(bodyText.length>4*1024*1024)throw Error();return JSON.parse(bodyText);}catch{throw failure('response_schema','TrueStats вернул неподдерживаемый ответ.');}
  }
@@ -174,7 +176,7 @@ function create({privateDir,protect,fetchImpl=fetch,now=()=>Date.now()}){
     else if(value.readiness.length!==ids.length)value.warnings.push('TrueStats не сообщил готовность финансовых данных по всем выбранным магазинам.');
     cache.set(cacheKey,{at:timestamp(),value});while(cache.size>30)cache.delete(cache.keys().next().value);
     return value;
-   }catch(error){cache.delete(cacheKey);return unavailable(error.public?error.code:'unavailable',error.public?error.message:'Не удалось получить отчёт TrueStats.');}
+   }catch(error){cache.delete(cacheKey);return {...unavailable(error.public?error.code:'unavailable',error.public?error.message:'Не удалось получить отчёт TrueStats.'),...(error.retryAt?{retryAt:error.retryAt}:{})};}
   })();
   pending.set(cacheKey,work);try{return structuredClone(await work);}finally{pending.delete(cacheKey);}
  }
@@ -204,7 +206,7 @@ function create({privateDir,protect,fetchImpl=fetch,now=()=>Date.now()}){
    const normalized=normalizeDaily(day,results[0].value,results[1].value,{period,accountId,readiness,today,key});
    if(revision!==startRevision)throw failure('connection_changed','Подключение TrueStats изменилось. Обновите отчёт.');
    const value={...base,...normalized,accountId,readiness,fetchedAt:new Date(timestamp()).toISOString(),scopeVerified:true,cached:false};cache.set(cacheKey,{at:timestamp(),value});while(cache.size>60)cache.delete(cache.keys().next().value);return value;
-  }catch(error){return unavailable(error.public?error.code:'unavailable',error.public?error.message:'Не удалось получить дневную прибыль TrueStats.');}})();
+  }catch(error){return {...unavailable(error.public?error.code:'unavailable',error.public?error.message:'Не удалось получить дневную прибыль TrueStats.'),...(error.retryAt?{retryAt:error.retryAt}:{})};}})();
   pending.set(cacheKey,work);try{return structuredClone(await work);}finally{pending.delete(cacheKey);}
  }
  return {status,connect,compare,daily};

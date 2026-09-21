@@ -11,12 +11,12 @@ const report={financialMod:false,stats:{profit:123.456,revenue_value:1000,cost_v
 const catalog=[{id:'revenue_value',header:'Реализация',meta:{suffix:'₽'}},{id:'cost_value',header:'Себестоимость продаж',meta:{suffix:'₽'}},{id:'tax_value',header:'Налог',meta:{suffix:'₽'}},{id:'opex_value',header:'Операционные расходы',meta:{suffix:'₽'}},{id:'margin_value',header:'Маржинальность',meta:{suffix:'%'}}];
 function setup(t){
  const privateDir=fs.mkdtempSync(path.join(os.tmpdir(),'truestats-test-'));t.after(()=>fs.rmSync(privateDir,{recursive:true,force:true}));
- const state={time:Date.parse('2026-09-16T10:00:00Z'),calls:[],accounts:[{id:17,name:'Sample A',accountType:1},{id:18,name:'Sample A',accountType:0},{id:19,name:'Sample A region',accountType:1}],report:structuredClone(report),ids:[17],catalog:structuredClone(catalog),readiness:{items:[{accountId:17,dataType:'ozon_report',status:'complete',checkedDate:'2026-09-15',lastDataDate:'2026-09-15'}]},fail:null,wait:null};
+ const state={time:Date.parse('2026-09-16T10:00:00Z'),calls:[],accounts:[{id:17,name:'Sample A',accountType:1},{id:18,name:'Sample A',accountType:0},{id:19,name:'Sample A region',accountType:1}],report:structuredClone(report),ids:[17],catalog:structuredClone(catalog),readiness:{items:[{accountId:17,dataType:'ozon_report',status:'complete',checkedDate:'2026-09-15',lastDataDate:'2026-09-15'}]},fail:null,failStatus:401,retryAfter:null,wait:null};
  const protect=async(v,decrypt)=>decrypt?Buffer.from(v.slice(7),'base64').toString('utf8'):'sealed:'+Buffer.from(v).toString('base64');
  const fetchImpl=async(url,options)=>{
   const route=new URL(url).pathname,body=options.body?JSON.parse(options.body):null;state.calls.push({route,body,options});
   if(state.wait&&route==='/reporting/main/stats')await state.wait;
-  if(state.fail===route)return new Response(JSON.stringify({message:TOKEN}),{status:401});
+  if(state.fail===route)return new Response(JSON.stringify({message:TOKEN}),{status:state.failStatus,headers:state.retryAfter?{'Retry-After':state.retryAfter}:{}});
   const value=route==='/reporting/facets'?{accounts:state.accounts}:route==='/reporting/aggregated-view/day'?{accountIdsFilter:state.ids,financialMod:false,result:[],summary:{}}:route==='/reporting/main/stats'?state.report:route==='/v1/data-readiness'?state.readiness:state.catalog;
   return new Response(JSON.stringify(value),{status:200});
  };
@@ -77,6 +77,13 @@ test('cache is isolated by exact period and local account scope, expires without
  await connector.compare({period:{...period,to:'2026-09-14'},stores});assert.ok(state.calls.length>count);const next=state.calls.length;
  await connector.compare({period,stores:[{id:'another-id',name:'Sample A'}]});assert.ok(state.calls.length>next);
  state.time+=30*60*1000;state.fail='/reporting/facets';const expired=await connector.compare({period,stores});assert.equal(expired.status,'unavailable');assert.equal(expired.metrics.profit,null);assert.equal(expired.fetchedAt,null);
+});
+test('a TrueStats 429 creates one shared Retry-After gate across periods and report types',async t=>{
+ const {connector,state}=setup(t);await connector.connect(TOKEN);state.fail='/reporting/facets';state.failStatus=429;state.retryAfter='120';
+ const first=await connector.compare({period,stores});assert.equal(first.code,'rate_limit');assert.equal(first.retryAt,'2026-09-16T10:05:00.000Z');const count=state.calls.length;
+ state.fail=null;const other=await connector.compare({period:{...period,to:'2026-09-14'},stores}),daily=await connector.daily({period,store:stores[0],market:'Ozon'});
+ assert.equal(other.code,'rate_limit');assert.equal(daily.code,'rate_limit');assert.equal(state.calls.length,count);assert.equal(connector.status().retryAt,first.retryAt);
+ state.time+=5*60*1000;const recovered=await connector.compare({period,stores});assert.equal(recovered.status,'ready');assert.ok(state.calls.length>count);assert.equal(connector.status().retryAt,null);
 });
 test('concurrent identical reports share requests and return isolated results',async t=>{
  const {connector,state}=setup(t);await connector.connect(TOKEN);const [a,b]=await Promise.all([connector.compare({period,stores}),connector.compare({period,stores})]);assert.equal(state.calls.filter(c=>c.route==='/reporting/main/stats').length,1);a.metrics.profit=999;assert.equal(b.metrics.profit,123.46);
