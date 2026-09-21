@@ -21,13 +21,14 @@ test('additions and deletions are tracked in both directions', () => {
 test('private files and repository-only test copies stay outside sync', () => {
   for (const name of ['.env', '.env.local', 'data/store.json', '.private/stores.json', 'work/x.cjs', 'AGENTS.md', 'credentials.json', 'cookies.txt', 'test/server-tests.cjs']) assert.equal(allowed(name, ['test']), false, name);
   assert.equal(allowed('dist/app.js'), true);
+  assert.equal(allowed('loan-contract-extract.py'), true);
   assert.equal(allowed('README.md'), true);
 });
 test('scanner excludes live stores and refuses symbolic links', t => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'vagram-unit-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
-  fs.mkdirSync(path.join(root, 'data')); fs.writeFileSync(path.join(root, 'data', 'store.json'), 'private'); fs.writeFileSync(path.join(root, 'app.js'), 'ok\r\n');
-  assert.deepEqual(scan(root), { 'app.js': 'ok\n' });
+  fs.mkdirSync(path.join(root, 'data')); fs.writeFileSync(path.join(root, 'data', 'store.json'), 'private'); fs.writeFileSync(path.join(root, 'app.js'), 'ok\r\n'); fs.writeFileSync(path.join(root, 'extract.py'), 'print("ok")\r\n');
+  assert.deepEqual(scan(root), { 'app.js': 'ok\n', 'extract.py': 'print("ok")\n' });
   fs.symlinkSync(path.join(root, 'data'), path.join(root, 'linked'), process.platform === 'win32' ? 'junction' : 'dir');
   assert.throws(() => scan(root), /link/i);
   assert.throws(() => safePath(root, 'linked/file.js'), /Linked/);

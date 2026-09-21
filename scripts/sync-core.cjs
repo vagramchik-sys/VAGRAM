@@ -3,7 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const ignored = new Set(['.git', '.private', '.openai', '.sites-runtime', '.vagram', 'node_modules', 'work', 'outputs', 'data']);
-const extensions = new Set(['.js', '.cjs', '.mjs', '.json', '.html', '.css', '.md', '.ps1', '.csv', '.svg', '.yml', '.yaml', '.txt']);
+const extensions = new Set(['.js', '.cjs', '.mjs', '.json', '.html', '.css', '.md', '.ps1', '.py', '.csv', '.svg', '.yml', '.yaml', '.txt']);
 const normalize = text => text.replace(/\r\n/g, '\n');
 const digest = text => text === undefined ? null : crypto.createHash('sha256').update(normalize(text)).digest('hex');
 function allowed(name, repoOnly = []) {
