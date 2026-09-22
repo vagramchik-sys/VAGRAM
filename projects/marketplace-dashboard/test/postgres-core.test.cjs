@@ -49,6 +49,14 @@ test('core reads fresh SQL state after CAS and rejects unknown stores without fa
   assert.equal(await core.publicSnapshot('2'), null); assert.equal(await core.hasStore('2'), false);
 });
 
+test('core prefers the normalized summary projection when available', async () => {
+  const stateStore = memoryState(), stores = createStores({ stateStore }); let projected = 0, full = 0;
+  await stores.compareAndSet(storesValue(), { expectedRevision: '0', commandId: C1 });
+  const core = createCore({ storesRepository: stores, stateStore, marketRepository: { async getSummarySnapshot() { projected++; return raw; }, async getSnapshot() { full++; return raw; } } });
+  assert.deepEqual(await core.publicSnapshot('1'), summarize(raw, null, null));
+  assert.equal(projected, 1); assert.equal(full, 0);
+});
+
 const integrationUrl = process.env.PULT_TEST_DATABASE_URL;
 test('PostgreSQL integration: imported normalized snapshot and CAS registry are read fresh', { skip: !integrationUrl }, async t => {
   assert.match(decodeURIComponent(new URL(integrationUrl).pathname.slice(1)), /test/iu);

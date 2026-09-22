@@ -7,12 +7,13 @@ const ui = fs.readFileSync(require.resolve('../dist/insights-ui.js'), 'utf8');
 const wbUi = fs.readFileSync(require.resolve('../dist/wb-economics-ui.js'), 'utf8');
 const index = fs.readFileSync(require.resolve('../dist/index.html'), 'utf8');
 
-function runtime({ href = 'http://127.0.0.1:4317/' } = {}) {
+function runtime({ href = 'http://127.0.0.1:4317/', fetchImpl } = {}) {
   const nodes = new Map();
   const classes = new Map();
   const wbReports = [];
   const fetches = [];
   const homeUpdates = [];
+  const intervals = [];
 
   class FakeElement {
     constructor(id = '') {
@@ -92,8 +93,11 @@ function runtime({ href = 'http://127.0.0.1:4317/' } = {}) {
     console,
     setTimeout: () => 1,
     clearTimeout() {},
-    setInterval: () => 1,
-    fetch(url) { fetches.push(String(url)); return new Promise(() => {}); },
+    setInterval(callback) { intervals.push(callback); return intervals.length; },
+    fetch(url, options) {
+      fetches.push(String(url));
+      return fetchImpl ? fetchImpl(String(url), options) : new Promise(() => {});
+    },
     createPultWBEconomics() { return { render(report) { wbReports.push(report); } }; },
     createPultEconomics: inertView,
     createPultSalesDecline: inertView,
@@ -103,8 +107,32 @@ function runtime({ href = 'http://127.0.0.1:4317/' } = {}) {
   });
 
   vm.runInContext(ui, context, { filename: 'insights-ui.js' });
-  return { nodes, wbReports, fetches, homeUpdates };
+  return { nodes, wbReports, fetches, homeUpdates, intervals, context };
 }
+
+test('periodic poll does not invalidate an in-flight insights response', async () => {
+  let resolveInsights;
+  const app = runtime({
+    fetchImpl(url) {
+      if (url.startsWith('/api/insights?')) {
+        return new Promise(resolve => { resolveInsights = resolve; });
+      }
+      return new Promise(() => {});
+    }
+  });
+  const market = app.nodes.get('market');
+  market.value = 'Ozon';
+  market.dispatchEvent({ type: 'change' });
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
+
+  app.intervals[0]();
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
+
+  resolveInsights({ ok: true, json: async () => ({}) });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(app.homeUpdates.filter(value => value.state === 'ready').length, 1);
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
+});
 
 test('UI loads on WB and can switch to Ozon without a removed placeholder crash', () => {
   const app = runtime();

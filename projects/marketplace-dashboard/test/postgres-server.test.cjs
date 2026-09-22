@@ -36,12 +36,76 @@ function response(handler) {
   };
 }
 
-async function request(origin, pathname, { cookie, method = 'GET', body, headers = {} } = {}) {
+async function request(origin, pathname, { cookie, method = 'GET', body, headers = {}, signal } = {}) {
   const value = body === undefined ? undefined : JSON.stringify(body);
-  const res = await fetch(origin + pathname, { method, headers: { ...(cookie ? { cookie } : {}), ...(value === undefined ? {} : { 'content-type': 'application/json', origin, ...headers }) }, body: value });
+  const res = await fetch(origin + pathname, { method, signal, headers: { ...(cookie ? { cookie } : {}), ...(value === undefined ? {} : { 'content-type': 'application/json', origin, ...headers }) }, body: value });
   const text = await res.text();
   return { status: res.status, headers: res.headers, body: text && res.headers.get('content-type')?.includes('json') ? JSON.parse(text) : text };
 }
+
+test('heavy API GET requests are serialized and queued work is cancelled on abort and close', async t => {
+  const dir = await assets(); t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const waits = [], entered = [];
+  const handler = { handle: response(async (req, res, url) => {
+    if (url.pathname !== '/api/heavy') return false;
+    const index = entered.length; entered.push(index);
+    await new Promise(resolve => { waits[index] = resolve; });
+    res.writeHead(200).end(String(index)); return true;
+  }) };
+  const core = { async ready() { return { ready: true, missingAdapters: [] }; }, async publicStores() { return []; }, async publicSnapshot() {}, async hasStore() { return true; } };
+  const runtime = await start({ pool: fakePool(), core, staticDir: dir, staticFiles: STATIC_FILES, port: 0, apiGetWaitTimeoutMs: 25, otherHandlers: [handler], readiness: async () => ({ ready: true, missingAdapters: [] }), ownerRoutesFactory: async () => ({ handle: async () => false }) });
+  t.after(async () => { for (const resolve of waits) resolve?.(); await runtime.close(); });
+  const page = await request(runtime.origin, '/'), cookie = page.headers.get('set-cookie').split(';', 1)[0];
+
+  const first = request(runtime.origin, '/api/heavy', { cookie });
+  while (entered.length < 1) await new Promise(resolve => setImmediate(resolve));
+  const second = request(runtime.origin, '/api/heavy', { cookie });
+  await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(entered.length, 1);
+  waits[0](); assert.equal((await first).status, 200);
+  while (entered.length < 2) await new Promise(resolve => setImmediate(resolve));
+
+  const controller = new AbortController(), aborted = request(runtime.origin, '/api/heavy', { cookie, signal: controller.signal });
+  await new Promise(resolve => setTimeout(resolve, 10)); controller.abort();
+  await assert.rejects(aborted, error => error.name === 'AbortError');
+  await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(entered.length, 2);
+
+  const timedOut = await request(runtime.origin, '/api/heavy', { cookie });
+  assert.equal(timedOut.status, 503);
+  assert.equal(timedOut.headers.get('retry-after'), '1');
+  assert.equal(entered.length, 2);
+
+  const queuedAtClose = request(runtime.origin, '/api/heavy', { cookie }).catch(error => error);
+  await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(entered.length, 2);
+  const closing = runtime.close();
+  const queuedResult = await queuedAtClose;
+  assert.equal(queuedResult.status, 503);
+  assert.equal(entered.length, 2);
+  waits[1](); assert.equal((await second).status, 200); await closing;
+});
+
+test('data and insights use an independent lane with at most two active reads', async t => {
+  const dir = await assets(); t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const heavyWait = [], lightWait = []; let lightActive = 0, maxLightActive = 0, heavyEntered = 0, lightEntered = 0;
+  const enterLight = async () => { const index = lightEntered++; lightActive++; maxLightActive = Math.max(maxLightActive, lightActive); await new Promise(resolve => { lightWait[index] = resolve; }); lightActive--; };
+  const handler = { handle: response(async (req, res, url) => {
+    if (url.pathname === '/api/heavy') { const index = heavyEntered++; await new Promise(resolve => { heavyWait[index] = resolve; }); res.writeHead(200).end('heavy'); return true; }
+    if (url.pathname === '/api/insights') { await enterLight(); res.writeHead(200, { 'content-type': 'application/json' }).end('{}'); return true; }
+    return false;
+  }) };
+  const core = { async ready() { return { ready: true, missingAdapters: [] }; }, async publicStores() { return []; }, async hasStore() { return true; }, async publicSnapshot() { await enterLight(); return { ok: true }; } };
+  const runtime = await start({ pool: fakePool(), core, staticDir: dir, staticFiles: STATIC_FILES, port: 0, otherHandlers: [handler], readiness: async () => ({ ready: true, missingAdapters: [] }), ownerRoutesFactory: async () => ({ handle: async () => false }) });
+  t.after(async () => { for (const resolve of [...heavyWait, ...lightWait]) resolve?.(); await runtime.close(); });
+  const page = await request(runtime.origin, '/'), cookie = page.headers.get('set-cookie').split(';', 1)[0];
+  const heavy = request(runtime.origin, '/api/heavy', { cookie }); while (heavyEntered < 1) await new Promise(resolve => setImmediate(resolve));
+  const first = request(runtime.origin, '/api/insights', { cookie }), second = request(runtime.origin, '/api/insights?store=2', { cookie }), data = request(runtime.origin, '/api/data?id=1', { cookie });
+  while (lightEntered < 2) await new Promise(resolve => setImmediate(resolve));
+  await new Promise(resolve => setTimeout(resolve, 10)); assert.equal(lightEntered, 2); assert.equal(maxLightActive, 2); assert.equal(heavyEntered, 1);
+  lightWait[0]();
+  while (lightEntered < 3) await new Promise(resolve => setImmediate(resolve));
+  assert.equal(maxLightActive, 2); assert.equal(heavyEntered, 1);
+  lightWait[1](); lightWait[2](); heavyWait[0]();
+  assert.deepEqual((await Promise.all([second, data, heavy])).map(value => value.status), [200, 200, 200]);
+});
 
 test('readiness gate runs before lease and rejects incomplete wiring', async t => {
   const dir = await assets(); t.after(() => fs.rm(dir, { recursive: true, force: true }));

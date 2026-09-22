@@ -51,6 +51,38 @@ test('archive verifier rejects a linked path component', async t => {
   await assert.rejects(_test.archivePayload(root, row), error => error.code === 'INVALID_ARCHIVE_PATH');
 });
 
+test('target verification streams an ordered server cursor without OFFSET', async () => {
+  const spec = {
+    name: 'synthetic_rows',
+    sourceColumns: [{ name: 'id', type: 'int' }, { name: 'value', type: 'text' }],
+    targetSelect: ['"id" AS "id"', '"value" AS "value"'],
+    pk: ['id'],
+    batchSize: 2
+  };
+  const calls = [], batches = [
+    [{ id: '1', value: 'a' }, { id: '2', value: 'b' }],
+    [{ id: '3', value: 'c' }],
+    []
+  ];
+  const client = { async query(sql, parameters) {
+    calls.push({ sql, parameters });
+    if (sql.startsWith('FETCH ')) return { rows: batches.shift() };
+    return { rows: [] };
+  } };
+  const result = await _test.verifyTarget(client, spec);
+  const expected = crypto.createHash('sha256');
+  for (const row of [{ id: '1', value: 'a' }, { id: '2', value: 'b' }, { id: '3', value: 'c' }]) {
+    expected.update(_test.stable(row) + '\n');
+  }
+  assert.deepEqual(result, { count: 3, hash: expected.digest('hex') });
+  assert.match(calls[0].sql, /^DECLARE "pult_verify_synthetic_rows" NO SCROLL CURSOR FOR SELECT /u);
+  assert.doesNotMatch(calls[0].sql, /\b(?:LIMIT|OFFSET)\b/iu);
+  assert.equal(calls.filter(call => call.sql.startsWith('FETCH FORWARD 2 ')).length, 3);
+  assert.match(calls.at(-1).sql, /^CLOSE /u);
+  assert.ok(calls.every(call => call.parameters === undefined));
+  assert.doesNotMatch(_test.sourceQuery(spec), /\b(?:LIMIT|OFFSET)\b/iu);
+});
+
 function createFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pult-pg-history-')), history = path.join(root, 'history');
   fs.mkdirSync(path.join(history, 'snapshots', 'aa'), { recursive: true });
@@ -140,6 +172,12 @@ test('PostgreSQL integration imports all SQLite history tables, verifies hashes 
 
     const repeated = await importHistory({ pool, sourceDir: fixture.history });
     assert.deepEqual(repeated.counts, first.counts);
+    assert.deepEqual(repeated.hashes, first.hashes);
+    assert.equal(repeated.sourceFingerprint, first.sourceFingerprint);
+    const verifiedState = await pool.query(`SELECT table_counts,table_hashes,encode(source_fingerprint,'hex') source_fingerprint FROM pult_history.import_state`);
+    assert.deepEqual(verifiedState.rows[0].table_counts, first.counts);
+    assert.deepEqual(verifiedState.rows[0].table_hashes, first.hashes);
+    assert.equal(verifiedState.rows[0].source_fingerprint, first.sourceFingerprint);
     const products = new DatabaseSync(path.join(fixture.history, 'products.sqlite'));
     products.prepare('UPDATE product_names SET name=? WHERE market=? AND store_id=? AND product_id=?').run('Изменено', 'WB', '001', '000123');
     products.close();

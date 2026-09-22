@@ -12,8 +12,13 @@ CREATE TABLE IF NOT EXISTS pult_market.stores (
  store_id text COLLATE "C" PRIMARY KEY, market text NOT NULL CHECK(market IN ('Ozon','WB')),
  display_name text, registry_row jsonb,
  registry_source_document_id bigint REFERENCES pult_market.source_documents(source_document_id),
+ connected boolean NOT NULL DEFAULT true, disconnected_at timestamptz,
+ registry_revision bigint CHECK(registry_revision IS NULL OR registry_revision>0),
  updated_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
+ALTER TABLE pult_market.stores ADD COLUMN IF NOT EXISTS connected boolean NOT NULL DEFAULT true;
+ALTER TABLE pult_market.stores ADD COLUMN IF NOT EXISTS disconnected_at timestamptz;
+ALTER TABLE pult_market.stores ADD COLUMN IF NOT EXISTS registry_revision bigint CHECK(registry_revision IS NULL OR registry_revision>0);
 CREATE TABLE IF NOT EXISTS pult_market.snapshot_versions (
  snapshot_id uuid PRIMARY KEY, store_id text COLLATE "C" NOT NULL REFERENCES pult_market.stores(store_id),
  source_document_id bigint NOT NULL REFERENCES pult_market.source_documents(source_document_id),

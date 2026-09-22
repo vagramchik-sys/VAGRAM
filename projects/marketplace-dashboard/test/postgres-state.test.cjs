@@ -292,6 +292,15 @@ test('market projection is restricted to mapped data snapshots and runs after th
   }, async () => ({})), error => error.code === 'INVALID_ARGUMENT');
 });
 
+test('stores projection is fixed to stores.json and strips ciphertext from normalized rows', async () => {
+  const sourcePath = 'stores.json', logicalKey = 'file/' + crypto.createHash('sha256').update(sourcePath).digest('hex'), sourceMapping = { sourcePath, logicalKey, domain: 'protected-connections', mediaType: 'application/json' };
+  const pool = fakePool(text => { if (text.includes('FROM "pult"."commands"') || text.includes('FROM "pult"."document_states"') || text.includes('FROM "pult"."source_files"') || text.includes('SELECT store_id,market FROM "pult_market"."stores"')) return { rows: [] }; return { rows: [] }; });
+  const result = await createStateStore({ pool }).writeStoreRegistry(logicalKey, Buffer.from(JSON.stringify({ '1': { name: 'SK', clientId: '1', key: 'opaque-ciphertext', connectedAt: '2026-09-22T10:00:00.000Z' } })), { expectedRevision: '0', commandId: COMMAND, mediaType: 'application/json', sourceMapping, intent: { operation: 'connect-ozon', storeId: '1', timestamp: '2026-09-22T10:00:00.000Z' } });
+  assert.deepEqual(result, { revision: '1', replayed: false, result: { operation: 'connect-ozon', storeId: '1', timestamp: '2026-09-22T10:00:00.000Z' } });
+  const normalized = pool.calls.find(call => call.text?.includes('INSERT INTO "pult_market"."stores"')); assert.ok(normalized); assert.equal(normalized.values[3].includes('opaque-ciphertext'), false); assert.equal(normalized.values[3].includes('"key"'), false);
+  await assert.rejects(createStateStore({ pool }).writeStoreRegistry(logicalKey, Buffer.from('{}'), { expectedRevision: '0', commandId: COMMAND_2, mediaType: 'application/json', sourceMapping: { ...sourceMapping, sourcePath: 'ideas.json' }, intent: { operation: 'disconnect', storeId: '1', timestamp: '2026-09-22T10:01:00.000Z' } }), error => error.code === 'INVALID_ARGUMENT');
+});
+
 test('source mapping failure rolls back state and an existing unmapped document fails closed', async () => {
   const sourcePath = 'ideas.json';
   const logicalKey = 'file/' + crypto.createHash('sha256').update(sourcePath).digest('hex');

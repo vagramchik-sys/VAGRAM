@@ -6,7 +6,8 @@ const { gzipSync, gunzipSync } = require('node:zlib');
 const { allowed, FACT_FILES } = require('../market-history-archive.cjs');
 const { acquireMutationFence } = require('./postgres-write-fence.cjs');
 
-const MAX_SOURCE_BYTES = 64 * 1024 * 1024;
+// Existing archived snapshots exceed 64 MiB; keep a bounded raw budget.
+const MAX_SOURCE_BYTES = 320 * 1024 * 1024;
 
 class ArchiveRepositoryError extends Error {
   constructor(code, message) { super(message); this.name = 'ArchiveRepositoryError'; this.code = code; }

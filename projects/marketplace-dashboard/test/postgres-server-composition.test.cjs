@@ -16,13 +16,15 @@ const trueStats = { status: async () => ({ connected: false }), connect: async (
 function response() { return { status: null, value: null, writeHead(status) { this.status = status; }, end(value) { this.value = JSON.parse(value); } }; }
 
 test('coverage exposes implemented SQL reads and blocks production start on missing mutations', async () => {
-  let starts = 0;
+  let starts = 0, runtimeOptions;
   const runtimeFactory = options => ({
-    options,
+    options: (runtimeOptions = options),
     readiness: async () => ({ ready: true, missingAdapters: [], passive: false }),
     start: async () => { starts++; return {}; }
   });
-  const composition = createPostgresServerComposition({ pool: {}, stateStore, protect: async value => value, ownerAdapters, scheduler, schedulerRunner, acquisition, staticDir: 'C:\\public', staticFiles: ['index.html'], sourceProviders, trueStats, analytics: analytics(), runtimeFactory });
+  const pool = {}, readPool = {};
+  const composition = createPostgresServerComposition({ pool, readPool, stateStore, protect: async value => value, ownerAdapters, scheduler, schedulerRunner, acquisition, staticDir: 'C:\\public', staticFiles: ['index.html'], sourceProviders, trueStats, analytics: analytics(), runtimeFactory });
+  assert.equal(runtimeOptions.pool,pool); assert.equal(runtimeOptions.readPool,readPool);
   assert.equal(composition.coverage['/api/stores'].status, 'ready');
   assert.equal(composition.coverage['/api/buyer-order-segments'].status, 'ready');
   assert.equal(composition.coverage['/api/connect'].status, 'missing');

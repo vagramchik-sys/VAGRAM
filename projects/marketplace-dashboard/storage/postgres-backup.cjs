@@ -7,13 +7,15 @@ const crypto = require('node:crypto');
 const { spawn } = require('node:child_process');
 const { withWriteFence } = require('./postgres-write-fence.cjs');
 
-const SCHEMAS = Object.freeze(['pult', 'pult_history', 'pult_market']);
+const LEGACY_SCHEMAS = Object.freeze(['pult', 'pult_history', 'pult_market']);
+const SCHEMAS = Object.freeze([...LEGACY_SCHEMAS, 'pult_live']);
 const INCOMPLETE_MARKER = 'BACKUP_INCOMPLETE.json';
 const COMPLETE_MARKER = 'BACKUP_COMPLETE.json';
 const MANIFEST_FILE = 'backup-manifest.json';
 const DUMP_FILE = 'database.dump';
 const IDENTIFIER = /^[a-z_][a-z0-9_$]{0,62}$/u;
 const TEST_DATABASE = /^pult_test_[a-f0-9]{8,64}(?:_[a-z0-9_]+)?$/u;
+const DIGEST_FORMAT_VERSION = 2;
 
 class PostgresBackupError extends Error {
   constructor(code, message) { super(message); this.name = 'PostgresBackupError'; this.code = code; }
@@ -120,12 +122,23 @@ function hashFrame(hash, text) {
   hash.update(length).update(bytes);
 }
 
+function valueFrame(column, alias = 't') {
+  const value = `${alias}.${quote(column.name)}`;
+  if (column.bytea) return `CASE WHEN ${value} IS NULL THEN jsonb_build_array('null') ELSE jsonb_build_array('bytea',octet_length(${value})::text,encode(sha256(${value}),'hex')) END`;
+  return `CASE WHEN ${value} IS NULL THEN jsonb_build_array('null') ELSE jsonb_build_array('json',to_jsonb(${value})) END`;
+}
+
+function rowDigest(columns) {
+  return `encode(sha256(convert_to(jsonb_build_array(${columns.map(column => valueFrame(column)).join(',')})::text,'UTF8')),'hex')`;
+}
+
 async function tableRows(client, table, cursorNumber) {
   const schema = quote(table.schema), name = quote(table.table);
-  const rowHash = `encode(sha256(convert_to(to_jsonb(t)::text,'UTF8')),'hex')`;
+  const rowHash = rowDigest(table.columns);
   const order = table.primaryKey.length ? table.primaryKey.map(quote).join(',') : rowHash;
+  const keyColumns = table.primaryKey.map(key => table.columns.find(column => column.name === key));
   const keyHash = table.primaryKey.length
-    ? `encode(sha256(convert_to(jsonb_build_array(${table.primaryKey.map(column => `to_jsonb(t.${quote(column)})`).join(',')})::text,'UTF8')),'hex')`
+    ? rowDigest(keyColumns)
     : 'NULL::text';
   const cursor = `pult_backup_${cursorNumber}`;
   await client.query(`DECLARE ${quote(cursor)} NO SCROLL CURSOR FOR SELECT ${rowHash} AS row_hash,${keyHash} AS key_hash FROM ${schema}.${name} t ORDER BY ${order}`);
@@ -145,28 +158,41 @@ async function tableRows(client, table, cursorNumber) {
   return { ...table, count: count.toString(), rowSha256: rows.digest('hex'), keySha256: keys ? keys.digest('hex') : null };
 }
 
-async function databaseInventory(client) {
+async function databaseInventory(client, schemas = SCHEMAS) {
   const tablesResult = await client.query(`SELECT n.nspname AS schema_name,c.relname AS table_name,
     COALESCE((SELECT array_agg(a.attname::text ORDER BY k.ordinality)::text[] FROM pg_index i
       CROSS JOIN LATERAL unnest(i.indkey) WITH ORDINALITY k(attnum,ordinality)
       JOIN pg_attribute a ON a.attrelid=c.oid AND a.attnum=k.attnum
-      WHERE i.indrelid=c.oid AND i.indisprimary),ARRAY[]::text[]) AS primary_key
+      WHERE i.indrelid=c.oid AND i.indisprimary),ARRAY[]::text[]) AS primary_key,
+    COALESCE((SELECT jsonb_agg(jsonb_build_object(
+      'name',a.attname,'type',format_type(a.atttypid,a.atttypmod),'bytea',a.atttypid='pg_catalog.bytea'::regtype,
+      'notNull',a.attnotnull,'identity',a.attidentity,'generated',a.attgenerated,
+      'collation',CASE WHEN a.attcollation=0 THEN NULL ELSE a.attcollation::regcollation::text END,
+      'default',pg_get_expr(d.adbin,d.adrelid)) ORDER BY a.attnum)
+      FROM pg_attribute a LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+      WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped),'[]'::jsonb) AS columns
     FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
     WHERE n.nspname=ANY($1::text[]) AND (c.relkind='p' OR (c.relkind='r' AND NOT c.relispartition))
-    ORDER BY n.nspname COLLATE "C",c.relname COLLATE "C"`, [SCHEMAS]);
+    ORDER BY n.nspname COLLATE "C",c.relname COLLATE "C"`, [schemas]);
   const tables = [];
   let cursor = 0;
   for (const row of tablesResult.rows) {
     if (!catalogIdentifier(row.schema_name) || !catalogIdentifier(row.table_name) ||
-        !Array.isArray(row.primary_key) || row.primary_key.some(column => !catalogIdentifier(column)))
+        !Array.isArray(row.primary_key) || row.primary_key.some(column => !catalogIdentifier(column)) ||
+        !Array.isArray(row.columns) || !row.columns.length || row.columns.some(column =>
+          !catalogIdentifier(column?.name) || typeof column.type !== 'string' || typeof column.bytea !== 'boolean' ||
+          typeof column.notNull !== 'boolean' || typeof column.identity !== 'string' || typeof column.generated !== 'string' ||
+          (column.collation !== null && typeof column.collation !== 'string') || (column.default !== null && typeof column.default !== 'string')) ||
+        new Set(row.columns.map(column => column.name)).size !== row.columns.length ||
+        row.primary_key.some(column => !row.columns.some(item => item.name === column)))
       fail('DATABASE_SHAPE_INVALID', 'PostgreSQL catalog contains an unsupported identifier');
-    tables.push(await tableRows(client, { schema: row.schema_name, table: row.table_name, primaryKey: row.primary_key }, ++cursor));
+    tables.push(await tableRows(client, { schema: row.schema_name, table: row.table_name, primaryKey: row.primary_key, columns: row.columns }, ++cursor));
   }
 
   const constraints = (await client.query(`SELECT n.nspname AS schema_name,c.relname AS table_name,k.conname AS constraint_name,
     k.contype AS type,k.convalidated AS validated,pg_get_constraintdef(k.oid,true) AS definition
     FROM pg_constraint k JOIN pg_class c ON c.oid=k.conrelid JOIN pg_namespace n ON n.oid=c.relnamespace
-    WHERE n.nspname=ANY($1::text[]) ORDER BY n.nspname COLLATE "C",c.relname COLLATE "C",k.conname COLLATE "C"`, [SCHEMAS])).rows.map(row => ({
+    WHERE n.nspname=ANY($1::text[]) ORDER BY n.nspname COLLATE "C",c.relname COLLATE "C",k.conname COLLATE "C"`, [schemas])).rows.map(row => ({
     schema: row.schema_name, table: row.table_name, name: row.constraint_name,
     type: row.type, validated: row.validated === true, definition: row.definition
   }));
@@ -177,13 +203,24 @@ async function databaseInventory(client) {
     pg_get_indexdef(i.oid) AS definition
     FROM pg_index x JOIN pg_class c ON c.oid=x.indrelid JOIN pg_class i ON i.oid=x.indexrelid
       JOIN pg_namespace n ON n.oid=c.relnamespace
-    WHERE n.nspname=ANY($1::text[]) ORDER BY n.nspname COLLATE "C",c.relname COLLATE "C",i.relname COLLATE "C"`, [SCHEMAS])).rows.map(row => ({
+    WHERE n.nspname=ANY($1::text[]) ORDER BY n.nspname COLLATE "C",c.relname COLLATE "C",i.relname COLLATE "C"`, [schemas])).rows.map(row => ({
     schema: row.schema_name, table: row.table_name, name: row.index_name,
     valid: row.valid === true, ready: row.ready === true, unique: row.unique_index === true,
     primary: row.primary_index === true, definition: row.definition
   }));
   if (indexes.some(item => !item.valid || !item.ready)) fail('INDEX_INVALID', 'PostgreSQL contains an invalid index');
   return { tables, constraints, indexes };
+}
+
+async function existingSchemas(client) {
+  const rows=(await client.query('SELECT nspname FROM pg_namespace WHERE nspname=ANY($1::text[])',[SCHEMAS])).rows;
+  const found=new Set(rows.map(row=>row.nspname));return SCHEMAS.filter(name=>found.has(name));
+}
+
+function manifestSchemas(manifest) {
+  if (manifest.schemas === undefined) return LEGACY_SCHEMAS;
+  if (!Array.isArray(manifest.schemas) || !manifest.schemas.length || new Set(manifest.schemas).size !== manifest.schemas.length || manifest.schemas.some(name => !SCHEMAS.includes(name)) || !manifest.schemas.includes('pult')) fail('BACKUP_INVALID', 'PostgreSQL backup schema list is invalid');
+  return manifest.schemas;
 }
 
 async function commandSequence(client) {
@@ -206,10 +243,11 @@ async function verifyArtifacts(backupDir) {
     manifest = JSON.parse(manifestBytes.toString('utf8'));
   } catch { fail('BACKUP_INVALID', 'PostgreSQL backup marker or manifest is invalid'); }
   if (marker?.schemaVersion !== 1 || marker.manifest !== MANIFEST_FILE || marker.manifestSha256 !== sha256(manifestBytes) ||
-      manifest?.schemaVersion !== 1 || manifest.status !== 'complete' || manifest.dump?.file !== DUMP_FILE ||
+      manifest?.schemaVersion !== 1 || manifest.digestFormatVersion !== DIGEST_FORMAT_VERSION || manifest.status !== 'complete' || manifest.dump?.file !== DUMP_FILE ||
       !/^[a-f0-9]{64}$/u.test(manifest.dump.sha256) || !/^(0|[1-9]\d*)$/u.test(manifest.dump.bytes) ||
       typeof manifest.sourceDatabase !== 'string' || !Array.isArray(manifest.tables) || !Array.isArray(manifest.constraints) || !Array.isArray(manifest.indexes))
     fail('BACKUP_INVALID', 'PostgreSQL backup manifest authentication failed');
+  manifestSchemas(manifest);
   const dump = await safeBackupFile(root, DUMP_FILE), digest = await digestFile(dump).catch(() => null);
   if (!digest || digest.bytes !== manifest.dump.bytes || digest.sha256 !== manifest.dump.sha256)
     fail('BACKUP_INVALID', 'PostgreSQL dump does not match its manifest');
@@ -237,22 +275,22 @@ async function createBackup({ pool, connection, binaryDirectory, destinationDir 
         await client.query('SET LOCAL extra_float_digits TO 3');
         const snapshot = (await client.query('SELECT pg_export_snapshot() AS snapshot')).rows?.[0]?.snapshot;
         if (typeof snapshot !== 'string' || !snapshot) fail('DATABASE_ERROR', 'PostgreSQL did not export a backup snapshot');
-        const upperSequence = await commandSequence(client);
-        const inventory = await databaseInventory(client);
+        const upperSequence = await commandSequence(client),schemas=await existingSchemas(client);
+        const inventory = await databaseInventory(client,schemas);
         await run(pgDump, [
           ...connectionArgs(connection), '--format=custom', '--no-owner', '--no-acl', '--snapshot', snapshot,
-          ...SCHEMAS.flatMap(schema => ['--schema', schema]),
+          ...schemas.flatMap(schema => ['--schema', schema]),
           '--file', path.join(destination, DUMP_FILE)
         ], connection);
-        checkpoint = { upperSequence, ...inventory };
+        checkpoint = { upperSequence, schemas, ...inventory };
         await client.query('COMMIT');
       } catch (error) { await client.query('ROLLBACK').catch(() => {}); throw error; }
     });
     await syncFile(path.join(destination, DUMP_FILE));
     const dump = await digestFile(path.join(destination, DUMP_FILE));
     const manifest = {
-      schemaVersion: 1, status: 'complete', createdAt: new Date().toISOString(), sourceDatabase: connection.database,
-      upperSequence: checkpoint.upperSequence, schemas: [...SCHEMAS], dump: { file: DUMP_FILE, ...dump },
+      schemaVersion: 1, digestFormatVersion: DIGEST_FORMAT_VERSION, status: 'complete', createdAt: new Date().toISOString(), sourceDatabase: connection.database,
+      upperSequence: checkpoint.upperSequence, schemas: checkpoint.schemas, dump: { file: DUMP_FILE, ...dump },
       tables: checkpoint.tables, constraints: checkpoint.constraints, indexes: checkpoint.indexes,
       rollbackReady: false
     };
@@ -293,7 +331,7 @@ async function verifyRestore({ pool, connection, binaryDirectory, backupDir } = 
     await client.query("SET LOCAL DateStyle TO 'ISO, YMD'");
     await client.query('SET LOCAL extra_float_digits TO 3');
     const upperSequence = await commandSequence(client);
-    const inventory = await databaseInventory(client);
+    const inventory = await databaseInventory(client,manifestSchemas(artifacts.manifest));
     if (upperSequence !== artifacts.manifest.upperSequence ||
         stable(inventory.tables) !== stable(artifacts.manifest.tables) ||
         stable(inventory.constraints) !== stable(artifacts.manifest.constraints) ||
@@ -311,5 +349,6 @@ async function verifyRestore({ pool, connection, binaryDirectory, backupDir } = 
 
 module.exports = {
   createBackup, verifyRestore, PostgresBackupError,
-  INCOMPLETE_MARKER, COMPLETE_MARKER, MANIFEST_FILE, DUMP_FILE
+  INCOMPLETE_MARKER, COMPLETE_MARKER, MANIFEST_FILE, DUMP_FILE,
+  _test: { databaseInventory, manifestSchemas, DIGEST_FORMAT_VERSION }
 };

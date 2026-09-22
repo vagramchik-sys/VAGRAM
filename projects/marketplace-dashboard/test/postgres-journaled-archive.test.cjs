@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { gzipSync } = require('node:zlib');
+const { gzipSync, gunzipSync } = require('node:zlib');
 const { createStateStore } = require('../storage/postgres-state.cjs');
 const { createMarketHistoryRepository } = require('../storage/postgres-history-repository.cjs');
 const { createPostgresArchiveRepository } = require('../storage/postgres-archive-repository.cjs');
@@ -39,7 +39,9 @@ test('raw is copied before await and corrupt or invalid evidence never reaches t
   raw.fill(0);
   const added = await pending;
   assert.deepEqual(receivedRaw, original);
-  assert.equal(added.content.rawBase64, original.toString('base64'));
+  assert.equal(added.content.schemaVersion, 2);
+  assert.equal(Object.hasOwn(added.content, 'rawBase64'), false);
+  assert.deepEqual(gunzipSync(Buffer.from(added.content.proposedGzipBase64, 'base64')), original);
 
   const invalid = Buffer.from([0xff]);
   await assert.rejects(wrapper.addVersion(addCommand(invalid)), error => error instanceof JournaledArchiveError && error.code === 'INVALID_FACT_JSON');
@@ -48,6 +50,25 @@ test('raw is copied before await and corrupt or invalid evidence never reaches t
 });
 
 const integrationUrl = process.env.PULT_TEST_DATABASE_URL;
+test('legacy v1 archive commands retry their original bytes without rerunning the effect', async () => {
+  const { encodeJson } = require('../storage/postgres-json-repository.cjs');
+  const raw = factRaw(1), compressed = gzipSync(raw, { level: 1, mtime: 0 });
+  for (const kind of ['archive.version-add', 'archive.process-exact-pending-version']) {
+    const command = kind === 'archive.version-add' ? addCommand(raw) : processCommand(digest(raw));
+    const value = { schemaVersion: 1, kind, sourceFile: command.sourceFile, sourceMtime: 10,
+      commandCapturedAt: capturedAt, archivedCapturedAt: capturedAt, contentHash: digest(raw), sourceBytes: raw.length,
+      archiveBytes: compressed.length, factsStatus: 'pending', rawBase64: raw.toString('base64'),
+      ...(kind === 'archive.version-add' ? { proposedGzipBase64: compressed.toString('base64'), proposedGzipHash: digest(compressed) }
+        : { gzipBase64: compressed.toString('base64'), gzipHash: digest(compressed) }) };
+    const bytes = encodeJson(value), key = `archive/${digest(command.sourceFile)}`;
+    const stateStore = { async readCommand() { return { commandId: command.commandId, logicalKey: key,
+      before: { revision: command.expectedRevision }, after: { content: bytes, sha256: crypto.createHash('sha256').update(bytes).digest(), deleted: false, mediaType: 'application/vnd.pult.archive-command+json' } }; },
+      async writeWithEffect(actualKey, content) { assert.equal(actualKey, key); assert.deepEqual(content, bytes); return { replayed: true }; } };
+    const forbidden = () => { throw Error('must not run'); };
+    const wrapper = createJournaledArchive({ stateStore, archive: { addInTransaction: forbidden, processVersionInTransaction: forbidden, versionEvidence: forbidden, factsStatusFor: forbidden } });
+    assert.deepEqual(await (kind === 'archive.version-add' ? wrapper.addVersion(command) : wrapper.processVersion(command)), { replayed: true });
+  }
+});
 test('PostgreSQL integration: archive effects and journal commit atomically and replay exactly once', { skip: !integrationUrl, timeout: 30000 }, async t => {
   const parsed = new URL(integrationUrl), database = decodeURIComponent(parsed.pathname.slice(1));
   assert.match(database, /^pult_test_[a-z0-9]+$/u);
@@ -102,4 +123,15 @@ test('PostgreSQL integration: archive effects and journal commit atomically and 
   assert.equal(processEffects, 2, 'durable duplicate must not rerun archive/history effects');
   const durable = await stateStore.readCommand(`archive/${digest('insights-1.json')}`, process1.commandId, { operation: 'write' });
   assert.deepEqual(durable.result, processed.result);
+
+  const large = Buffer.alloc(65 * 1024 * 1024, 0x61);
+  const largeCommand = addCommand(large, { sourceFile: 'data-2.json' });
+  const largeResult = await wrapper.addVersion(largeCommand);
+  const largeRecord = await stateStore.readCommand(`archive/${digest('data-2.json')}`, largeCommand.commandId, { operation: 'write' });
+  const largeEnvelope = JSON.parse(largeRecord.after.content);
+  assert.equal(largeEnvelope.schemaVersion, 2);
+  assert.equal(Object.hasOwn(largeEnvelope, 'rawBase64'), false);
+  assert.ok(largeRecord.after.content.length < 1024 * 1024, 'compressible evidence must not duplicate raw bytes in the journal');
+  assert.deepEqual(await wrapper.addVersion(largeCommand), { ...largeResult, replayed: true });
+  assert.deepEqual((await baseArchive.latest('data-2.json')).raw, large);
 });

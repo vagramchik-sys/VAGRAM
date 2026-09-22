@@ -1,55 +1,17 @@
 'use strict';
-const http = require('node:http');
-const fs = require('node:fs/promises');
-const path = require('node:path');
-const crypto = require('node:crypto');
-const { PartnerError } = require('./postgres-partner-workspace.cjs');
-const cookieName = 'pult_partner_session';
-class PartnerServerError extends Error { constructor(message, status) { super(message); this.status = status; } }
-const ASSETS = new Map([['/', ['partner.html', 'text/html']], ['/partner', ['partner.html', 'text/html']], ['/partner.html', ['partner.html', 'text/html']], ['/partner.js', ['partner.js', 'application/javascript']], ['/partner.css', ['partner.css', 'text/css']]]);
-async function start({ workspace, staticDir = path.resolve(__dirname, '..', '..', 'dist'), port = 0, host = '127.0.0.1', now = () => Date.now(), sessionTtlMs = 8 * 60 * 60 * 1000 } = {}) {
-  for (const method of ['authenticateCredential', 'authorizeSession', 'snapshotForPartner']) if (typeof workspace?.[method] !== 'function') throw new TypeError('workspace adapter is required');
-  if (host !== '127.0.0.1') throw Error('Partner listener must remain on 127.0.0.1');
-  if (!Number.isSafeInteger(sessionTtlMs) || sessionTtlMs < 1 || sessionTtlMs > 8 * 60 * 60 * 1000) throw Error('Invalid session expiry');
-  const sessions = new Map(), attempts = new Map(); let origin;
-  const json = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8' }); res.end(JSON.stringify(value)); };
-  const deny = (res, status, message) => json(res, status, { error: message });
-  async function currentSession(req) {
-    const cookies = String(req.headers.cookie || '').split(';').map(value => value.trim()).filter(value => value.startsWith(cookieName + '='));
-    if (cookies.length !== 1) return null;
-    const token = cookies[0].slice(cookieName.length + 1), found = sessions.get(token);
-    if (!found || found.expires <= now() || await workspace.authorizeSession(found) !== true) { sessions.delete(token); return null; }
-    return { ...found, token };
-  }
-  async function body(req) {
-    if (!/^application\/json(?:;|$)/iu.test(req.headers['content-type'] || '')) throw new PartnerServerError('Ожидается JSON.', 415);
-    let bytes = 0; const chunks = []; for await (const part of req) { const chunk = Buffer.from(part); bytes += chunk.length; if (bytes > 4096) throw new PartnerServerError('Запрос слишком большой.', 413); chunks.push(chunk); }
-    try { const value = JSON.parse(Buffer.concat(chunks).toString('utf8')); if (!value || typeof value !== 'object' || Array.isArray(value)) throw Error(); return value; } catch { throw new PartnerServerError('Некорректный JSON.', 400); }
-  }
-  const server = http.createServer(async (req, res) => {
-    res.setHeader('Cache-Control', 'no-store'); res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('X-Frame-Options', 'DENY'); res.setHeader('Referrer-Policy', 'no-referrer');
-    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");
-    try {
-      if (req.headers.host !== new URL(origin).host) return deny(res, 403, 'Недопустимый адрес запроса.');
-      if (req.headers['sec-fetch-site'] === 'cross-site') return deny(res, 403, 'Недопустимый источник запроса.');
-      if (!req.url.startsWith('/') || req.url.startsWith('//')) return deny(res, 404, 'Не найдено.');
-      const url = new URL(req.url, origin); if (url.search) return deny(res, 400, 'Параметры запроса не поддерживаются.');
-      if (req.method === 'GET' && ASSETS.has(url.pathname)) { const [file, type] = ASSETS.get(url.pathname), content = await fs.readFile(path.join(staticDir, file)); res.writeHead(200, { 'Content-Type': `${type}; charset=utf-8` }); res.end(content); return; }
-      if (req.method === 'POST' && ['/api/partner/login', '/api/partner/logout'].includes(url.pathname)) {
-        if (req.headers.origin !== origin) return deny(res, 403, 'Недопустимый источник запроса.');
-        if (url.pathname.endsWith('/logout')) { const active = await currentSession(req); if (active) sessions.delete(active.token); res.setHeader('Set-Cookie', `${cookieName}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`); return json(res, 200, { ok: true }); }
-        const remote = req.socket.remoteAddress, time = now(); for (const [key, value] of attempts) if (time >= value.until) attempts.delete(key);
-        const attempt = attempts.get(remote) || { count: 0, until: time + 15 * 60 * 1000 }; if (attempt.count >= 10) { res.setHeader('Retry-After', String(Math.ceil((attempt.until - time) / 1000))); return deny(res, 429, 'Слишком много попыток. Повторите позже.'); } attempt.count++; attempts.set(remote, attempt);
-        const input = await body(req); if (Object.keys(input).some(key => key !== 'credential')) return deny(res, 400, 'Запрос содержит неподдерживаемые поля.');
-        const auth = await workspace.authenticateCredential(input.credential); if (!auth) return deny(res, 401, 'Неверный или отозванный код доступа.');
-        for (const [token, value] of sessions) if (value.expires <= time) sessions.delete(token); if (sessions.size >= 1000) return deny(res, 503, 'Сервис временно занят.');
-        const token = crypto.randomBytes(32).toString('base64url'); sessions.set(token, { ...auth, expires: time + sessionTtlMs }); res.setHeader('Set-Cookie', `${cookieName}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.floor(sessionTtlMs / 1000)}`); return json(res, 200, { ok: true });
-      }
-      if (req.method === 'GET' && url.pathname === '/api/partner/dashboard') { const active = await currentSession(req); if (!active) return deny(res, 401, 'Войдите в кабинет партнёра.'); if (await workspace.authorizeSession(active) !== true) { sessions.delete(active.token); return deny(res, 401, 'Войдите в кабинет партнёра.'); } return json(res, 200, await workspace.snapshotForPartner(active.partnerId, active)); }
-      return deny(res, 404, 'Не найдено.');
-    } catch (error) { if (res.headersSent) return res.end(); const known = error instanceof PartnerServerError || error instanceof PartnerError; deny(res, known ? error.status : 503, known ? error.message : 'Кабинет временно недоступен.'); }
-  });
-  server.requestTimeout = 10000; server.headersTimeout = 10000;
-  await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); }); origin = `http://127.0.0.1:${server.address().port}`; server.partnerOrigin = origin; return server;
-}
-module.exports = { start, cookieName };
+const http=require('node:http'),crypto=require('node:crypto'),path=require('node:path'),fs=require('node:fs/promises');
+const COOKIE='pult_partner_session',ASSETS=new Map([['/',['partner.html','text/html; charset=utf-8']],['/partner',['partner.html','text/html; charset=utf-8']],['/partner.html',['partner.html','text/html; charset=utf-8']],['/partner.js',['partner.js','application/javascript; charset=utf-8']],['/partner.css',['partner.css','text/css; charset=utf-8']],['/command-transport.js',['command-transport.js','application/javascript; charset=utf-8']]]);
+module.exports=function createPostgresPartnerServer({workspace,staticDir,port=4319,now=()=>Date.now(),sessionTtlMs=8*60*60*1000}={}){
+ for(const name of ['authenticateCredential','authorizeSession','snapshotForPartner'])if(typeof workspace?.[name]!=='function')throw new TypeError('Async partner workspace is required');
+ if(typeof staticDir!=='string'||!path.isAbsolute(staticDir)||!Number.isSafeInteger(port)||port<0||port>65535||!Number.isSafeInteger(sessionTtlMs)||sessionTtlMs<1||sessionTtlMs>8*60*60*1000)throw new TypeError('Partner server options are invalid');
+ let server=null,origin=null,root=null,closing=false,active=0,settle=null;const sessions=new Map(),attempts=new Map();
+ const json=(res,status,value)=>{res.writeHead(status,{'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store'});res.end(JSON.stringify(value))};
+ const drain=()=>active===0&&settle?.();
+ async function body(req){if(!/^application\/json(?:;|$)/iu.test(req.headers['content-type']||''))throw Object.assign(Error('Ожидается JSON.'),{status:415,public:true});const chunks=[];let size=0;for await(const part of req){const chunk=Buffer.from(part);size+=chunk.length;if(size>4096)throw Object.assign(Error('Запрос слишком большой.'),{status:413,public:true});chunks.push(chunk)}let value;try{value=JSON.parse(Buffer.concat(chunks).toString('utf8'))}catch{throw Object.assign(Error('Некорректный JSON.'),{status:400,public:true})}if(!value||typeof value!=='object'||Array.isArray(value))throw Object.assign(Error('Некорректный JSON.'),{status:400,public:true});return value}
+ async function current(req){const matches=String(req.headers.cookie||'').split(';').map(value=>value.trim()).filter(value=>value.startsWith(COOKIE+'='));if(matches.length!==1)return null;const token=matches[0].slice(COOKIE.length+1),found=sessions.get(token);if(!found||found.expires<=now()||!await workspace.authorizeSession(found)){sessions.delete(token);return null}return{...found,token}}
+ async function asset(res,pathname){const declared=ASSETS.get(pathname);if(!declared)return false;const target=await fs.realpath(path.join(root,declared[0])).catch(()=>null),stat=target&&await fs.stat(target).catch(()=>null);if(!target||!stat?.isFile()||target!==root&&!target.startsWith(root+path.sep)){res.writeHead(404).end();return true}res.writeHead(200,{'Content-Type':declared[1],'Cache-Control':'no-store'});res.end(await fs.readFile(target));return true}
+ async function start(){if(server||closing)throw Error('Partner listener cannot start');root=await fs.realpath(staticDir);server=http.createServer(async(req,res)=>{active++;res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('X-Frame-Options','DENY');res.setHeader('Referrer-Policy','no-referrer');res.setHeader('Content-Security-Policy',"default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'");try{if(closing||req.headers.host!==new URL(origin).host||req.headers['sec-fetch-site']==='cross-site'||!req.url.startsWith('/')||req.url.startsWith('//')){json(res,403,{error:'Недопустимый запрос.'});return}const url=new URL(req.url,origin);if(url.search){json(res,400,{error:'Параметры запроса не поддерживаются.'});return}if(req.method==='GET'&&await asset(res,url.pathname))return;if(req.method==='POST'&&url.pathname==='/api/partner/logout'){if(req.headers.origin!==origin){json(res,403,{error:'Недопустимый источник запроса.'});return}const value=await current(req);if(value)sessions.delete(value.token);res.setHeader('Set-Cookie',COOKIE+'=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0');json(res,200,{ok:true});return}if(req.method==='POST'&&url.pathname==='/api/partner/login'){if(req.headers.origin!==origin){json(res,403,{error:'Недопустимый источник запроса.'});return}const address=req.socket.remoteAddress,time=now();for(const[key,value]of attempts)if(time>=value.until)attempts.delete(key);const attempt=attempts.get(address)||{count:0,until:time+15*60*1000};if(attempt.count>=10){res.setHeader('Retry-After',String(Math.ceil((attempt.until-time)/1000)));json(res,429,{error:'Слишком много попыток. Повторите позже.'});return}attempt.count++;attempts.set(address,attempt);const input=await body(req);if(Object.keys(input).some(key=>key!=='credential'))throw Object.assign(Error('Запрос содержит неподдерживаемые поля.'),{status:400,public:true});const auth=await workspace.authenticateCredential(input.credential);if(!auth){json(res,401,{error:'Неверный или отозванный код доступа.'});return}for(const[token,value]of sessions)if(value.expires<=time)sessions.delete(token);if(sessions.size>=1000){json(res,503,{error:'Сервис временно занят.'});return}const token=crypto.randomBytes(32).toString('base64url');sessions.set(token,{...auth,expires:time+sessionTtlMs});res.setHeader('Set-Cookie',COOKIE+'='+token+'; HttpOnly; SameSite=Strict; Path=/; Max-Age='+Math.floor(sessionTtlMs/1000));json(res,200,{ok:true});return}if(req.method==='GET'&&url.pathname==='/api/partner/dashboard'){const session=await current(req);if(!session){json(res,401,{error:'Войдите в кабинет партнёра.'});return}json(res,200,await workspace.snapshotForPartner(session.partnerId,session));return}json(res,404,{error:'Не найдено.'})}catch(error){if(!res.headersSent)json(res,error?.public?[400,413,415].includes(error.status)?error.status:400:503,{error:error?.public?error.message:'Кабинет временно недоступен.'});else res.destroy()}finally{active--;drain()}});server.requestTimeout=10000;server.headersTimeout=10000;await new Promise((resolve,reject)=>{server.once('error',reject);server.listen(port,'127.0.0.1',resolve)});origin='http://127.0.0.1:'+server.address().port}
+ async function close(){if(closing)return;closing=true;sessions.clear();if(server?.listening)await new Promise(resolve=>{server.close(resolve);server.closeIdleConnections?.()});if(active)await new Promise(resolve=>{settle=resolve})}
+ return Object.freeze({start,close,available:()=>!!server?.listening,origin:()=>origin});
+};
+module.exports.COOKIE=COOKIE;

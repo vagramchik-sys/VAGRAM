@@ -5,6 +5,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 const { encodeJson } = require('./postgres-json-repository.cjs');
+const { postgresSummary, sqliteSummary, inventorySummary, validateSummary } = require('./postgres-parity-stream.cjs');
 
 class HistoryParityError extends Error { constructor(code, message) { super(message); this.name = 'HistoryParityError'; this.code = code; } }
 const fail = (code, message) => { throw new HistoryParityError(code, message); };
@@ -14,6 +15,8 @@ const number = value => { const result = Number(value); if (!Number.isSafeIntege
 const canonical = value => encodeJson(value, 320 * 1024 * 1024);
 function sorted(rows) { return rows.sort((a, b) => Buffer.compare(canonical(a), canonical(b))); }
 function identity(row) { return { sourceFile: row.source_file, contentHash: row.content_hash }; }
+const NAMES=['ingestions','snapshots','facts','events','names','aliases','versions','latest','state'];
+const c=column=>`${column} COLLATE "C" ASC NULLS FIRST`;
 
 async function postgresHistoryInventory(client) {
   if (!client?.query) fail('INVALID_ARGUMENT', 'PostgreSQL query client is required');
@@ -62,10 +65,7 @@ function compareHistoryInventories(expected, actual) {
 
 function summarizeHistoryInventory(inventory) {
   if (!inventory || typeof inventory !== 'object' || Array.isArray(inventory)) fail('PARITY_INVALID', 'History inventory is invalid');
-  return Object.fromEntries(Object.entries(inventory).map(([key, rows]) => {
-    if (!Array.isArray(rows)) fail('PARITY_INVALID', 'History inventory section is invalid');
-    return [key, { count: String(rows.length), sha256: digest(canonical(rows)) }];
-  }));
+  const names=Object.keys(inventory);for(const name of names)if(!Array.isArray(inventory[name]))fail('PARITY_INVALID','History inventory section is invalid');return inventorySummary(inventory,names);
 }
 
 function compareHistorySummary(expected, inventory) {
@@ -75,4 +75,36 @@ function compareHistorySummary(expected, inventory) {
   return { matched: true, expected, actual };
 }
 
-module.exports = { postgresHistoryInventory, legacyHistoryInventory, summarizeHistoryInventory, compareHistoryInventories, compareHistorySummary, HistoryParityError };
+async function summarizePostgresHistory(client,{batchSize=128}={}){
+ const specs=[
+  {name:'ingestions',sql:`SELECT source_file,content_hash,captured_at_text,source_kind FROM pult_history.ingestions ORDER BY ${c('source_file')},${c('content_hash')}`,map:row=>({...identity(row),capturedAt:row.captured_at_text,sourceKind:row.source_kind})},
+  {name:'snapshots',sql:`SELECT i.source_file,i.content_hash,s.source_kind,s.market,s.store_id,s.day::text,s.source_actual_at_text,s.closed_confirmed,s.partial_reason FROM pult_history.snapshots s JOIN pult_history.ingestions i ON i.id=s.ingestion_id ORDER BY ${c('i.source_file')},${c('i.content_hash')},${c('s.source_kind')},${c('s.market')},${c('s.store_id')},s.day ASC NULLS FIRST,${c('s.source_actual_at_text')},s.closed_confirmed ASC NULLS FIRST,${c('s.partial_reason')}`,map:row=>({...identity(row),sourceKind:row.source_kind,market:row.market,storeId:row.store_id,day:row.day,sourceActualAt:row.source_actual_at_text,closed:row.closed_confirmed,partialReason:row.partial_reason})},
+  {name:'facts',sql:`SELECT i.source_file,i.content_hash,s.source_kind,s.store_id,s.day::text,f.product_id,f.observed_at_text,f.units,f.revenue,f.sold_units,f.returned_units,f.realized,f.ads,f.unknown_unit_rows::text FROM pult_history.facts f JOIN pult_history.snapshots s ON s.id=f.snapshot_id JOIN pult_history.ingestions i ON i.id=s.ingestion_id ORDER BY ${c('i.source_file')},${c('i.content_hash')},${c('s.source_kind')},${c('s.store_id')},s.day ASC NULLS FIRST,${c('f.product_id')},${c('f.observed_at_text')},f.units ASC NULLS FIRST,f.revenue ASC NULLS FIRST,f.sold_units ASC NULLS FIRST,f.returned_units ASC NULLS FIRST,f.realized ASC NULLS FIRST,f.ads ASC NULLS FIRST,f.unknown_unit_rows ASC`,map:row=>({...identity(row),sourceKind:row.source_kind,storeId:row.store_id,day:row.day,productId:row.product_id,observedAt:row.observed_at_text,units:row.units,revenue:row.revenue,soldUnits:row.sold_units,returnedUnits:row.returned_units,realized:row.realized,ads:row.ads,unknownUnitRows:number(row.unknown_unit_rows)})},
+  {name:'events',sql:`SELECT i.source_file,i.content_hash,s.source_kind,s.store_id,s.day::text,e.product_id,e.occurred_at_text,e.amount FROM pult_history.order_events e JOIN pult_history.snapshots s ON s.id=e.snapshot_id JOIN pult_history.ingestions i ON i.id=s.ingestion_id ORDER BY ${c('i.source_file')},${c('i.content_hash')},${c('s.source_kind')},${c('s.store_id')},s.day ASC NULLS FIRST,${c('e.product_id')},${c('e.occurred_at_text')},e.amount ASC NULLS FIRST`,map:row=>({...identity(row),sourceKind:row.source_kind,storeId:row.store_id,day:row.day,productId:row.product_id,occurredAt:row.occurred_at_text,amount:row.amount})},
+  {name:'names',sql:`SELECT market,store_id,product_id,name,source_actual_at_text FROM pult_history.product_names ORDER BY ${c('market')},${c('store_id')},${c('product_id')}`,map:row=>({market:row.market,storeId:row.store_id,productId:row.product_id,name:row.name,sourceActualAt:row.source_actual_at_text})},
+  {name:'aliases',sql:`SELECT market,store_id,alias,product_id,source_actual_at_text FROM pult_history.product_aliases ORDER BY ${c('market')},${c('store_id')},${c('alias')}`,map:row=>({market:row.market,storeId:row.store_id,alias:row.alias,productId:row.product_id,sourceActualAt:row.source_actual_at_text})},
+  {name:'versions',sql:`SELECT source_file,content_hash,captured_at_text,source_mtime,source_bytes::text,archive_bytes::text,facts_status,encode(archive_gzip_hash,'hex') gzip_hash FROM pult_history.archive_versions ORDER BY ${c('source_file')},${c('content_hash')}`,map:row=>({...identity(row),capturedAt:row.captured_at_text,sourceMtime:row.source_mtime,sourceBytes:row.source_bytes,archiveBytes:row.archive_bytes,factsStatus:row.facts_status,gzipHash:row.gzip_hash})},
+  {name:'latest',sql:`SELECT source_file,stamp,content_hash FROM pult_history.archive_latest ORDER BY ${c('source_file')}`,map:row=>({sourceFile:row.source_file,stamp:row.stamp,contentHash:row.content_hash})},
+  {name:'state',sql:`SELECT key,value FROM pult_history.archive_state ORDER BY ${c('key')}`,map:row=>({key:row.key,value:row.value})}
+ ];return postgresSummary(client,specs,{batchSize});
+}
+async function summarizeLegacyHistory({productsFile,archiveFile,historyRoot}={}){
+ for(const file of[productsFile,archiveFile])if(typeof file!=='string'||!path.isAbsolute(file))fail('INVALID_ARGUMENT','Legacy SQLite paths must be absolute');if(typeof historyRoot!=='string'||!path.isAbsolute(historyRoot))fail('INVALID_ARGUMENT','historyRoot must be absolute');const products=new DatabaseSync(productsFile,{readOnly:true}),archive=new DatabaseSync(archiveFile,{readOnly:true});try{
+  const p=await sqliteSummary(products,[
+   {name:'ingestions',sql:'SELECT source_file,content_hash,captured_at,source_kind FROM ingestions ORDER BY source_file COLLATE BINARY,content_hash COLLATE BINARY',map:row=>({...identity(row),capturedAt:row.captured_at,sourceKind:row.source_kind})},
+   {name:'snapshots',sql:'SELECT i.source_file,i.content_hash,s.source_kind,s.market,s.store_id,s.day,s.source_actual_at,s.closed_confirmed,s.partial_reason FROM snapshots s JOIN ingestions i ON i.id=s.ingestion_id ORDER BY i.source_file COLLATE BINARY,i.content_hash COLLATE BINARY,s.source_kind COLLATE BINARY,s.market COLLATE BINARY,s.store_id COLLATE BINARY,s.day,s.source_actual_at COLLATE BINARY,s.closed_confirmed,s.partial_reason COLLATE BINARY',map:row=>({...identity(row),sourceKind:row.source_kind,market:row.market,storeId:row.store_id,day:row.day,sourceActualAt:row.source_actual_at,closed:Boolean(row.closed_confirmed),partialReason:row.partial_reason})},
+   {name:'facts',sql:'SELECT i.source_file,i.content_hash,s.source_kind,s.store_id,s.day,f.product_id,f.observed_at,f.units,f.revenue,f.sold_units,f.returned_units,f.realized,f.ads,f.unknown_unit_rows FROM facts f JOIN snapshots s ON s.id=f.snapshot_id JOIN ingestions i ON i.id=s.ingestion_id ORDER BY i.source_file COLLATE BINARY,i.content_hash COLLATE BINARY,s.source_kind COLLATE BINARY,s.store_id COLLATE BINARY,s.day,f.product_id COLLATE BINARY,f.observed_at COLLATE BINARY,f.units,f.revenue,f.sold_units,f.returned_units,f.realized,f.ads,f.unknown_unit_rows',map:row=>({...identity(row),sourceKind:row.source_kind,storeId:row.store_id,day:row.day,productId:row.product_id,observedAt:row.observed_at,units:row.units,revenue:row.revenue,soldUnits:row.sold_units,returnedUnits:row.returned_units,realized:row.realized,ads:row.ads,unknownUnitRows:number(row.unknown_unit_rows)})},
+   {name:'events',sql:'SELECT i.source_file,i.content_hash,s.source_kind,s.store_id,s.day,e.product_id,e.occurred_at,e.amount FROM order_events e JOIN snapshots s ON s.id=e.snapshot_id JOIN ingestions i ON i.id=s.ingestion_id ORDER BY i.source_file COLLATE BINARY,i.content_hash COLLATE BINARY,s.source_kind COLLATE BINARY,s.store_id COLLATE BINARY,s.day,e.product_id COLLATE BINARY,e.occurred_at COLLATE BINARY,e.amount',map:row=>({...identity(row),sourceKind:row.source_kind,storeId:row.store_id,day:row.day,productId:row.product_id,occurredAt:row.occurred_at,amount:row.amount})},
+   {name:'names',sql:'SELECT market,store_id,product_id,name,source_actual_at FROM product_names ORDER BY market COLLATE BINARY,store_id COLLATE BINARY,product_id COLLATE BINARY',map:row=>({market:row.market,storeId:row.store_id,productId:row.product_id,name:row.name,sourceActualAt:row.source_actual_at})},
+   {name:'aliases',sql:'SELECT market,store_id,alias,product_id,source_actual_at FROM product_aliases ORDER BY market COLLATE BINARY,store_id COLLATE BINARY,alias COLLATE BINARY',map:row=>({market:row.market,storeId:row.store_id,alias:row.alias,productId:row.product_id,sourceActualAt:row.source_actual_at})}
+  ]);
+  const a=await sqliteSummary(archive,[
+   {name:'versions',sql:'SELECT source_file,content_hash,captured_at,source_mtime,source_bytes,archive_bytes,object_path,facts_status FROM versions ORDER BY source_file COLLATE BINARY,content_hash COLLATE BINARY',map:async row=>{const file=path.resolve(historyRoot,row.object_path),relative=path.relative(historyRoot,file);if(relative.startsWith('..'+path.sep)||path.isAbsolute(relative))fail('PARITY_INVALID','Archive object path escapes history root');const stat=await fs.lstat(file).catch(()=>null);if(!stat?.isFile()||stat.isSymbolicLink())fail('PARITY_INVALID','Archive object is missing or unsafe');const gzip=await fs.readFile(file);if(String(gzip.length)!==String(row.archive_bytes))fail('PARITY_INVALID','Archive byte count differs');return{...identity(row),capturedAt:row.captured_at,sourceMtime:row.source_mtime,sourceBytes:String(row.source_bytes),archiveBytes:String(row.archive_bytes),factsStatus:row.facts_status,gzipHash:digest(gzip)}}},
+   {name:'latest',sql:'SELECT source_file,stamp,content_hash FROM latest ORDER BY source_file COLLATE BINARY',map:row=>({sourceFile:row.source_file,stamp:row.stamp,contentHash:row.content_hash})},
+   {name:'state',sql:'SELECT key,value FROM state ORDER BY key COLLATE BINARY',map:row=>({key:row.key,value:row.value})}
+  ]);return{...p,...a};
+ }finally{products.close();archive.close()}
+}
+function compareStreamingHistorySummary(expected,actual){try{validateSummary(expected,NAMES);validateSummary(actual,NAMES)}catch{fail('PARITY_INVALID','History summary version is unsupported')}if(!canonical(expected).equals(canonical(actual)))fail('PARITY_MISMATCH','Staged legacy history differs from PostgreSQL business summary');return{matched:true,expected,actual}}
+
+module.exports = { postgresHistoryInventory, legacyHistoryInventory, summarizeHistoryInventory, compareHistoryInventories, compareHistorySummary, summarizePostgresHistory, summarizeLegacyHistory, compareStreamingHistorySummary, HistoryParityError };

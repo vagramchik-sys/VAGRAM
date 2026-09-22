@@ -7,8 +7,8 @@ const { encodeJson } = require('./postgres-json-repository.cjs');
 const MEDIA_TYPE = 'application/vnd.pult.history-command+json';
 const HASH = /^[a-f0-9]{64}$/u;
 const SOURCE = /^(?:insights-[0-9]+|ledger-[0-9]+|wb-orders-wb-[0-9]+|order-category-catalog-(?:wb-)?[0-9]+)\.json$/u;
-const MAX_ENVELOPE_BYTES = 320 * 1024 * 1024;
-const MAX_RAW_BYTES = 230 * 1024 * 1024;
+const MAX_ENVELOPE_BYTES = 480 * 1024 * 1024;
+const MAX_RAW_BYTES = 320 * 1024 * 1024;
 
 class JournaledHistoryError extends Error {
   constructor(code, message) { super(message); this.name = 'JournaledHistoryError'; this.code = code; }

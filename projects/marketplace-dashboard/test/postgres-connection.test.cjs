@@ -48,3 +48,20 @@ test('actual SQL role privileges are checked, not merely the configured role nam
   await assert.rejects(createApplicationPool({bootstrapFile:file,unprotect:async()=>Buffer.from(JSON.stringify(config)),Pool:AdminPool}),e=>e.code==='POSTGRES_UNAVAILABLE');
   assert.equal(ended,1);
 });
+
+test('UI pool has independent bounded capacity and a longer acquisition timeout', async t => {
+  const file = await fixture(t), configurations = [];
+  class CapturingPool extends EventEmitter {
+    constructor(options) { super(); configurations.push(options); }
+    async query(){return {rows:[{role:'pult_app',rolsuper:false,rolcreatedb:false,rolcreaterole:false}]};}
+    async end(){}
+  }
+  const unprotect = async () => Buffer.from(JSON.stringify(config));
+  const runtime = await createApplicationPool({bootstrapFile:file,unprotect,Pool:CapturingPool,profile:'runtime'});
+  const ui = await createApplicationPool({bootstrapFile:file,unprotect,Pool:CapturingPool,profile:'ui'});
+  await runtime.end(); await ui.end();
+  assert.deepEqual(configurations.map(value => ({name:value.application_name,max:value.max,timeout:value.connectionTimeoutMillis})), [
+    {name:'pult',max:12,timeout:15000},{name:'pult_ui',max:3,timeout:15000}
+  ]);
+  await assert.rejects(createApplicationPool({bootstrapFile:file,unprotect,Pool:CapturingPool,profile:'unknown'}),error=>error.code==='POSTGRES_BOOTSTRAP_INVALID');
+});

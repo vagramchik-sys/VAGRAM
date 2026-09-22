@@ -6,7 +6,7 @@ const { acquireMutationFence } = require('./postgres-write-fence.cjs');
 const { classify } = require('./source-inventory.cjs');
 const { encodeJson } = require('./postgres-json-repository.cjs');
 
-const DEFAULT_MAX_PAYLOAD_BYTES = 320 * 1024 * 1024;
+const DEFAULT_MAX_PAYLOAD_BYTES = 480 * 1024 * 1024;
 const MAX_EFFECT_RESULT_BYTES = 64 * 1024;
 
 class PostgresStateError extends Error {
@@ -97,12 +97,30 @@ function validateSourceMapping(value, key, mediaType) {
   return { sourcePath: value.sourcePath, logicalKey: key, domain: classification.domain, mediaType };
 }
 
-function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES } = {}) {
+function validateStoreIntent(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || !['connect-ozon', 'connect-wb', 'disconnect', 'sync'].includes(value.operation) ||
+      typeof value.storeId !== 'string' || !/^(?:wb-)?[0-9]+$/u.test(value.storeId) || typeof value.timestamp !== 'string' ||
+      !Number.isFinite(Date.parse(value.timestamp)) || Object.keys(value).some(key => !['operation', 'storeId', 'timestamp'].includes(key)))
+    fail('INVALID_ARGUMENT', 'store registry projection intent is invalid');
+  return { operation: value.operation, storeId: value.storeId, timestamp: value.timestamp };
+}
+function parseStoreRegistry(content) {
+  let registry; try { registry = JSON.parse(content.toString('utf8')); } catch { fail('INVALID_ARGUMENT', 'stores.json must be valid JSON'); }
+  if (!registry || typeof registry !== 'object' || Array.isArray(registry)) fail('INVALID_ARGUMENT', 'stores.json must contain an object');
+  for (const [id, row] of Object.entries(registry)) if (!/^(?:wb-)?[0-9]+$/u.test(id) || !row || typeof row !== 'object' || Array.isArray(row) ||
+      typeof row.name !== 'string' || !row.name || row.name.length > 160 || String(row.clientId) !== id || typeof row.key !== 'string' || !row.key ||
+      typeof row.connectedAt !== 'string' || !Number.isFinite(Date.parse(row.connectedAt)) || (row.market !== undefined && row.market !== (id.startsWith('wb-') ? 'WB' : 'Ozon')))
+    fail('INVALID_ARGUMENT', 'stores.json contains an invalid store entry');
+  return registry;
+}
+
+function createStateStore({ pool, schema = 'pult', marketSchema = 'pult_market', maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES } = {}) {
   if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function')
     fail('INVALID_ARGUMENT', 'pool must provide query and connect');
   if (!Number.isSafeInteger(maxPayloadBytes) || maxPayloadBytes < DEFAULT_MAX_PAYLOAD_BYTES)
-    fail('INVALID_ARGUMENT', 'maxPayloadBytes must be at least 320 MiB');
+    fail('INVALID_ARGUMENT', 'maxPayloadBytes must be at least 480 MiB');
   const namespace = validateSchema(schema);
+  const marketNamespace = validateSchema(marketSchema);
   const table = name => `${namespace}.${quoteIdentifier(name)}`;
 
   function wrapDatabaseError(error, duringCommit = false) {
@@ -202,15 +220,20 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
     const withEffect = effect !== null;
     if (withEffect && (operation !== 'write' || typeof effect !== 'function')) fail('INVALID_ARGUMENT', 'SQL effect is invalid');
     const sourceMapping = validateSourceMapping(options.sourceMapping, key, mediaType);
-    const projection = effectMode === 'projection';
+    const storeProjection = effectMode === 'store-registry';
+    const projection = effectMode === 'projection' || storeProjection;
+    const storeIntent = storeProjection ? validateStoreIntent(options.intent) : null;
     if (withEffect && !projection && (options.sourceMapping !== undefined || !/^(?:history|archive|market)\/[A-Za-z0-9._/-]+$/u.test(key)))
       fail('INVALID_ARGUMENT', 'SQL effects require a non-file history, archive, or market key');
-    if (projection && (!sourceMapping || sourceMapping.domain !== 'market-snapshots' || mediaType !== 'application/json' ||
+    if (projection && !storeProjection && (!sourceMapping || sourceMapping.domain !== 'market-snapshots' || mediaType !== 'application/json' ||
         !/^data-(?:wb-)?[0-9]+\.json$/u.test(sourceMapping.sourcePath)))
       fail('INVALID_ARGUMENT', 'SQL projection requires a classified market snapshot mapping');
+    if (storeProjection && (!sourceMapping || sourceMapping.sourcePath !== 'stores.json' || sourceMapping.domain !== 'protected-connections' || mediaType !== 'application/json'))
+      fail('INVALID_ARGUMENT', 'Store projection requires the classified stores.json mapping');
     const body = operation === 'write' ? validateContent(content, maxPayloadBytes) : null;
     const sha256 = body && contentHash(body);
-    const fingerprint = requestHash(projection ? 'write-projection' : withEffect ? 'write-effect' : operation, key, expectedRevision, mediaType, body);
+    const fingerprintOperation = storeProjection ? `write-store-registry:${contentHash(encodeJson(storeIntent, MAX_EFFECT_RESULT_BYTES)).toString('hex')}` : projection ? 'write-projection' : withEffect ? 'write-effect' : operation;
+    const fingerprint = requestHash(fingerprintOperation, key, expectedRevision, mediaType, body);
     let client;
     let transactionOpen = false;
     let duringCommit = false;
@@ -281,6 +304,7 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
       );
       if (projection) resultJson = effectResult(await effect(client, Object.freeze({
         logicalKey: key, expectedRevision, afterRevision, mediaType, content: Buffer.from(body), sha256: Buffer.from(sha256),
+        intent: storeIntent,
         before: before ? Object.freeze({ revision: actualRevision, mediaType: before.media_type == null ? null : String(before.media_type),
           content: before.content == null ? null : Buffer.from(before.content), sha256: before.sha256 == null ? null : Buffer.from(before.sha256),
           deleted: Boolean(before.deleted) }) : null
@@ -319,6 +343,25 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
     write: (key, content, options) => mutate('write', key, content, options),
     writeWithEffect: (key, content, options, effect) => mutate('write', key, content, options, effect),
     writeWithProjection: (key, content, options, effect) => mutate('write', key, content, options, effect, 'projection'),
+    writeStoreRegistry: (key, content, options) => mutate('write', key, content, options, async (client, context) => {
+      const registry = parseStoreRegistry(context.content), ids = Object.keys(registry).sort();
+      if (ids.length) {
+        const existing = await client.query(`SELECT store_id,market FROM ${marketNamespace}.${quoteIdentifier('stores')} WHERE store_id=ANY($1::text[])`, [ids]);
+        for (const row of existing.rows || []) if (row.market !== (row.store_id.startsWith('wb-') ? 'WB' : 'Ozon')) fail('PROJECTION_CONFLICT', 'Normalized store market conflicts with stores.json');
+      }
+      for (const id of ids) {
+        const row = registry[id], market = id.startsWith('wb-') ? 'WB' : 'Ozon', safe = { name: row.name, clientId: id, market, connectedAt: row.connectedAt,
+          ...(typeof row.updatedAt === 'string' ? { updatedAt: row.updatedAt } : {}), ...(typeof row.syncAttemptAt === 'string' ? { syncAttemptAt: row.syncAttemptAt } : {}) };
+        await client.query(`INSERT INTO ${marketNamespace}.${quoteIdentifier('stores')}(store_id,market,display_name,registry_row,registry_source_document_id,connected,disconnected_at,registry_revision,updated_at)
+          VALUES($1,$2,$3,$4::jsonb,NULL,true,NULL,$5,clock_timestamp()) ON CONFLICT(store_id) DO UPDATE SET
+          display_name=EXCLUDED.display_name,registry_row=EXCLUDED.registry_row,registry_source_document_id=NULL,connected=true,disconnected_at=NULL,
+          registry_revision=EXCLUDED.registry_revision,updated_at=clock_timestamp()`, [id, market, row.name, JSON.stringify(safe), context.afterRevision]);
+      }
+      await client.query(`UPDATE ${marketNamespace}.${quoteIdentifier('stores')} SET connected=false,disconnected_at=$2::timestamptz,
+        registry_row=jsonb_build_object('clientId',store_id,'market',market),registry_source_document_id=NULL,registry_revision=$3,updated_at=clock_timestamp()
+        WHERE connected AND NOT (store_id=ANY($1::text[]))`, [ids, context.intent.timestamp, context.afterRevision]);
+      return context.intent;
+    }, 'store-registry'),
     remove: (key, options) => mutate('delete', key, null, options)
   });
 }

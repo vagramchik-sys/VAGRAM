@@ -8,6 +8,7 @@ const ARRAY_TABLES = Object.freeze({
   categoryTree: 'category_tree_rows'
 });
 const DAY = /^\d{4}-\d{2}-\d{2}$/u;
+const SUMMARY_OPERATION_FIELDS = Object.freeze(['operation_type_name', 'operation_type', 'sellerOperName', 'docTypeName', 'currency', 'amount', 'date', 'rrDate', 'saleDt']);
 
 class MarketRepositoryError extends Error {
   constructor(code, message, isPublic = false) {
@@ -117,6 +118,28 @@ function createMarketRepository({ pool, schema = 'pult_market' } = {}) {
       return snapshot;
     });
   }
+  async function getSummarySnapshot(storeId) {
+    storeId = requiredStore(storeId);
+    return read(async client => {
+      const metadata = await current(client, storeId);
+      if (!metadata) return null;
+      const snapshot = { ...metadata.source_metadata };
+      for (const arrayName of ['products', 'stocks']) {
+        const result = await query(client, `SELECT raw_row FROM ${table(ARRAY_TABLES[arrayName])} WHERE snapshot_id=$1 ORDER BY source_index ASC`, [metadata.snapshot_id]);
+        const arrayCoverage = coverage(metadata, arrayName, result.rows.length);
+        if (result.rows.length !== arrayCoverage.sourceRows) throw integrityError();
+        if (!arrayCoverage.present && result.rows.length) throw incompleteError();
+        if (arrayCoverage.present) snapshot[arrayName] = result.rows.map(row => row.raw_row);
+      }
+      const scalarFields = SUMMARY_OPERATION_FIELDS.map(key => `CASE WHEN raw_row ? '${key}' THEN jsonb_build_object('${key}',raw_row->'${key}') ELSE '{}'::jsonb END`).join(' || ');
+      const operations = await query(client, `SELECT (${scalarFields} || CASE WHEN NOT raw_row ? 'total_amount' THEN '{}'::jsonb WHEN jsonb_typeof(raw_row->'total_amount')='object' THEN jsonb_build_object('total_amount',CASE WHEN raw_row->'total_amount' ? 'currency' THEN jsonb_build_object('currency',raw_row->'total_amount'->'currency') ELSE '{}'::jsonb END) ELSE jsonb_build_object('total_amount',raw_row->'total_amount') END) AS raw_row FROM ${table('finance_operations')} WHERE snapshot_id=$1 ORDER BY source_index ASC`, [metadata.snapshot_id]);
+      const operationCoverage = coverage(metadata, 'operations', operations.rows.length);
+      if (operations.rows.length !== operationCoverage.sourceRows) throw integrityError();
+      if (!operationCoverage.present && operations.rows.length) throw incompleteError();
+      if (operationCoverage.present) snapshot.operations = operations.rows.map(row => row.raw_row);
+      return snapshot;
+    });
+  }
   async function list(arrayName, options, configure) {
     options ||= {};
     const storeId = requiredStore(options.storeId), pagination = page(options);
@@ -181,7 +204,7 @@ function createMarketRepository({ pool, schema = 'pult_market' } = {}) {
     });
   }
 
-  return { getSnapshot, products, stocks, operations, async close() {} };
+  return { getSnapshot, getSummarySnapshot, products, stocks, operations, async close() {} };
 }
 
-module.exports = { createMarketRepository, MarketRepositoryError, ARRAY_TABLES };
+module.exports = { createMarketRepository, MarketRepositoryError, ARRAY_TABLES, SUMMARY_OPERATION_FIELDS };

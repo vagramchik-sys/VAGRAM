@@ -46,10 +46,14 @@ async function readApplicationBootstrap(file, { unprotect = unprotectWindows } =
   finally { if (Buffer.isBuffer(plaintext)) plaintext.fill(0); }
 }
 
-async function createApplicationPool({ bootstrapFile, unprotect, Pool, onUnavailable = () => {} } = {}) {
+async function createApplicationPool({ bootstrapFile, unprotect, Pool, onUnavailable = () => {}, profile = 'runtime' } = {}) {
+  if (!['runtime', 'ui'].includes(profile)) throw bootstrapError();
   const config = await readApplicationBootstrap(bootstrapFile, { unprotect });
   const PoolClass = Pool || require('pg').Pool;
-  const pool = new PoolClass({ ...config, application_name: 'pult', max: 4, connectionTimeoutMillis: 5000, idleTimeoutMillis: 10000, statement_timeout: 60000 });
+  const settings = profile === 'ui'
+    ? { application_name: 'pult_ui', max: 3, connectionTimeoutMillis: 15000 }
+    : { application_name: 'pult', max: 12, connectionTimeoutMillis: 15000 };
+  const pool = new PoolClass({ ...config, ...settings, idleTimeoutMillis: 10000, statement_timeout: 60000 });
   pool.on('error', () => { try { onUnavailable({ code: 'POSTGRES_UNAVAILABLE' }); } catch {} });
   try {
     const result = await pool.query('SELECT current_user AS role, rolsuper, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname=current_user');

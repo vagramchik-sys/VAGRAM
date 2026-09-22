@@ -18,6 +18,7 @@ class FakeDatabase {
     this.documents = new Map();
     this.snapshots = new Map();
     this.rows = new Map([...Object.keys(WIDTHS), 'stock_items', 'finance_operation_skus'].map(name => [name, []]));
+    this.cursors = new Map();
     this.nextDocument = 1;
     this.client = { query: this.query.bind(this), release: () => this.calls.push({ release: true }) };
   }
@@ -65,18 +66,29 @@ class FakeDatabase {
     }
     const countMatch = /SELECT count\(\*\).*FROM pult_market\.([a-z_]+)/u.exec(text);
     if (countMatch) return { rows: [{ count: String(this.rows.get(countMatch[1]).filter(row => row.snapshotId === values[0]).length) }] };
+    const declareMatch = /^DECLARE "([^"]+)" NO SCROLL CURSOR FOR[\s\S]*FROM pult_market\.(stock_items|finance_operation_skus)/u.exec(text);
+    if (declareMatch) {
+      const rows = this.rows.get(declareMatch[2]).filter(row => row.snapshotId === values[0]);
+      rows.sort(declareMatch[2] === 'stock_items'
+        ? (a, b) => a.stock_source_index - b.stock_source_index || a.item_index - b.item_index
+        : (a, b) => a.operation_source_index - b.operation_source_index || a.item_index - b.item_index || a.sku.localeCompare(b.sku));
+      this.cursors.set(declareMatch[1], { rows, offset: 0 });
+      return { rows: [] };
+    }
+    const fetchMatch = /^FETCH FORWARD (\d+) FROM "([^"]+)"/u.exec(text);
+    if (fetchMatch) {
+      const cursor = this.cursors.get(fetchMatch[2]), rows = cursor.rows.slice(cursor.offset, cursor.offset + Number(fetchMatch[1]));
+      cursor.offset += rows.length;
+      return { rows };
+    }
+    const closeMatch = /^CLOSE "([^"]+)"/u.exec(text);
+    if (closeMatch) { this.cursors.delete(closeMatch[1]); return { rows: [] }; }
     const selectMatch = /SELECT store_id,source_index,[\s\S]*?FROM pult_market\.([a-z_]+)/u.exec(text);
     if (selectMatch) return { rows: this.rows.get(selectMatch[1])
       .filter(row => row.snapshotId === values[0] && row.index >= values[1])
       .sort((a, b) => a.index - b.index).slice(0, values[2])
       .map(row => ({ store_id: row.store_id, source_index: row.index, raw_row: row.raw, row_sha256: row.row_sha256,
         ...Object.fromEntries(TYPED[selectMatch[1]].map(name => [name, row[name]])) })) };
-    if (text.includes('FROM pult_market.stock_items') && text.includes('SELECT store_id,stock_source_index')) return { rows: this.rows.get('stock_items')
-      .filter(row => row.snapshotId === values[0]).sort((a, b) => a.stock_source_index - b.stock_source_index || a.item_index - b.item_index)
-      .slice(values[1], values[1] + values[2]) };
-    if (text.includes('FROM pult_market.finance_operation_skus') && text.includes('SELECT store_id,operation_source_index')) return { rows: this.rows.get('finance_operation_skus')
-      .filter(row => row.snapshotId === values[0]).sort((a, b) => a.operation_source_index - b.operation_source_index || a.item_index - b.item_index || a.sku.localeCompare(b.sku))
-      .slice(values[1], values[1] + values[2]) };
     if (text.includes('SET source_array_presence=')) {
       this.snapshots.get(values[0]).presence = JSON.parse(values[1]);
       return { rows: [], rowCount: 1 };
@@ -131,6 +143,8 @@ test('imports Ozon and WB top-level source rows with typed keys, exact documents
   assert.equal(database.rows.get('products')[0].raw.price, 0);
   assert.equal(database.rows.get('products')[1].raw.offer_id, null);
   assert.equal(progress.every(event => Object.keys(event).every(key => ['stage', 'count', 'total'].includes(key))), true);
+  assert.equal(database.calls.some(call => /FROM pult_market\.(?:stock_items|finance_operation_skus)[\s\S]*\bOFFSET\b/u.test(call.text || '')), false);
+  assert.equal(database.calls.filter(call => /^DECLARE "pult_market_verify_/u.test(call.text || '')).length, 4);
 });
 
 test('same store and exact source SHA is idempotently reused without duplicate rows', async t => {

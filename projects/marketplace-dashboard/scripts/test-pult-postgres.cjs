@@ -17,6 +17,16 @@ const TEST_SUITES = Object.freeze({
   'journaled-archive': 'test/postgres-journaled-archive.test.cjs',
   'market-import': 'test/postgres-market-import.test.cjs',
   'market-writer': 'test/postgres-market-writer.test.cjs',
+  'ledger-refresh': 'test/postgres-ledger-refresh.test.cjs',
+  'status-readers': 'test/postgres-status-readers.test.cjs',
+  'live-repository': 'test/postgres-live-repository.test.cjs',
+  'live-scheduler': 'test/postgres-live-scheduler.test.cjs',
+  'live-sources': 'test/postgres-live-sources.test.cjs',
+  'live-state-store': 'test/postgres-live-state-store.test.cjs',
+  'live-market': 'test/postgres-live-market.test.cjs',
+  'live-ledger-refresh': 'test/postgres-live-ledger-refresh.test.cjs',
+  'live-migration': 'test/postgres-live-migration.test.cjs',
+  'live-history-capture': 'test/postgres-live-history-capture.test.cjs',
   state: 'test/postgres-state.test.cjs',
   'state-batch': 'test/postgres-state-batch.test.cjs',
   connection: 'test/postgres-connection.test.cjs',
@@ -32,7 +42,16 @@ const TEST_SUITES = Object.freeze({
   conversion: 'test/postgres-conversion.test.cjs',
   truestats: 'test/postgres-truestats.test.cjs',
   'analytics-composition': 'test/postgres-analytics-composition.test.cjs',
+  'report-routes': 'test/postgres-report-routes.test.cjs',
+  'derived-capture': 'test/postgres-derived-capture.test.cjs',
+  'derived-inputs': 'test/postgres-derived-inputs.test.cjs',
+  'marketplace-transport': 'test/postgres-marketplace-transport.test.cjs',
+  'order-category-capture': 'test/postgres-order-category-capture.test.cjs',
+  'store-commands': 'test/postgres-store-commands.test.cjs',
+  'store-routes': 'test/postgres-store-routes.test.cjs',
   'source-providers': 'test/postgres-source-providers.test.cjs',
+  'stock-history-writer': 'test/postgres-stock-history-writer.test.cjs',
+  'stock-history-parity': 'test/postgres-stock-history-parity.test.cjs',
   'document-journal': 'test/postgres-document-journal.test.cjs',
   'document-replay': 'test/postgres-document-replay.test.cjs',
   'runtime-journal': 'test/postgres-runtime-journal.test.cjs',
@@ -46,6 +65,7 @@ const TEST_SUITES = Object.freeze({
   management: 'test/postgres-management.test.cjs',
   'finance-register': 'test/postgres-finance-register.test.cjs',
   'finance-documents': 'test/postgres-finance-documents.test.cjs',
+  'finance-document-routes': 'test/postgres-finance-document-routes.test.cjs',
   'supplier-portals': 'test/postgres-supplier-portals.test.cjs',
   'partner-workspace': 'test/postgres-partner-workspace.test.cjs',
   'partner-tools': 'test/postgres-partner-tools.test.cjs',
@@ -60,9 +80,14 @@ const TEST_SUITES = Object.freeze({
   'ozon-acquisition': 'test/postgres-ozon-snapshot.test.cjs',
   'wb-acquisition': 'test/postgres-wb-snapshot.test.cjs',
   'market-acquisition': 'test/postgres-market-acquisition.test.cjs',
+  'acquisition-dispatcher': 'test/postgres-acquisition-dispatcher.test.cjs',
+  'acquisition-routes': 'test/postgres-acquisition-routes.test.cjs',
+  'info-routes': 'test/postgres-info-routes.test.cjs',
+  'cadence-producer': 'test/postgres-cadence-producer.test.cjs',
   core: 'test/postgres-core.test.cjs',
   'server-postgres': 'test/postgres-server.test.cjs',
   'server-composition': 'test/postgres-server-composition.test.cjs',
+  application: 'test/postgres-application.test.cjs',
   backup: 'test/postgres-backup.test.cjs'
 });
 const TEST_FILES = Object.values(TEST_SUITES);
@@ -172,7 +197,7 @@ async function main() {
     const restrictedUrl = new URL(connectionUrl); restrictedUrl.username = appRole; restrictedUrl.password = appPassword;
     testsPassed = true;
     for (const file of selectedFiles) {
-      const needsRestricted = [TEST_SUITES.state, TEST_SUITES['state-batch'], TEST_SUITES['market-writer'], TEST_SUITES['finance-documents'], TEST_SUITES['source-providers']].includes(file);
+      const needsRestricted = [TEST_SUITES.state, TEST_SUITES['state-batch'], TEST_SUITES['market-writer'], TEST_SUITES['finance-documents'], TEST_SUITES['finance-document-routes'], TEST_SUITES['source-providers'], TEST_SUITES['store-commands'], TEST_SUITES['live-repository']].includes(file);
       if (!await runTestFile(file, connectionUrl.toString(), file === TEST_SUITES.backup ? restoreUrl.toString() : undefined, needsRestricted ? restrictedUrl.toString() : undefined)) testsPassed = false;
     }
   } finally {

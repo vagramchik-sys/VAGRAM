@@ -57,21 +57,39 @@ test('uses SQLite online backup and includes committed rows still represented by
   const { source, destination } = await directories(t);
   const history = path.join(source, 'history');
   await fs.mkdir(history);
-  const sourceDatabase = path.join(history, 'products.sqlite');
-  const writer = new DatabaseSync(sourceDatabase);
+  const writers = [];
   try {
-    writer.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE items(id INTEGER PRIMARY KEY,value TEXT); INSERT INTO items VALUES(1,\'from-wal\');');
+    for (const name of ['products', 'archive', 'stocks']) {
+      const writer = new DatabaseSync(path.join(history, `${name}.sqlite`));
+      writer.exec(`PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0; CREATE TABLE items(id INTEGER PRIMARY KEY,value TEXT); INSERT INTO items VALUES(1,'from-${name}-wal');`);
+      writers.push(writer);
+    }
     const manifest = await createMigrationSnapshot({ sourceRoot: source, destinationDir: destination, writersStopped: true });
     const item = manifest.files.find(file => file.path === 'history/products.sqlite');
     assert.equal(item.method, 'sqlite-online-backup');
     assert.equal(manifest.files.some(file => /-wal$|-shm$/u.test(file.path)), false);
-    const restored = new DatabaseSync(path.join(destination, 'history', 'products.sqlite'), { readOnly: true });
-    try {
-      const row = restored.prepare('SELECT * FROM items').get();
-      assert.equal(row.id, 1); assert.equal(row.value, 'from-wal');
+    await verifyMigrationSnapshot(destination);
+    await verifyMigrationSnapshot(destination);
+    for (const name of ['products', 'archive', 'stocks']) {
+      const restored = new DatabaseSync(path.join(destination, 'history', `${name}.sqlite`), { readOnly: true });
+      try {
+        const row = restored.prepare('SELECT * FROM items').get();
+        assert.equal(row.id, 1); assert.equal(row.value, `from-${name}-wal`);
+        assert.equal(String(Object.values(restored.prepare('PRAGMA journal_mode').get())[0]).toLowerCase(), 'delete');
+      } finally { restored.close(); }
     }
-    finally { restored.close(); }
-  } finally { writer.close(); }
+    await verifyMigrationSnapshot(destination);
+    const snapshotFiles = [];
+    async function collect(folder, prefix = '') {
+      for (const child of await fs.readdir(folder, { withFileTypes: true })) {
+        const relative = prefix ? `${prefix}/${child.name}` : child.name;
+        if (child.isDirectory()) await collect(path.join(folder, child.name), relative);
+        else snapshotFiles.push(relative);
+      }
+    }
+    await collect(destination);
+    assert.equal(snapshotFiles.some(file => /\.sqlite-(?:wal|shm)$/u.test(file)), false);
+  } finally { for (const writer of writers) writer.close(); }
 });
 
 test('requires explicit stopped-writer confirmation and an empty separate destination', async t => {

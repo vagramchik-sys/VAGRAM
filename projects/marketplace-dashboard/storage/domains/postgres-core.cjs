@@ -24,6 +24,7 @@ function createPostgresCore({ storesRepository, marketRepository, stateStore, jo
     return { value, revision: row.revision };
   }
   async function storeMap() { return storesRepository.read(); }
+  async function registryRevision() { return (await storesRepository.record())?.revision || '0'; }
   async function publicStores() {
     const stores = await storeMap(), jobs = await jobsProvider();
     return Promise.all(Object.entries(stores).map(async ([id, store]) => {
@@ -36,7 +37,8 @@ function createPostgresCore({ storesRepository, marketRepository, stateStore, jo
   async function protectedStore(id) { return storesRepository.protectedStore(idOf(id)); }
   async function publicSnapshot(id) {
     id = idOf(id); if (!await hasStore(id)) return null;
-    const [raw, costs, prices] = await Promise.all([marketRepository.getSnapshot(id), sourceJson(`costs-${id}.json`), sourceJson(`prices-${id}.json`)]);
+    const snapshot = typeof marketRepository.getSummarySnapshot === 'function' ? marketRepository.getSummarySnapshot.bind(marketRepository) : marketRepository.getSnapshot.bind(marketRepository);
+    const [raw, costs, prices] = await Promise.all([snapshot(id), sourceJson(`costs-${id}.json`), sourceJson(`prices-${id}.json`)]);
     return raw ? summarize(raw, costs.value, prices.value) : null;
   }
   async function supplierProducts() {
@@ -59,7 +61,7 @@ function createPostgresCore({ storesRepository, marketRepository, stateStore, jo
     await storesRepository.read();
     return { ready: false, coreReady: true, missingAdapters: ['runtime-wiring'], passive: true };
   }
-  return Object.freeze({ ready, publicStores, publicSnapshot, supplierProducts, ledgerFor, financeStores, hasStore, protectedStore, sourceJson });
+  return Object.freeze({ ready, publicStores, registryRevision, publicSnapshot, supplierProducts, ledgerFor, financeStores, hasStore, protectedStore, sourceJson });
 }
 
 module.exports = createPostgresCore;

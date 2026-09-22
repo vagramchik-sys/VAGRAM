@@ -125,10 +125,14 @@ async function copySqlite(sourceRoot, destinationRoot, entry) {
   }
   const after = await sqliteFamilyFingerprint(source);
   if (JSON.stringify(before) !== JSON.stringify(after)) fail('SOURCE_CHANGED', 'SQLite source changed during online backup');
-  const copied = await fingerprint(destination);
   let verification;
   try {
-    verification = new DatabaseSync(destination, { readOnly: true });
+    // Online backup preserves WAL mode. Normalize only the completed destination
+    // so later read-only verification cannot create -wal/-shm snapshot files.
+    verification = new DatabaseSync(destination);
+    const journalMode = verification.prepare('PRAGMA journal_mode=DELETE').get();
+    if (String(Object.values(journalMode || {})[0] || '').toLowerCase() !== 'delete')
+      fail('BACKUP_VERIFY_FAILED', 'SQLite backup journal mode could not be normalized');
     const check = verification.prepare('PRAGMA integrity_check').get();
     if (!check || Object.values(check)[0] !== 'ok') fail('BACKUP_VERIFY_FAILED', 'SQLite backup integrity check failed');
   } finally {
@@ -136,6 +140,7 @@ async function copySqlite(sourceRoot, destinationRoot, entry) {
   }
   await removeGeneratedSqliteSidecars(destination);
   await syncFile(destination);
+  const copied = await fingerprint(destination);
   return { path: entry.path, method: 'sqlite-online-backup', domain: entry.domain, bytes: copied.size, sha256: copied.sha256, sourceBefore: before, sourceAfter: after };
 }
 async function writeJson(file, value, flag = 'wx') {
@@ -201,8 +206,10 @@ async function verifyMigrationSnapshot(destinationDir) {
       const check = database.prepare('PRAGMA integrity_check').get();
       if (!check || Object.values(check)[0] !== 'ok') fail('BACKUP_VERIFY_FAILED', 'SQLite backup integrity check failed');
     } finally { if (database) database.close(); }
-    await removeGeneratedSqliteSidecars(file);
   }
+  const filesAfterSqliteVerification = await snapshotFileSet(destination);
+  if (filesAfterSqliteVerification.length !== expected.size || filesAfterSqliteVerification.some(file => !expected.has(file)))
+    fail('BACKUP_VERIFY_FAILED', 'SQLite verification created files absent from the manifest');
   return manifest;
 }
 

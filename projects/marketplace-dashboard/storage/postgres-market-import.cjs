@@ -194,6 +194,28 @@ async function insertDerived(client, snapshotId, storeId, snapshot, progress) {
   }
 }
 
+async function verifyCursor(client, name, select, snapshotId, expected, compare, incompleteMessage) {
+  const cursor = `pult_market_verify_${name}`;
+  await client.query(`DECLARE "${cursor}" NO SCROLL CURSOR FOR ${select}`, [snapshotId]);
+  let offset = 0, failure = null;
+  try {
+    for (;;) {
+      const result = await client.query(`FETCH FORWARD ${BATCH_SIZE} FROM "${cursor}"`);
+      if (!result.rows.length) break;
+      if (offset + result.rows.length > expected.length) fail('VERIFY_COUNT_MISMATCH', incompleteMessage);
+      result.rows.forEach((row, index) => compare(row, expected[offset + index]));
+      offset += result.rows.length;
+    }
+    if (offset !== expected.length) fail('VERIFY_COUNT_MISMATCH', incompleteMessage);
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    try { await client.query(`CLOSE "${cursor}"`); }
+    catch (error) { if (!failure) throw error; }
+  }
+}
+
 async function verifySnapshot(client, snapshotId, storeId, snapshot) {
   const expected = expectedCounts(snapshot);
   const verified = {};
@@ -226,17 +248,12 @@ async function verifySnapshot(client, snapshotId, storeId, snapshot) {
   const stockCount = await client.query('SELECT count(*)::text AS count FROM pult_market.stock_items WHERE snapshot_id=$1', [snapshotId]);
   verified.stockItems = Number(stockCount.rows[0].count);
   if (verified.stockItems !== expected.stockItems) fail('VERIFY_COUNT_MISMATCH', 'Derived stock row count does not match source');
-  for (let offset = 0; offset < expectedStockItems.length; offset += BATCH_SIZE) {
-    const result = await client.query(`SELECT store_id,stock_source_index,item_index,sku,warehouse,raw_row
-      FROM pult_market.stock_items WHERE snapshot_id=$1 ORDER BY stock_source_index,item_index OFFSET $2 LIMIT $3`, [snapshotId, offset, BATCH_SIZE]);
-    if (result.rows.length !== Math.min(BATCH_SIZE, expectedStockItems.length - offset)) fail('VERIFY_COUNT_MISMATCH', 'Stock verification page is incomplete');
-    result.rows.forEach((row, index) => {
+  await verifyCursor(client, 'stock_items', `SELECT store_id,stock_source_index,item_index,sku,warehouse,raw_row
+      FROM pult_market.stock_items WHERE snapshot_id=$1 ORDER BY stock_source_index,item_index`, snapshotId, expectedStockItems, (row, wanted) => {
       if (row.store_id !== storeId) fail('VERIFY_DERIVED_MISMATCH', 'Derived stock row is assigned to the wrong store');
-      const wanted = expectedStockItems[offset + index];
       const actual = { sourceIndex: Number(row.stock_source_index), itemIndex: Number(row.item_index), sku: row.sku, warehouse: row.warehouse, raw: row.raw_row };
       if (canonical(actual) !== canonical(wanted)) fail('VERIFY_DERIVED_MISMATCH', 'Derived stock projection does not match source');
-    });
-  }
+    }, 'Stock verification page is incomplete');
   const expectedOperationSkus = [];
   (snapshot.operations || []).forEach((operation, sourceIndex) => operationSkuRows(operation).forEach((item, itemIndex) => expectedOperationSkus.push({
     sourceIndex, itemIndex, sku: item.sku, operationDay: operationFields(operation)[1], raw: item.raw
@@ -244,18 +261,13 @@ async function verifySnapshot(client, snapshotId, storeId, snapshot) {
   const skuCount = await client.query('SELECT count(*)::text AS count FROM pult_market.finance_operation_skus WHERE snapshot_id=$1', [snapshotId]);
   verified.financeOperationSkus = Number(skuCount.rows[0].count);
   if (verified.financeOperationSkus !== expected.financeOperationSkus) fail('VERIFY_COUNT_MISMATCH', 'Derived operation SKU count does not match source');
-  for (let offset = 0; offset < expectedOperationSkus.length; offset += BATCH_SIZE) {
-    const result = await client.query(`SELECT store_id,operation_source_index,item_index,sku,operation_day::text AS operation_day,raw_item
-      FROM pult_market.finance_operation_skus WHERE snapshot_id=$1 ORDER BY operation_source_index,item_index,sku OFFSET $2 LIMIT $3`, [snapshotId, offset, BATCH_SIZE]);
-    if (result.rows.length !== Math.min(BATCH_SIZE, expectedOperationSkus.length - offset)) fail('VERIFY_COUNT_MISMATCH', 'Operation verification page is incomplete');
-    result.rows.forEach((row, index) => {
+  await verifyCursor(client, 'finance_operation_skus', `SELECT store_id,operation_source_index,item_index,sku,operation_day::text AS operation_day,raw_item
+      FROM pult_market.finance_operation_skus WHERE snapshot_id=$1 ORDER BY operation_source_index,item_index,sku`, snapshotId, expectedOperationSkus, (row, wanted) => {
       if (row.store_id !== storeId) fail('VERIFY_DERIVED_MISMATCH', 'Derived operation row is assigned to the wrong store');
-      const wanted = expectedOperationSkus[offset + index];
       const actual = { sourceIndex: Number(row.operation_source_index), itemIndex: Number(row.item_index), sku: row.sku,
         operationDay: row.operation_day, raw: row.raw_item };
       if (canonical(actual) !== canonical(wanted)) fail('VERIFY_DERIVED_MISMATCH', 'Derived operation SKU projection does not match source');
-    });
-  }
+    }, 'Operation verification page is incomplete');
   const sourceDigest = sourceAggregate.digest();
   const storedDigest = sqlAggregate.digest();
   if (!equal(sourceDigest, storedDigest)) fail('VERIFY_DIGEST_MISMATCH', 'Imported row digest does not match source');

@@ -151,7 +151,7 @@ async function archivePayload(historyDir, row) {
 }
 
 function sourceQuery(spec) {
-  return `SELECT ${spec.sourceColumns.map(column => q(column.name)).join(',')} FROM ${q(spec.sourceTable || spec.name)} ORDER BY ${spec.pk.map(q).join(',')} LIMIT ? OFFSET ?`;
+  return `SELECT ${spec.sourceColumns.map(column => q(column.name)).join(',')} FROM ${q(spec.sourceTable || spec.name)} ORDER BY ${spec.pk.map(q).join(',')}`;
 }
 
 function conflictSql(spec) {
@@ -188,16 +188,21 @@ async function importTable(client, db, spec, onProgress) {
   if (typeof statement.setReadBigInts === 'function') statement.setReadBigInts(true);
   const hash = crypto.createHash('sha256');
   let count = 0;
-  for (;;) {
-    const rows = statement.all(requested, count);
-    if (!rows.length) break;
+  let rows = [];
+  const flush = async () => {
     await client.query('BEGIN');
     try { await acquireMutationFence(client); await insertBatch(client, spec, rows); await client.query('COMMIT'); }
     catch (error) { await client.query('ROLLBACK'); throw error; }
     for (const row of rows) hash.update(stable(canonicalRow(row, spec)) + '\n');
     count += rows.length;
     if (onProgress) await onProgress({ phase: 'import', table: spec.name, rows: count });
+    rows = [];
+  };
+  for (const row of statement.iterate()) {
+    rows.push(row);
+    if (rows.length === requested) await flush();
   }
+  if (rows.length) await flush();
   return { count, hash: hash.digest('hex') };
 }
 
@@ -205,19 +210,27 @@ function targetQuery(spec) {
   const selects = [...spec.targetSelect];
   if (spec.name === 'archive_versions') selects.push(`encode(archive_gzip_hash, 'hex') AS "__archive_gzip_hash"`, `archive_payload AS "__archive_payload"`);
   const order = spec.pk.map(name => q(spec.rename?.[name] || name)).join(',');
-  return `SELECT ${selects.join(',')} FROM ${tableName(spec.name)} ORDER BY ${order} LIMIT $1 OFFSET $2`;
+  return `SELECT ${selects.join(',')} FROM ${tableName(spec.name)} ORDER BY ${order}`;
 }
 
 async function verifyTarget(client, spec) {
   const hash = crypto.createHash('sha256');
   const batchSize = spec.batchSize || MAX_BATCH;
+  const cursor = `pult_verify_${spec.name}`;
   let count = 0;
-  for (;;) {
-    const result = await client.query(targetQuery(spec), [batchSize, count]);
-    if (!result.rows.length) break;
-    for (const row of result.rows) hash.update(stable(canonicalRow(row, spec)) + '\n');
-    count += result.rows.length;
+  await client.query(`DECLARE ${q(cursor)} NO SCROLL CURSOR FOR ${targetQuery(spec)}`);
+  try {
+    for (;;) {
+      const result = await client.query(`FETCH FORWARD ${batchSize} FROM ${q(cursor)}`);
+      if (!result.rows.length) break;
+      for (const row of result.rows) hash.update(stable(canonicalRow(row, spec)) + '\n');
+      count += result.rows.length;
+    }
+  } catch (error) {
+    // The enclosing transaction rollback closes the cursor and preserves the original error.
+    throw error;
   }
+  await client.query(`CLOSE ${q(cursor)}`);
   return { count, hash: hash.digest('hex') };
 }
 
@@ -305,4 +318,4 @@ async function importHistory({ pool, sourceDir, onProgress } = {}) {
   }
 }
 
-module.exports = { importHistory, _test: { archivePayload, stable } };
+module.exports = { importHistory, _test: { archivePayload, sourceQuery, stable, targetQuery, verifyTarget } };

@@ -13,6 +13,21 @@ const contentHash = crypto.createHash('sha256').update(raw).digest('hex');
 const payload = gzipSync(raw, { level: 1, mtime: 0 });
 const gzipHash = crypto.createHash('sha256').update(payload).digest();
 
+test('verified archive evidence larger than 64 MiB remains readable with exact length and hash checks', () => {
+  const { _test } = require('../storage/postgres-archive-repository.cjs');
+  const largeRaw = Buffer.alloc(65 * 1024 * 1024, 0x61);
+  const compressed = gzipSync(largeRaw, { level: 1, mtime: 0 });
+  const evidence = {
+    archive_payload: compressed,
+    archive_gzip_hash: crypto.createHash('sha256').update(compressed).digest(),
+    source_bytes: String(largeRaw.length),
+    content_hash: crypto.createHash('sha256').update(largeRaw).digest('hex')
+  };
+  assert.deepEqual(_test.unpackAndVerify(evidence), largeRaw);
+  assert.throws(() => _test.unpackAndVerify({ ...evidence, source_bytes: String(largeRaw.length - 1) }),
+    error => error.code === 'ARCHIVE_CORRUPT');
+});
+
 function scriptedPool({ clientSteps = [], poolSteps = [], connectError } = {}) {
   const calls = [], client = {
     released: 0,

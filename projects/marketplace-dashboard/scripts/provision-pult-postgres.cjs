@@ -98,16 +98,21 @@ async function main() {
     for (const moduleName of ['postgres-schema', 'postgres-document-schema', 'postgres-history-schema', 'postgres-market-schema']) {
       await owner.query(require(path.join(ROOT, 'storage', moduleName + '.cjs')));
     }
-    for (const schema of ['pult', 'pult_history', 'pult_market']) {
+    await require('../storage/postgres-live-schema.cjs').ensurePostgresLiveSchema(owner);
+    await owner.query(require('../storage/acquisition/postgres-live-scheduler.cjs').schemaSql());
+    for (const schema of ['pult', 'pult_history', 'pult_market', 'pult_live']) {
       await owner.query(`GRANT USAGE ON SCHEMA ${schema} TO pult_app,pult_importer`);
       await owner.query(`GRANT SELECT,INSERT,UPDATE,DELETE ON ALL TABLES IN SCHEMA ${schema} TO pult_app,pult_importer`);
       await owner.query(`GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA ${schema} TO pult_app,pult_importer`);
+      // Imported legacy IDs require setval; the runtime role must not reset sequences.
+      if (schema === 'pult_history') await owner.query(`GRANT UPDATE ON ALL SEQUENCES IN SCHEMA ${schema} TO pult_importer`);
     }
     await owner.query('REVOKE UPDATE,DELETE ON pult.commands FROM pult_app');
+    await owner.query('REVOKE UPDATE,DELETE ON pult_live.commands,pult_live.record_journal,pult_live.scheduler_commands,pult_live.scheduler_requests FROM pult_app,pult_importer');
     await owner.query('REVOKE UPDATE,DELETE ON pult.source_files FROM pult_app');
     await owner.query('REVOKE INSERT,UPDATE,DELETE ON pult.schema_versions FROM pult_app');
     const privileges = await owner.query(`SELECT r.rolname,r.rolsuper,r.rolcreatedb,r.rolcreaterole,r.rolreplication,r.rolbypassrls,
-      has_schema_privilege(r.rolname,'pult','CREATE') OR has_schema_privilege(r.rolname,'pult_history','CREATE') OR has_schema_privilege(r.rolname,'pult_market','CREATE') AS can_ddl
+      has_schema_privilege(r.rolname,'pult','CREATE') OR has_schema_privilege(r.rolname,'pult_history','CREATE') OR has_schema_privilege(r.rolname,'pult_market','CREATE') OR has_schema_privilege(r.rolname,'pult_live','CREATE') AS can_ddl
       FROM pg_roles r WHERE r.rolname=ANY($1::text[])`, [['pult_app', 'pult_importer']]);
     if (privileges.rows.length !== 2 || privileges.rows.some(row => row.rolsuper || row.rolcreatedb || row.rolcreaterole || row.rolreplication || row.rolbypassrls || row.can_ddl)) fail('EXCESSIVE_ROLE_PRIVILEGES');
     const app = await require('../storage/postgres-connection.cjs').createApplicationPool({ bootstrapFile: path.join(DIRECTORY, 'application.dpapi') });

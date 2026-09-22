@@ -9,6 +9,7 @@ const path = require('node:path');
 const schemaSql = require('../storage/postgres-market-schema.cjs');
 const { importMarket } = require('../storage/postgres-market-import.cjs');
 const { createMarketRepository, MarketRepositoryError } = require('../storage/postgres-market-repository.cjs');
+const { summarize } = require('../summary.cjs');
 
 function fakePool(handler) {
   const calls = [];
@@ -40,6 +41,35 @@ test('getSnapshot reconstructs the exact source shape from the required presence
   assert.equal(pool.calls.some(call => call.text?.includes('source_documents') || call.text?.includes('exact_bytes')), false);
   assert.equal(pool.calls[1].text, 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
   assert.equal(pool.calls.at(-2).text, 'COMMIT');
+});
+
+test('getSummarySnapshot keeps summary inputs and omits unused snapshot arrays and operation fields', async () => {
+  const current = metadata(), product = { product_id: 1, name: 'One' }, stock = { product_id: 1, present: 0 };
+  const sourceOperations = [
+    { operation_type_name: '', operation_type: 'Sale', total_amount: { currency: 'USD', unused: 'drop' }, amount: 1.005, date: '2026-01-02T01:02:03Z', unused: { huge: true } },
+    { sellerOperName: 'Возврат', currency: null, amount: 0, rrDate: '2026-01-03', docTypeName: null },
+    { docTypeName: 'WB sale', amount: -2.345, saleDt: '2026-01-04', total_amount: null }
+  ];
+  const projected = [
+    { operation_type_name: '', operation_type: 'Sale', total_amount: { currency: 'USD' }, amount: 1.005, date: '2026-01-02T01:02:03Z' },
+    { sellerOperName: 'Возврат', currency: null, amount: 0, rrDate: '2026-01-03', docTypeName: null },
+    { docTypeName: 'WB sale', amount: -2.345, saleDt: '2026-01-04', total_amount: null }
+  ];
+  const state = { ...current, expected_counts: { ...current.expected_counts, stocks: 1, operations: 3 }, verified_counts: { ...current.verified_counts, stocks: 1, operations: 3 } };
+  const pool = fakePool(text => {
+    if (text.includes('current_snapshots')) return { rows: [state] };
+    if (text.includes('FROM "pult_market"."products"')) return { rows: [{ raw_row: product }] };
+    if (text.includes('FROM "pult_market"."stocks"')) return { rows: [{ raw_row: stock }] };
+    if (text.includes('FROM "pult_market"."finance_operations"')) return { rows: projected.map(raw_row => ({ raw_row })) };
+    return { rows: [] };
+  });
+  const result = await createMarketRepository({ pool }).getSummarySnapshot('10');
+  assert.deepEqual(result, { ...current.source_metadata, products: [product], stocks: [stock], operations: projected });
+  assert.equal(Object.hasOwn(result, 'stockRows'), false); assert.equal(Object.hasOwn(result, 'categoryTree'), false);
+  assert.deepEqual(summarize(result, null, null), summarize({ ...current.source_metadata, products: [product], stocks: [stock], operations: sourceOperations }, null, null));
+  const operationQuery = pool.calls.find(call => call.text?.includes('FROM "pult_market"."finance_operations"'));
+  assert.match(operationQuery.text, /jsonb_build_object\('currency',raw_row->'total_amount'->'currency'\)/u);
+  assert.doesNotMatch(operationQuery.text, /stock_rows|category_tree_rows/u);
 });
 
 test('products filters typed columns with parameters and returns raw rows plus source coverage', async () => {
@@ -108,7 +138,7 @@ async function fixture(t) {
     store: 'Synthetic Ozon', clientId: '10', completedAt: '2026-01-03T00:00:00Z', zero: 0, nullable: null,
     products: [{ product_id: 101, sku: '00501', offer_id: '=offer', price: 0 }, { product_id: '9007199254740993', sku: '502', offer_id: null }],
     stocks: [{ product_id: 101, offer_id: '=offer', stocks: [{ sku: '00501', present: 0, reserved: null, warehouse_ids: ['w1'] }] }],
-    operations: [{ operation_id: 7, date: '2026-01-02T05:06:07Z', operation_type: 'Sale', amount: 0, posting: { products: [{ sku: '00501', quantity: 1 }] } }],
+    operations: [{ operation_id: 7, date: '2026-01-02T05:06:07Z', operation_type: 'Sale', amount: 1.005, total_amount: { currency: 'USD', unused: 'drop' }, posting: { products: [{ sku: '00501', quantity: 1 }] }, unused: 'drop' }, { operation_id: 8, sellerOperName: 'Возврат', amount: 0, currency: null, rrDate: '2026-01-02', docTypeName: null }, { operation_id: 9, docTypeName: 'WB sale', amount: -2.345, saleDt: '2026-01-02', total_amount: null }],
     categoryTree: []
   };
   await fs.writeFile(path.join(directory, 'stores.json'), JSON.stringify({ '10': { name: 'Synthetic Ozon', key: 'opaque-ciphertext' } }));
@@ -134,9 +164,12 @@ test('PostgreSQL integration: importer rows reconstruct current snapshot and typ
     const repo = createMarketRepository({ pool });
     const reconstructed = await repo.getSnapshot('10');
     assert.deepEqual(reconstructed, source.snapshot);
+    const summarySnapshot = await repo.getSummarySnapshot('10');
+    assert.deepEqual(summarize(summarySnapshot, null, null), summarize(source.snapshot, null, null));
+    assert.deepEqual(summarySnapshot.operations, [{ date: '2026-01-02T05:06:07Z', operation_type: 'Sale', amount: 1.005, total_amount: { currency: 'USD' } }, { sellerOperName: 'Возврат', amount: 0, currency: null, rrDate: '2026-01-02', docTypeName: null }, { docTypeName: 'WB sale', amount: -2.345, saleDt: '2026-01-02', total_amount: null }]);
     assert.deepEqual((await repo.products({ storeId: '10', sku: '00501' })).rows, [source.snapshot.products[0]]);
     assert.deepEqual((await repo.stocks({ storeId: '10', sku: '00501' })).rows, source.snapshot.stocks);
-    assert.deepEqual((await repo.operations({ storeId: '10', from: '2026-01-02', to: '2026-01-02', sku: '00501' })).rows, source.snapshot.operations);
+    assert.deepEqual((await repo.operations({ storeId: '10', from: '2026-01-02', to: '2026-01-02', sku: '00501' })).rows, [source.snapshot.operations[0]]);
     assert.deepEqual(await repo.products({ storeId: '10', productId: 'absent' }), { rows: [], total: 0, limit: 100, offset: 0, coverage: { complete: true, sourceRows: 2, present: true, matched: 0 } });
   } finally {
     if (owned) await pool.query('DROP SCHEMA pult_market CASCADE');
