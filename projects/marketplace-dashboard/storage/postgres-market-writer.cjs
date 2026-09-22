@@ -86,7 +86,7 @@ function createMarketWriter({ stateStore, schema = 'pult_market' } = {}) {
     const row = await stateStore.readCommand(logicalKey, commandId, { operation: 'write', sourceMapping: { sourcePath, logicalKey, domain: 'market-snapshots', mediaType: 'application/json' } });
     if (!row) return null;
     if (!row.result?.snapshotId || !row.after?.content) fail('PROJECTION_CONFLICT', 'Committed market command has no durable projection result');
-    return { revision: row.after.revision, replayed: true, snapshotId: row.result.snapshotId, exactBytes: Buffer.from(row.after.content) };
+    return { revision: row.after.revision, beforeRevision: row.before.revision, replayed: true, snapshotId: row.result.snapshotId, exactBytes: Buffer.from(row.after.content) };
   }
   async function publish({ storeId, exactBytes, expectedRevision, commandId } = {}) {
     if (typeof storeId !== 'string' || !/^(?:wb-)?[0-9]+$/u.test(storeId) || !Buffer.isBuffer(exactBytes)) fail('INVALID_ARGUMENT', 'storeId and exactBytes are required');

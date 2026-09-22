@@ -13,7 +13,7 @@ function createMarketAcquisition({ storesRepository, marketRepository, marketWri
   async function acquire({ storeId, expectedRevision, commandId, onProgress } = {}) {
     if (typeof storeId !== 'string' || !/^(?:wb-)?[0-9]+$/u.test(storeId) || typeof onProgress !== 'undefined' && typeof onProgress !== 'function') throw new MarketAcquisitionError('INVALID_ARGUMENT', 'Acquisition arguments are invalid');
     const committed = await marketWriter.readCommand({ storeId, commandId });
-    if (committed) { let snapshot; try { snapshot = JSON.parse(committed.exactBytes.toString('utf8')); } catch { throw new MarketAcquisitionError('DATABASE_ERROR', 'Committed acquisition payload is invalid'); } return { revision: committed.revision, replayed: true, snapshotId: committed.snapshotId, status: Object.values(snapshot.sections || {}).some(value => value?.ok === false) ? 'partial' : 'done', errors: [], completedAt: snapshot.completedAt }; }
+    if (committed) { if (committed.beforeRevision !== String(expectedRevision)) throw new MarketAcquisitionError('COMMAND_ID_REUSED', 'Acquisition command revision differs'); let snapshot; try { snapshot = JSON.parse(committed.exactBytes.toString('utf8')); } catch { throw new MarketAcquisitionError('DATABASE_ERROR', 'Committed acquisition payload is invalid'); } return { revision: committed.revision, replayed: true, snapshotId: committed.snapshotId, status: Object.values(snapshot.sections || {}).some(value => value?.ok === false) ? 'partial' : 'done', errors: [], completedAt: snapshot.completedAt }; }
     const store = await storesRepository.protectedStore(storeId); if (!store) throw new MarketAcquisitionError('STORE_MISSING', 'Store is not connected');
     let key;
     try {

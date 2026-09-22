@@ -33,6 +33,11 @@ test('writer preserves OUTCOME_UNKNOWN and never performs a hidden retry', async
   assert.equal(calls, 1);
 });
 
+test('command receipt exposes the durable before revision for acquisition replay checks', async () => {
+  const bytes = Buffer.from(JSON.stringify(snapshot('Committed'))), writer = createMarketWriter({ stateStore: { async readCommand() { return { before: { revision: '7' }, after: { revision: '8', content: bytes }, result: { snapshotId: C1 } }; }, async writeWithProjection() { throw Error('unused'); } } });
+  const receipt = await writer.readCommand({ storeId: '1', commandId: C1 }); assert.equal(receipt.beforeRevision, '7'); assert.equal(receipt.revision, '8'); assert.deepEqual(receipt.exactBytes, bytes);
+});
+
 const integrationUrl = process.env.PULT_TEST_DATABASE_URL;
 const restrictedUrl = process.env.PULT_TEST_RESTRICTED_DATABASE_URL;
 test('PostgreSQL restricted role: projection and replay use source_files SELECT/INSERT only', { skip: !integrationUrl || !restrictedUrl }, async () => {

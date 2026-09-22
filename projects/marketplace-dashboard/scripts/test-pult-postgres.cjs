@@ -30,6 +30,9 @@ const TEST_SUITES = Object.freeze({
   'profit-series': 'test/postgres-profit-series.test.cjs',
   'wb-economics': 'test/postgres-wb-economics.test.cjs',
   conversion: 'test/postgres-conversion.test.cjs',
+  truestats: 'test/postgres-truestats.test.cjs',
+  'analytics-composition': 'test/postgres-analytics-composition.test.cjs',
+  'source-providers': 'test/postgres-source-providers.test.cjs',
   'document-journal': 'test/postgres-document-journal.test.cjs',
   'document-replay': 'test/postgres-document-replay.test.cjs',
   'runtime-journal': 'test/postgres-runtime-journal.test.cjs',
@@ -59,6 +62,7 @@ const TEST_SUITES = Object.freeze({
   'market-acquisition': 'test/postgres-market-acquisition.test.cjs',
   core: 'test/postgres-core.test.cjs',
   'server-postgres': 'test/postgres-server.test.cjs',
+  'server-composition': 'test/postgres-server-composition.test.cjs',
   backup: 'test/postgres-backup.test.cjs'
 });
 const TEST_FILES = Object.values(TEST_SUITES);
@@ -168,7 +172,7 @@ async function main() {
     const restrictedUrl = new URL(connectionUrl); restrictedUrl.username = appRole; restrictedUrl.password = appPassword;
     testsPassed = true;
     for (const file of selectedFiles) {
-      const needsRestricted = [TEST_SUITES.state, TEST_SUITES['state-batch'], TEST_SUITES['market-writer'], TEST_SUITES['finance-documents']].includes(file);
+      const needsRestricted = [TEST_SUITES.state, TEST_SUITES['state-batch'], TEST_SUITES['market-writer'], TEST_SUITES['finance-documents'], TEST_SUITES['source-providers']].includes(file);
       if (!await runTestFile(file, connectionUrl.toString(), file === TEST_SUITES.backup ? restoreUrl.toString() : undefined, needsRestricted ? restrictedUrl.toString() : undefined)) testsPassed = false;
     }
   } finally {
