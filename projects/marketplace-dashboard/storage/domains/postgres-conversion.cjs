@@ -1,0 +1,25 @@
+'use strict';
+const { analyzeOzon } = require('../../conversion.cjs');
+const formatter = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' });
+const safeText = value => typeof value === 'string' || typeof value === 'number' ? String(value).slice(0, 500) : null;
+const unavailable = (store, reason, code = 'unavailable') => ({ id: store.id, name: store.name, market: store.market, status: 'unavailable', code, reason, rows: [], coverage: { tracked: 0, mapped: 0, catalog: null, unmapped: 0, declining: 0, comparable: 0 }, fetchedAt: null });
+module.exports = function createPostgresConversion({ getStores, getProducts, getOzonFunnel, getWbConversion, now = () => Date.now() } = {}) {
+  if ([getStores, getProducts, getOzonFunnel, getWbConversion].some(value => typeof value !== 'function')) throw new TypeError('explicit SQL providers are required');
+  async function read({ storeId, store, market = 'all' } = {}) {
+    const selectedId = storeId || store || '', normalizedMarket = market || 'all'; if (!['all', 'Ozon', 'WB'].includes(normalizedMarket)) throw Error('Выберите все площадки, Ozon или WB.');
+    const directory = await getStores(); if (!directory || typeof directory !== 'object' || Array.isArray(directory)) throw Error('Некорректный каталог магазинов SQL');
+    const selected = Object.entries(directory).map(([id, value]) => ({ id, name: safeText(value.name) || id, market: value.market === 'WB' ? 'WB' : 'Ozon' })).filter(value => (!selectedId || value.id === String(selectedId)) && (normalizedMarket === 'all' || value.market === normalizedMarket)); if (!selected.length) throw Error('Выберите подключённый магазин для анализа конверсии.');
+    const stamp = Number(new Date(now())), day = formatter.format(new Date(stamp)), reports = [];
+    for (const selectedStore of selected) {
+      if (selectedStore.market === 'WB') { const report = await getWbConversion(selectedStore.id, { day }); if (!report || typeof report !== 'object' || !Array.isArray(report.rows) || report.id !== selectedStore.id || report.market !== 'WB') reports.push(unavailable(selectedStore, 'Нет проверенного снимка воронки WB. Отсутствие данных не означает нулевые заказы.', 'wb_unavailable')); else reports.push(structuredClone(report)); continue; }
+      let source, products; try { source = await getOzonFunnel(selectedStore.id); } catch { reports.push(unavailable(selectedStore, 'Не удалось прочитать воронку Ozon.', 'error')); continue; }
+      if (!source?.snapshot) { reports.push(unavailable(selectedStore, source?.status === 'pending' ? 'Воронка Ozon загружается в общей очереди аналитики.' : 'Нет полного снимка воронки Ozon. Доступность метрик и ограничения API ещё не подтверждены.', source?.status === 'pending' ? 'pending' : 'ozon_unavailable')); continue; }
+      try { products = await getProducts(selectedStore.id); } catch { reports.push(unavailable(selectedStore, 'Локальный каталог Ozon недоступен.', 'catalog')); continue; }
+      if (!Array.isArray(products)) { reports.push(unavailable(selectedStore, 'Локальный каталог Ozon недоступен.', 'catalog')); continue; }
+      try { const report = analyzeOzon(source.snapshot, { store: selectedStore, products, day, status: source.status }); reports.push({ ...unavailable(selectedStore, ''), ...report, ...(source.retryAt ? { nextAt: source.retryAt } : {}) }); } catch (error) { reports.push(unavailable(selectedStore, error.message, error.code || 'error')); }
+    }
+    const available = reports.filter(value => value.rows.length), rows = available.flatMap(value => value.rows), status = !available.length ? 'unavailable' : reports.some(value => value.status === 'stale') ? 'stale' : reports.some(value => value.status !== 'ready') ? 'partial' : 'ready';
+    return { status, source: 'TrueStats RNP / Ozon Seller API', generatedAt: new Date(stamp).toISOString(), scope: { storeId: String(selectedId), market: normalizedMarket }, stores: reports, rows, coverage: { selectedStores: reports.length, availableStores: available.length, mapped: rows.length, declining: rows.filter(value => value.declining).length }, refresh: { intervalMinutes: 30 }, notes: ['WB: переходы, добавления в корзину и заказы — события за период, а не отслеживание одних и тех же покупателей. Конверсия в корзину = корзины / переходы × 100%; отношение заказов к корзинам = заказы / корзины × 100%.', 'Ozon: добавления в корзину из карточки на 100 просмотров карточки = cartAdds / views × 100. Это не вероятность покупки и не доля уникальных посетителей. Отношение заказов к корзинам Ozon не рассчитывается.', 'Проценты считаются из итоговых событий, не усредняются по дням или SKU. При нулевом знаменателе или отсутствующих событиях показатель не рассчитывается. Отношения событий могут превышать 100%.', 'Малая выборка: хотя бы в одном периоде менее 100 переходов/просмотров, 20 корзин или 10 заказанных единиц, либо часть событий отсутствует. Это ориентир надёжности, не статистический тест.'] };
+  }
+  return Object.freeze({ read });
+};

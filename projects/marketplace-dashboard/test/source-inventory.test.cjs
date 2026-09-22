@@ -7,7 +7,7 @@ const path = require('node:path');
 const { classify, inspectPrivateDirectory } = require('../storage/source-inventory.cjs');
 
 test('all formerly unarchived primary registries and opaque connections are migration sources', () => {
-  for (const name of ['procurement.json', 'supplier-portals.json', 'partner-workspace.json', 'b2b-agent/queue.json', 'stores.json', 'b2b-agent/connection.dpapi', 'pult-atlas-sync-state.json']) {
+  for (const name of ['procurement.json', 'supplier-portals.json', 'partner-workspace.json', 'b2b-agent/queue.json', 'stores.json', 'b2b-agent/connection.dpapi', 'pult-atlas-sync-state.json', 'runtime-schedules.json', 'truestats-runtime-state.json']) {
     assert.equal(classify(name).kind, 'runtime', name);
   }
   assert.equal(classify('truestats-wb-link.json').target, 'sql-state');

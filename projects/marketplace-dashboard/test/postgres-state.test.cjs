@@ -246,6 +246,7 @@ test('runtime source mapping is inserted atomically once and an imported baselin
     expectedRevision: '0', commandId: COMMAND, mediaType: 'application/json', sourceMapping
   });
   const inserted = absent.calls.find(call => call.text?.includes('INSERT INTO "pult"."source_files"'));
+  assert.equal(absent.calls.filter(call => call.text?.includes('FROM "pult"."source_files"')).every(call => !call.text.includes('FOR UPDATE')), true);
   assert.deepEqual(inserted.values.slice(0, 4), [sourcePath, logicalKey, 'business-state', 'application/json']);
   assert.equal(inserted.values[4].length, 32);
   assert.deepEqual(inserted.values[4], crypto.createHash('sha256').update(Buffer.alloc(0)).digest());
@@ -261,6 +262,34 @@ test('runtime source mapping is inserted atomically once and an imported baselin
   });
   assert.equal(baseline.calls.some(call => call.text?.includes('INSERT INTO "pult"."source_files"')), false);
   assert.equal(baseline.calls.some(call => /UPDATE\s+"pult"\."source_files"/u.test(call.text || '')), false);
+});
+
+test('market projection is restricted to mapped data snapshots and runs after the document write', async () => {
+  const sourcePath = 'data-1.json';
+  const logicalKey = 'file/' + crypto.createHash('sha256').update(sourcePath).digest('hex');
+  const sourceMapping = { sourcePath, logicalKey, domain: 'market-snapshots', mediaType: 'application/json' };
+  const pool = fakePool(text => {
+    if (text.includes('FROM "pult"."commands"') || text.includes('FROM "pult"."document_states"') || text.includes('FROM "pult"."source_files"')) return { rows: [] };
+    return { rows: [] };
+  });
+  const input = Buffer.from('{"clientId":"1"}'); let effectCalls = 0;
+  const result = await createStateStore({ pool }).writeWithProjection(logicalKey, input, {
+    expectedRevision: '0', commandId: COMMAND, mediaType: 'application/json', sourceMapping
+  }, async (client, context) => {
+    effectCalls++; input.fill(0);
+    assert.equal(context.before, null); assert.equal(context.afterRevision, '1');
+    assert.equal(context.content.toString(), '{"clientId":"1"}');
+    const stateIndex = pool.calls.findIndex(call => call.text?.includes('INSERT INTO "pult"."document_states"'));
+    const mappingIndex = pool.calls.findIndex(call => call.text?.includes('INSERT INTO "pult"."source_files"'));
+    assert.ok(stateIndex >= 0 && mappingIndex > stateIndex); assert.equal(client, pool.client);
+    return { snapshotId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' };
+  });
+  assert.deepEqual(result, { revision: '1', replayed: false, result: { snapshotId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' } });
+  assert.equal(effectCalls, 1);
+
+  await assert.rejects(createStateStore({ pool }).writeWithProjection(logicalKey, Buffer.from('{}'), {
+    expectedRevision: '0', commandId: COMMAND_2, mediaType: 'application/json', sourceMapping: { ...sourceMapping, sourcePath: 'costs-1.json' }
+  }, async () => ({})), error => error.code === 'INVALID_ARGUMENT');
 });
 
 test('source mapping failure rolls back state and an existing unmapped document fails closed', async () => {
@@ -325,6 +354,11 @@ test('read preserves bigint and bytea fidelity and hides tombstones by default',
 });
 
 const integrationUrl = process.env.PULT_TEST_DATABASE_URL;
+const restrictedUrl = process.env.PULT_TEST_RESTRICTED_DATABASE_URL;
+test('PostgreSQL restricted role: mapped write and replay need no source_files UPDATE', { skip: !integrationUrl || !restrictedUrl }, async () => {
+  const {Pool}=require('pg'),owner=new Pool({connectionString:integrationUrl}),restricted=new Pool({connectionString:restrictedUrl}),schema=`restricted_${crypto.randomBytes(8).toString('hex')}`,role=(await restricted.query('SELECT current_user AS role')).rows[0].role;
+  try{await owner.query(require('../storage/postgres-schema.cjs').replaceAll('pult',schema));await owner.query(require('../storage/postgres-document-schema.cjs').replaceAll('pult',schema));await owner.query(`GRANT USAGE ON SCHEMA "${schema}" TO "${role}"; GRANT SELECT,INSERT,UPDATE ON "${schema}".document_states,"${schema}".commands TO "${role}"; GRANT SELECT,INSERT ON "${schema}".source_files TO "${role}"; REVOKE UPDATE,DELETE ON "${schema}".source_files FROM "${role}"`);const store=createStateStore({pool:restricted,schema}),sourcePath='ideas.json',logicalKey='file/'+crypto.createHash('sha256').update(sourcePath).digest('hex'),options={expectedRevision:'0',commandId:COMMAND,mediaType:'application/json',sourceMapping:{sourcePath,logicalKey,domain:'business-state',mediaType:'application/json'}};assert.deepEqual(await store.write(logicalKey,Buffer.from('{}'),options),{revision:'1',replayed:false});assert.deepEqual(await store.write(logicalKey,Buffer.from('{}'),options),{revision:'1',replayed:true});}finally{await restricted.end();await owner.query(`DROP SCHEMA IF EXISTS "${schema}" CASCADE`);await owner.end();}
+});
 test('PostgreSQL integration: schema, CAS, replay, tombstone and exact bytes', { skip: !integrationUrl }, async () => {
   const parsed = new URL(integrationUrl);
   const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//u, ''));

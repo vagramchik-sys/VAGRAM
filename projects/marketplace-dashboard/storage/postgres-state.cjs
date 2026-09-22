@@ -194,19 +194,23 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
     return result;
   }
 
-  async function mutate(operation, logicalKey, content, options = {}, effect = null) {
+  async function mutate(operation, logicalKey, content, options = {}, effect = null, effectMode = null) {
     const key = validateKey(logicalKey);
     const commandId = validateCommandId(options.commandId);
     const expectedRevision = validateRevision(options.expectedRevision);
     const mediaType = validateMediaType(options.mediaType || 'application/octet-stream');
     const withEffect = effect !== null;
-    if (withEffect && (operation !== 'write' || typeof effect !== 'function' || options.sourceMapping !== undefined ||
-        !/^(?:history|archive|market)\/[A-Za-z0-9._/-]+$/u.test(key)))
-      fail('INVALID_ARGUMENT', 'SQL effects require a non-file history, archive, or market key');
+    if (withEffect && (operation !== 'write' || typeof effect !== 'function')) fail('INVALID_ARGUMENT', 'SQL effect is invalid');
     const sourceMapping = validateSourceMapping(options.sourceMapping, key, mediaType);
+    const projection = effectMode === 'projection';
+    if (withEffect && !projection && (options.sourceMapping !== undefined || !/^(?:history|archive|market)\/[A-Za-z0-9._/-]+$/u.test(key)))
+      fail('INVALID_ARGUMENT', 'SQL effects require a non-file history, archive, or market key');
+    if (projection && (!sourceMapping || sourceMapping.domain !== 'market-snapshots' || mediaType !== 'application/json' ||
+        !/^data-(?:wb-)?[0-9]+\.json$/u.test(sourceMapping.sourcePath)))
+      fail('INVALID_ARGUMENT', 'SQL projection requires a classified market snapshot mapping');
     const body = operation === 'write' ? validateContent(content, maxPayloadBytes) : null;
     const sha256 = body && contentHash(body);
-    const fingerprint = requestHash(withEffect ? 'write-effect' : operation, key, expectedRevision, mediaType, body);
+    const fingerprint = requestHash(projection ? 'write-projection' : withEffect ? 'write-effect' : operation, key, expectedRevision, mediaType, body);
     let client;
     let transactionOpen = false;
     let duringCommit = false;
@@ -230,7 +234,7 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
           fail('COMMAND_ID_REUSED', 'commandId was already used for a different request');
         if (withEffect && recorded.result_json == null) fail('COMMAND_ID_REUSED', 'commandId was already used without a durable SQL effect result');
         if (sourceMapping) {
-          const mappedRows = await client.query(`SELECT source_path,logical_key,domain,media_type,baseline_present FROM ${table('source_files')} WHERE source_path=$1 OR logical_key=$2 FOR UPDATE`, [sourceMapping.sourcePath, key]);
+          const mappedRows = await client.query(`SELECT source_path,logical_key,domain,media_type,baseline_present FROM ${table('source_files')} WHERE source_path=$1 OR logical_key=$2`, [sourceMapping.sourcePath, key]);
           const mapped = first(mappedRows);
           if (mappedRows.rows.length !== 1 || mapped.source_path !== sourceMapping.sourcePath || mapped.logical_key !== key || mapped.domain !== sourceMapping.domain || mapped.media_type !== sourceMapping.mediaType)
             fail('SOURCE_MAPPING_MISSING', 'Runtime source mapping is missing or conflicts with the command');
@@ -251,7 +255,7 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
         fail('REVISION_CONFLICT', 'expectedRevision does not match current revision');
       let insertMapping = false;
       if (sourceMapping) {
-        const mappedRows = await client.query(`SELECT source_path,logical_key,domain,media_type,baseline_present FROM ${table('source_files')} WHERE source_path=$1 OR logical_key=$2 FOR UPDATE`, [sourceMapping.sourcePath, key]);
+        const mappedRows = await client.query(`SELECT source_path,logical_key,domain,media_type,baseline_present FROM ${table('source_files')} WHERE source_path=$1 OR logical_key=$2`, [sourceMapping.sourcePath, key]);
         const mapped = first(mappedRows);
         if (mappedRows.rows.length > 1 || mapped && (mapped.source_path !== sourceMapping.sourcePath || mapped.logical_key !== key || mapped.domain !== sourceMapping.domain || mapped.media_type !== sourceMapping.mediaType))
           fail('SOURCE_MAPPING_CONFLICT', 'Runtime source mapping conflicts with existing provenance');
@@ -259,7 +263,7 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
         insertMapping = !mapped;
       }
       const afterRevision = (BigInt(actualRevision) + 1n).toString();
-      const resultJson = withEffect ? effectResult(await effect(client)) : null;
+      let resultJson = withEffect && !projection ? effectResult(await effect(client)) : null;
 
       await client.query(
         `INSERT INTO ${table('document_states')}
@@ -275,6 +279,12 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
          VALUES($1,$2,$3,$4,0,$5,false)`,
         [sourceMapping.sourcePath, key, sourceMapping.domain, sourceMapping.mediaType, EMPTY_SHA256]
       );
+      if (projection) resultJson = effectResult(await effect(client, Object.freeze({
+        logicalKey: key, expectedRevision, afterRevision, mediaType, content: Buffer.from(body), sha256: Buffer.from(sha256),
+        before: before ? Object.freeze({ revision: actualRevision, mediaType: before.media_type == null ? null : String(before.media_type),
+          content: before.content == null ? null : Buffer.from(before.content), sha256: before.sha256 == null ? null : Buffer.from(before.sha256),
+          deleted: Boolean(before.deleted) }) : null
+      })));
       await client.query(
         `INSERT INTO ${table('commands')}
            (command_id,operation,logical_key,request_hash,before_revision,after_revision,media_type,before_media_type,
@@ -308,6 +318,7 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
     list,
     write: (key, content, options) => mutate('write', key, content, options),
     writeWithEffect: (key, content, options, effect) => mutate('write', key, content, options, effect),
+    writeWithProjection: (key, content, options, effect) => mutate('write', key, content, options, effect, 'projection'),
     remove: (key, options) => mutate('delete', key, null, options)
   });
 }

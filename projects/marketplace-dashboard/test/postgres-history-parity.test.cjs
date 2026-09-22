@@ -1,0 +1,4 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const {summarizeHistoryInventory,compareHistorySummary,HistoryParityError}=require('../storage/postgres-history-parity.cjs');
+test('business summary is independent of surrogate IDs and rejects changed business rows',()=>{const inventory={ingestions:[{sourceFile:'insights-1.json',contentHash:'a',capturedAt:'2026-09-22T00:00:00.000Z',sourceKind:'ozon-orders'}],facts:[{sourceFile:'insights-1.json',contentHash:'a',storeId:'1',day:'2026-09-21',productId:'A',units:2}]},expected=summarizeHistoryInventory(inventory);assert.deepEqual(compareHistorySummary(expected,structuredClone(inventory)),{matched:true,expected,actual:expected});const changed=structuredClone(inventory);changed.facts[0].units=3;assert.throws(()=>compareHistorySummary(expected,changed),error=>error instanceof HistoryParityError&&error.code==='PARITY_MISMATCH')});

@@ -10,6 +10,8 @@ const REGISTERS = new Set([
   'partner-commercial-model.json', 'finance-register.json', 'management.json',
   'charity.json', 'charity-plan.json', 'company-impact.json', 'product-type-registry.json',
   'order-category-intraday.json', 'truestats-wb-link.json', 'pult-atlas-sync-state.json',
+  'runtime-schedules.json',
+  'truestats-runtime-state.json',
 ]);
 const CONNECTIONS = new Set([
   'stores.json', 'truestats.json', 'pult-atlas-credential.json', 'b2b-agent/connection.dpapi',
