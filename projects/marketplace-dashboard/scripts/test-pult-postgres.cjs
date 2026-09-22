@@ -12,6 +12,7 @@ const TEST_SUITES = Object.freeze({
   'archive-repository': 'test/postgres-archive-repository.test.cjs',
   'history-import': 'test/postgres-history-import.test.cjs',
   'history-repository': 'test/postgres-history-repository.test.cjs',
+  'journaled-history': 'test/postgres-journaled-history.test.cjs',
   'market-import': 'test/postgres-market-import.test.cjs',
   state: 'test/postgres-state.test.cjs',
   connection: 'test/postgres-connection.test.cjs',
@@ -24,8 +25,11 @@ const TEST_SUITES = Object.freeze({
   'document-replay': 'test/postgres-document-replay.test.cjs',
   'b2b-queue': 'test/postgres-b2b-queue.test.cjs',
   'b2b-runner': 'test/postgres-b2b-runner.test.cjs',
+  'b2b-server': 'test/postgres-b2b-server.test.cjs',
   ideas: 'test/postgres-ideas.test.cjs',
   procurement: 'test/postgres-procurement.test.cjs',
+  'workspace-tools': 'test/postgres-workspace-tools.test.cjs',
+  management: 'test/postgres-management.test.cjs',
   backup: 'test/postgres-backup.test.cjs'
 });
 const TEST_FILES = Object.values(TEST_SUITES);

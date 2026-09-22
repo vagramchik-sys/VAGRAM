@@ -100,9 +100,10 @@ test('write rejects JSON coercion, hidden getters, cycles and invalid domain dat
   let getterCalled = false;
   const accessor = { get schema() { getterCalled = true; return 1; }, items: [] };
   const cyclic = { schema: 1, items: [] }; cyclic.items.push(cyclic);
+  const hiddenArray = []; Object.defineProperty(hiddenArray, 'hidden', { value: 1, enumerable: false });
   const invalid = [accessor, cyclic, { schema: 1, items: [undefined] }, { schema: 1, items: [NaN] },
     { schema: 1, items: [new Date()] }, { schema: 1, items: [1n] }, { schema: 1, items: new Array(1) },
-    { schema: 1, items: [], hidden: undefined }, { schema: 2, items: [] }];
+    { schema: 1, items: hiddenArray }, { schema: 1, items: [], hidden: undefined }, { schema: 2, items: [] }];
   const store = memoryStore(), repo = repository(store);
   for (const value of invalid) await assert.rejects(repo.compareAndSet(value, {}), error => error.code === 'INVALID_DOCUMENT');
   assert.equal(getterCalled, false);
@@ -111,6 +112,9 @@ test('write rejects JSON coercion, hidden getters, cycles and invalid domain dat
 
 test('byte limit measures UTF-8 and failed validation does not leak private text', async () => {
   assert.throws(() => encodeJson('я', 3), error => error.code === 'DOCUMENT_TOO_LARGE');
+  assert.equal(encodeJson(Object.freeze([1, 2])).toString('utf8'), '[1,2]');
+  const hidden = [1, 2]; Object.defineProperty(hidden, 'hidden', { value: 3 });
+  assert.throws(() => encodeJson(hidden), error => error.code === 'INVALID_DOCUMENT');
   const store = memoryStore();
   await assert.rejects(repository(store, { validate() { throw Error('private text'); } }).compareAndSet({ schema: 1, items: [] }), error => !error.message.includes('private text'));
   assert.equal(store.calls.length, 0);

@@ -4,8 +4,10 @@ const crypto = require('node:crypto');
 const path = require('node:path');
 const { acquireMutationFence } = require('./postgres-write-fence.cjs');
 const { classify } = require('./source-inventory.cjs');
+const { encodeJson } = require('./postgres-json-repository.cjs');
 
 const DEFAULT_MAX_PAYLOAD_BYTES = 320 * 1024 * 1024;
+const MAX_EFFECT_RESULT_BYTES = 64 * 1024;
 
 class PostgresStateError extends Error {
   constructor(code, message) {
@@ -63,6 +65,22 @@ function requestHash(operation, key, expectedRevision, mediaType, content) {
 }
 const contentHash = content => crypto.createHash('sha256').update(content).digest();
 const EMPTY_SHA256 = contentHash(Buffer.alloc(0));
+function effectResult(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) fail('INVALID_EFFECT_RESULT', 'effect result must be a JSON object');
+  let result;
+  try { result = JSON.parse(encodeJson(value, MAX_EFFECT_RESULT_BYTES).toString('utf8')); }
+  catch { fail('INVALID_EFFECT_RESULT', 'effect result must be strict JSON within the configured limit'); }
+  const pending = [result];
+  while (pending.length) {
+    const item = pending.pop();
+    for (const child of Array.isArray(item) ? item : Object.values(item)) {
+      if (typeof child === 'number' && !Number.isSafeInteger(child))
+        fail('INVALID_EFFECT_RESULT', 'effect result numbers must be safe integers');
+      if (child && typeof child === 'object') pending.push(child);
+    }
+  }
+  return result;
+}
 function validateSourceMapping(value, key, mediaType) {
   if (value == null) return null;
   if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.sourcePath !== 'string')
@@ -146,7 +164,7 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
       `SELECT command_id::text AS command_id,operation,logical_key,request_hash,
               before_revision::text AS before_revision,after_revision::text AS after_revision,
               media_type,before_media_type,before_content,before_sha256,before_deleted,
-              after_content,after_sha256,after_deleted,committed_at
+              after_content,after_sha256,after_deleted,result_json,committed_at
          FROM ${table('commands')} WHERE command_id=$1`, [id]
     ));
     if (!row) return null;
@@ -166,23 +184,29 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
       sha256: sha256 == null ? null : Buffer.from(sha256),
       deleted: deleted == null ? null : Boolean(deleted)
     });
-    return {
+    const result = {
       commandId: String(row.command_id), operation: row.operation, logicalKey: row.logical_key,
       requestHash: Buffer.from(row.request_hash), committedAt: row.committed_at,
       before: record(row.before_revision, row.before_media_type, row.before_content, row.before_sha256, row.before_deleted),
       after: record(row.after_revision, row.media_type, row.after_content, row.after_sha256, row.after_deleted)
     };
+    if (row.result_json != null) result.result = effectResult(row.result_json);
+    return result;
   }
 
-  async function mutate(operation, logicalKey, content, options = {}) {
+  async function mutate(operation, logicalKey, content, options = {}, effect = null) {
     const key = validateKey(logicalKey);
     const commandId = validateCommandId(options.commandId);
     const expectedRevision = validateRevision(options.expectedRevision);
     const mediaType = validateMediaType(options.mediaType || 'application/octet-stream');
+    const withEffect = effect !== null;
+    if (withEffect && (operation !== 'write' || typeof effect !== 'function' || options.sourceMapping !== undefined ||
+        !/^(?:history|archive|market)\/[A-Za-z0-9._/-]+$/u.test(key)))
+      fail('INVALID_ARGUMENT', 'SQL effects require a non-file history, archive, or market key');
     const sourceMapping = validateSourceMapping(options.sourceMapping, key, mediaType);
     const body = operation === 'write' ? validateContent(content, maxPayloadBytes) : null;
     const sha256 = body && contentHash(body);
-    const fingerprint = requestHash(operation, key, expectedRevision, mediaType, body);
+    const fingerprint = requestHash(withEffect ? 'write-effect' : operation, key, expectedRevision, mediaType, body);
     let client;
     let transactionOpen = false;
     let duringCommit = false;
@@ -198,12 +222,13 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [lock]);
 
       const recorded = first(await client.query(
-        `SELECT request_hash,after_revision::text AS after_revision
+        `SELECT request_hash,after_revision::text AS after_revision,result_json
            FROM ${table('commands')} WHERE command_id=$1`, [commandId]
       ));
       if (recorded) {
         if (!Buffer.from(recorded.request_hash).equals(fingerprint))
           fail('COMMAND_ID_REUSED', 'commandId was already used for a different request');
+        if (withEffect && recorded.result_json == null) fail('COMMAND_ID_REUSED', 'commandId was already used without a durable SQL effect result');
         if (sourceMapping) {
           const mappedRows = await client.query(`SELECT source_path,logical_key,domain,media_type,baseline_present FROM ${table('source_files')} WHERE source_path=$1 OR logical_key=$2 FOR UPDATE`, [sourceMapping.sourcePath, key]);
           const mapped = first(mappedRows);
@@ -213,7 +238,8 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
         duringCommit = true;
         await client.query('COMMIT');
         transactionOpen = false;
-        return { revision: String(recorded.after_revision), replayed: true };
+        return { revision: String(recorded.after_revision), replayed: true,
+          ...(withEffect ? { result: effectResult(recorded.result_json) } : {}) };
       }
 
       const before = first(await client.query(
@@ -233,6 +259,7 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
         insertMapping = !mapped;
       }
       const afterRevision = (BigInt(actualRevision) + 1n).toString();
+      const resultJson = withEffect ? effectResult(await effect(client)) : null;
 
       await client.query(
         `INSERT INTO ${table('document_states')}
@@ -251,18 +278,19 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
       await client.query(
         `INSERT INTO ${table('commands')}
            (command_id,operation,logical_key,request_hash,before_revision,after_revision,media_type,before_media_type,
-            before_content,before_sha256,before_deleted,after_content,after_sha256,after_deleted)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+            before_content,before_sha256,before_deleted,after_content,after_sha256,after_deleted,result_json)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15::jsonb)`,
         [commandId, operation, key, fingerprint, actualRevision, afterRevision, mediaType,
           before?.media_type == null ? null : String(before.media_type),
           before?.content == null ? null : Buffer.from(before.content),
           before?.sha256 == null ? null : Buffer.from(before.sha256),
-          before ? Boolean(before.deleted) : null, body, sha256, operation === 'delete']
+          before ? Boolean(before.deleted) : null, body, sha256, operation === 'delete',
+          resultJson === null ? null : JSON.stringify(resultJson)]
       );
       duringCommit = true;
       await client.query('COMMIT');
       transactionOpen = false;
-      return { revision: afterRevision, replayed: false };
+      return { revision: afterRevision, replayed: false, ...(withEffect ? { result: resultJson } : {}) };
     } catch (error) {
       destroyClient = duringCommit;
       if (transactionOpen && client) {
@@ -279,8 +307,9 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
     readCommand,
     list,
     write: (key, content, options) => mutate('write', key, content, options),
+    writeWithEffect: (key, content, options, effect) => mutate('write', key, content, options, effect),
     remove: (key, options) => mutate('delete', key, null, options)
   });
 }
 
-module.exports = { createStateStore, PostgresStateError, DEFAULT_MAX_PAYLOAD_BYTES, requestHash };
+module.exports = { createStateStore, PostgresStateError, DEFAULT_MAX_PAYLOAD_BYTES, MAX_EFFECT_RESULT_BYTES, requestHash };

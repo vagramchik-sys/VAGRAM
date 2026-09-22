@@ -31,7 +31,11 @@ function encodeJson(value, maxBytes = DEFAULT_MAX_BYTES) {
     let result;
     if (array) {
       const keys = Object.keys(item);
-      if (keys.length !== item.length || keys.some((key, index) => key !== String(index)))
+      const names = Object.getOwnPropertyNames(item);
+      const length = Object.getOwnPropertyDescriptor(item, 'length');
+      if (keys.length !== item.length || keys.some((key, index) => key !== String(index)) ||
+          names.length !== keys.length + 1 || names.some((name, index) => index < keys.length ? name !== keys[index] : name !== 'length') ||
+          !length || length.value !== item.length || length.enumerable || length.configurable)
         fail('INVALID_DOCUMENT', 'Document arrays must be dense and have no extra properties');
       result = '[' + keys.map(key => encodeDataProperty(item, key, depth)).join(',') + ']';
     } else {

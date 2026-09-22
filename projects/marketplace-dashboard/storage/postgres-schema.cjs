@@ -25,7 +25,7 @@ CREATE TABLE IF NOT EXISTS pult.commands (
  before_sha256 bytea CHECK (before_sha256 IS NULL OR octet_length(before_sha256)=32),
  before_deleted boolean, after_content bytea,
  after_sha256 bytea CHECK (after_sha256 IS NULL OR octet_length(after_sha256)=32),
- after_deleted boolean NOT NULL, committed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ after_deleted boolean NOT NULL, result_json jsonb, committed_at timestamptz NOT NULL DEFAULT clock_timestamp(),
  CONSTRAINT commands_revision_step CHECK (after_revision=before_revision+1),
  CONSTRAINT commands_after_shape CHECK (
   (NOT after_deleted AND after_content IS NOT NULL AND after_sha256 IS NOT NULL) OR
@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS pult.commands (
  )
 );
 ALTER TABLE pult.commands ADD COLUMN IF NOT EXISTS before_media_type text;
+ALTER TABLE pult.commands ADD COLUMN IF NOT EXISTS result_json jsonb;
 CREATE INDEX IF NOT EXISTS commands_logical_key_revision_idx ON pult.commands(logical_key,after_revision);
 INSERT INTO pult.schema_versions(version_number,description)
 VALUES(1,'Authoritative document state and durable command journal')

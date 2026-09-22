@@ -144,6 +144,73 @@ test('request hash is canonical, length-framed and byte-sensitive', () => {
   assert.notDeepEqual(a, requestHash('write', 'a/b', '0', 'x/z', Buffer.from([0, 1])));
 });
 
+test('trusted SQL effect is atomic, durable and never reruns for a duplicate command', async () => {
+  let effects = 0;
+  const pool = fakePool(text => {
+    if (text.includes('FROM "pult"."commands"')) return { rows: [] };
+    if (text.includes('FROM "pult"."document_states"') && text.includes('FOR UPDATE')) return { rows: [] };
+    return { rows: [] };
+  });
+  const result = await createStateStore({ pool }).writeWithEffect('history/source', Buffer.from('{"schemaVersion":1}'), {
+    expectedRevision: '0', commandId: COMMAND, mediaType: 'application/vnd.pult.history-command+json'
+  }, async client => { effects++; await client.query('INSERT INTO normalized_fact VALUES (1)'); return { facts: 1, ingestionId: 'synthetic' }; });
+  assert.deepEqual(result, { revision: '1', replayed: false, result: { facts: 1, ingestionId: 'synthetic' } });
+  assert.equal(effects, 1);
+  const effectIndex = pool.calls.findIndex(call => call.text === 'INSERT INTO normalized_fact VALUES (1)');
+  const stateIndex = pool.calls.findIndex(call => call.text?.includes('INSERT INTO "pult"."document_states"'));
+  assert.equal(effectIndex < stateIndex, true);
+  const journal = pool.calls.find(call => call.text?.includes('INSERT INTO "pult"."commands"'));
+  assert.equal(journal.values[14], JSON.stringify({ facts: 1, ingestionId: 'synthetic' }));
+
+  let duplicateEffects = 0;
+  const duplicate = fakePool(text => text.includes('FROM "pult"."commands"')
+    ? { rows: [{ request_hash: requestHash('write-effect', 'history/source', '0', 'application/vnd.pult.history-command+json', Buffer.from('{"schemaVersion":1}')), after_revision: '1', result_json: { ingestionId: 'synthetic', facts: 1 } }] }
+    : { rows: [] });
+  assert.deepEqual(await createStateStore({ pool: duplicate }).writeWithEffect('history/source', Buffer.from('{"schemaVersion":1}'), {
+    expectedRevision: '0', commandId: COMMAND, mediaType: 'application/vnd.pult.history-command+json'
+  }, async () => { duplicateEffects++; return { facts: 2 }; }), { revision: '1', replayed: true, result: { facts: 1, ingestionId: 'synthetic' } });
+  assert.equal(duplicateEffects, 0);
+
+  const failed = fakePool(text => {
+    if (text.includes('FROM "pult"."commands"') || text.includes('FROM "pult"."document_states"')) return { rows: [] };
+    return { rows: [] };
+  });
+  await assert.rejects(createStateStore({ pool: failed }).writeWithEffect('history/source', Buffer.from('{}'), {
+    expectedRevision: '0', commandId: COMMAND_2, mediaType: 'application/vnd.pult.history-command+json'
+  }, async client => { await client.query('INSERT INTO normalized_fact VALUES (2)'); throw Error('private failure'); }),
+  error => error.code === 'DATABASE_ERROR' && !error.message.includes('private'));
+  assert.equal(failed.calls.some(call => call.text?.includes('INSERT INTO "pult"."commands"')), false);
+  assert.equal(failed.calls.some(call => call.text?.includes('INSERT INTO "pult"."document_states"')), false);
+  assert.equal(failed.calls.some(call => call.text === 'ROLLBACK'), true);
+});
+
+test('trusted SQL effect rejects lossy JSON results and preserves JSON __proto__ data', async () => {
+  const invalidResults = [];
+  const sparse = new Array(1); invalidResults.push(sparse);
+  const extra = []; extra.extra = 1; invalidResults.push(extra);
+  const hidden = []; Object.defineProperty(hidden, 'hidden', { value: 1 }); invalidResults.push(hidden);
+  const accessor = {}; Object.defineProperty(accessor, 'value', { enumerable: true, get() { throw Error('getter ran'); } }); invalidResults.push(accessor);
+  const symbol = { count: 1 }; symbol[Symbol('hidden')] = 2; invalidResults.push(symbol);
+  for (const [index, bad] of invalidResults.entries()) {
+    const pool = fakePool(text => text.includes('FROM "pult"."commands"') || text.includes('FROM "pult"."document_states"')
+      ? { rows: [] } : { rows: [] });
+    await assert.rejects(createStateStore({ pool }).writeWithEffect('history/source', Buffer.from(`{"case":${index}}`), {
+      expectedRevision: '0', commandId: crypto.randomUUID(), mediaType: 'application/vnd.pult.history-command+json'
+    }, async () => ({ bad })), error => error.code === 'INVALID_EFFECT_RESULT');
+    assert.equal(pool.calls.some(call => call.text?.includes('INSERT INTO "pult"."commands"')), false);
+    assert.equal(pool.calls.some(call => call.text === 'ROLLBACK'), true);
+  }
+
+  const protoData = JSON.parse('{"__proto__":{"safe":true},"count":1}');
+  const pool = fakePool(text => text.includes('FROM "pult"."commands"') || text.includes('FROM "pult"."document_states"')
+    ? { rows: [] } : { rows: [] });
+  const result = await createStateStore({ pool }).writeWithEffect('history/source', Buffer.from('{"valid":true}'), {
+    expectedRevision: '0', commandId: crypto.randomUUID(), mediaType: 'application/vnd.pult.history-command+json'
+  }, async () => protoData);
+  assert.equal(Object.hasOwn(result.result, '__proto__'), true);
+  assert.deepEqual(result.result.__proto__, { safe: true });
+});
+
 test('40001 is a same-command retry signal and database errors do not leak values', async () => {
   const serialization = fakePool(text => {
     if (text.startsWith('SELECT pg_advisory')) return Promise.reject(Object.assign(new Error('detail'), { code: '40001' }));
