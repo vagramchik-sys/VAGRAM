@@ -115,3 +115,47 @@ test('chart mode selects the correct units and day without putting monetary valu
   assert.match(absentReadout, /15 сентября 2026/);
   assert.match(absentReadout, /<strong>—<\/strong>/);
 });
+
+test('cumulative chart, readout and table use the selected date without changing period KPIs', () => {
+  const view = require('../dist/seller-home-view.js');
+  const data = report();
+  data.daily = [
+    { date: '2026-09-14', orderedRevenue: 120, orderedUnits: 2, realized: 80 },
+    { date: '2026-09-15', orderedRevenue: 30, orderedUnits: 3, realized: -10 }
+  ];
+  const model = build({ state: 'ready', report: data }, now);
+  const html = view.render(model, { chartAggregation: 'cumulative', dayIndex: 1 });
+  const readout = html.slice(html.indexOf('data-home-readout'), html.indexOf('<div data-home-chart-region>'));
+  assert.match(readout, /Итог к/);
+  assert.match(readout, /15 сентября 2026/);
+  assert.match(readout, /150 ₽/);
+  assert.match(readout, /70 ₽/);
+  assert.match(html, /data-home-aggregation="cumulative" aria-pressed="true"/);
+  assert.match(html, /Накопительные итоги таблицей/);
+  assert.match(html, /Заказано и реализовано накопительно/);
+  const daily = view.render(model, { dayIndex: 1 });
+  assert.match(daily.slice(daily.indexOf('data-home-readout'), daily.indexOf('<div data-home-chart-region>')), /30 ₽/);
+  const totals = markup => markup.slice(markup.indexOf('<div class="sh-totals">'), markup.indexOf('<div class="sh-chart-tools">'));
+  assert.equal(totals(html), totals(daily));
+  const units = view.render(model, { chartAggregation: 'cumulative', chartMode: 'units', dayIndex: 1 });
+  const unitReadout = units.slice(units.indexOf('data-home-readout'), units.indexOf('<div data-home-chart-region>'));
+  assert.match(unitReadout, /5 шт\./);
+  assert.doesNotMatch(unitReadout, /₽/);
+});
+
+test('cumulative view keeps an unknown selected tail visible and explains absent prefixes', () => {
+  const view = require('../dist/seller-home-view.js');
+  const data = report();
+  data.daily.push({ date: '2026-09-16', orderedRevenue: 40, orderedUnits: 2, realized: 10 });
+  const model = build({ state: 'ready', report: data }, now);
+  const html = view.render(model, { chartAggregation: 'cumulative' });
+  const readout = html.slice(html.indexOf('data-home-readout'), html.indexOf('<div data-home-chart-region>'));
+  assert.match(readout, /16 сентября 2026/);
+  assert.equal((readout.match(/<strong>—<\/strong>/g) || []).length, 2);
+  assert.match(html, /После пропуска данных итог не рассчитывается/);
+  data.daily = data.daily.slice(2);
+  const absent = view.render(build({ state: 'ready', report: data }, now), { chartAggregation: 'cumulative' });
+  assert.match(absent, /нет полных данных с начала периода/);
+  assert.match(absent, /data-home-day-slider/);
+  assert.doesNotMatch(absent, /NaN|Infinity/);
+});

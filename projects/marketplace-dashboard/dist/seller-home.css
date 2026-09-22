@@ -42,11 +42,14 @@
 .sh-comparison { display: inline-block; margin-top: 6px; color: #788799; font-size: 11px; font-weight: 650; }
 .sh-comparison.is-up { color: #14815c; }
 .sh-comparison.is-down { color: #c34f4f; }
-.sh-chart-tools { display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 13px 22px 3px; }
+.sh-chart-tools { display: flex; flex-direction: column; align-items: stretch; gap: 12px; padding: 13px 22px 3px; }
+.sh-chart-switches { display: flex; flex-wrap: wrap; gap: 8px; }
+.sh-chart-note { margin: 8px 22px 0; color: var(--sh-muted); font-size: 11px; line-height: 1.5; }
 .sh-chart-modes { display: inline-flex; flex: 0 0 auto; padding: 3px; border-radius: 9px; background: #eef2f7; }
 .sh-chart-modes button { min-height: 30px; padding: 0 11px; border: 0; border-radius: 7px; background: transparent; color: #66768a; font-size: 11px; font-weight: 650; cursor: pointer; }
 .sh-chart-modes button[aria-pressed="true"] { background: #fff; color: var(--sh-blue-dark); box-shadow: 0 1px 5px rgba(37,57,85,.12); }
-.sh-day-readout { display: flex; align-items: center; justify-content: end; gap: 16px; min-width: 0; }
+.sh-day-readout { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; min-width: 0; }
+.sh-day-readout .sh-selected-date { display: flex; align-items: baseline; gap: 5px; }
 .sh-day-readout time { color: #26364a; font-size: 12px; font-weight: 750; white-space: nowrap; }
 .sh-day-readout > div { display: flex; gap: 13px; min-width: 0; }
 .sh-day-readout span { color: #7a899b; font-size: 10px; white-space: nowrap; }
@@ -188,6 +191,7 @@ body[data-pult-view="overview"][data-pult-section=""] #overview > .filter-bar :i
   .sh-total strong { font-size: 19px; }
   .sh-total.is-primary strong { font-size: 25px; }
   .sh-chart-tools { align-items: stretch; flex-direction: column; padding: 11px 15px 2px; }
+  .sh-chart-note { margin-inline: 15px; }
   .sh-chart-modes { align-self: start; }
   .sh-day-readout { align-items: start; justify-content: start; flex-direction: column; gap: 5px; }
   .sh-day-readout > div { flex-wrap: wrap; gap: 7px 12px; }

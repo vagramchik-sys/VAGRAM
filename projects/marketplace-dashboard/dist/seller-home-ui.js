@@ -7,14 +7,14 @@
   document.querySelector('main').append(host);
   let lastReady = null;
   let model = null, currentScope = '', loading = true, lastRender = '';
-  const ui = { chartMode: 'amount', dayIndex: null };
+  const ui = { chartMode: 'amount', chartAggregation: 'daily', dayIndex: null };
   const scopeKey = input => [input.market, input.store, input.range, input.from, input.to, input.hideInactive].join('|');
   function draw({ preserveFocus = true } = {}) {
     const signature = JSON.stringify([model, ui]);
     if (signature === lastRender) { syncLoading(); return; }
     // Restore keyboard focus after a report refresh replaces the card markup.
     const active = preserveFocus && host.contains(document.activeElement) ? document.activeElement : null;
-    const selector = active?.hasAttribute('data-home-period') ? '[data-home-period]' : active?.hasAttribute('data-home-refresh') ? '[data-home-refresh]' : active?.hasAttribute('data-home-day-slider') ? '[data-home-day-slider]' : active?.hasAttribute('data-home-chart-mode') ? '[data-home-chart-mode="' + ui.chartMode + '"]' : null;
+    const selector = active?.hasAttribute('data-home-period') ? '[data-home-period]' : active?.hasAttribute('data-home-refresh') ? '[data-home-refresh]' : active?.hasAttribute('data-home-day-slider') ? '[data-home-day-slider]' : active?.hasAttribute('data-home-chart-mode') ? '[data-home-chart-mode="' + ui.chartMode + '"]' : active?.hasAttribute('data-home-aggregation') ? '[data-home-aggregation="' + ui.chartAggregation + '"]' : null;
     const tableOpen = host.querySelector('.sh-data')?.open;
     host.innerHTML = window.PultSellerHomeView.render(model, ui);
     lastRender = signature;
@@ -55,6 +55,10 @@
     }
     lastRender = JSON.stringify([model, ui]);
   }
+  function rememberDay() {
+    const slider = host.querySelector('[data-home-day-slider]');
+    if (slider) ui.dayIndex = Number(slider.value);
+  }
   host.addEventListener('input', event => {
     if (event.target.matches('[data-home-day-slider]')) selectDay(event.target.value);
   });
@@ -74,7 +78,12 @@
     if (day) { selectDay(day.dataset.homeDay); return; }
     const chartMode = event.target.closest('[data-home-chart-mode]');
     if (chartMode) {
-      if (['amount', 'units'].includes(chartMode.dataset.homeChartMode)) { ui.chartMode = chartMode.dataset.homeChartMode; draw(); }
+      if (['amount', 'units'].includes(chartMode.dataset.homeChartMode)) { rememberDay(); ui.chartMode = chartMode.dataset.homeChartMode; draw(); }
+      return;
+    }
+    const aggregation = event.target.closest('[data-home-aggregation]');
+    if (aggregation) {
+      if (['daily', 'cumulative'].includes(aggregation.dataset.homeAggregation)) { rememberDay(); ui.chartAggregation = aggregation.dataset.homeAggregation; draw(); }
       return;
     }
     if (event.target.closest('[data-home-refresh]')) {

@@ -7,6 +7,37 @@
   const number = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
   const percent = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
   const finite = value => Number.isFinite(value) ? value : null;
+  const nextDay = value => {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value || '')) return null;
+    const date = new Date(value + 'T00:00:00Z');
+    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== value) return null;
+    date.setUTCDate(date.getUTCDate() + 1);
+    return date.toISOString().slice(0, 10);
+  };
+  function cumulative(daily, from) {
+    const totals = { orderedRevenue: 0, orderedUnits: 0, realized: 0 };
+    const known = { orderedRevenue: true, orderedUnits: true, realized: true };
+    const dateCounts = new Map();
+    for (const day of daily) dateCounts.set(day.date, (dateCounts.get(day.date) || 0) + 1);
+    let expected = from;
+    let datesKnown = nextDay(from) !== null;
+    return daily.map(day => {
+      if (!datesKnown || day.date !== expected || dateCounts.get(day.date) !== 1) {
+        datesKnown = false;
+        for (const key of Object.keys(known)) known[key] = false;
+      }
+      const result = { date: day.date };
+      for (const key of Object.keys(known)) {
+        if (known[key] && finite(day[key]) !== null) {
+          totals[key] += day[key];
+          if (finite(totals[key]) === null) known[key] = false;
+        } else known[key] = false;
+        result[key] = known[key] ? totals[key] : null;
+      }
+      expected = datesKnown ? nextDay(expected) : null;
+      return result;
+    });
+  }
   const moscowDay = now => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
   const format = (value, units) => value === null ? '—' : number.format(value) + (units ? ' шт.' : ' ₽');
   const alertLabels = { stockout: 'Нет остатка при реализации', cost: 'Заполнить себестоимость', negative: 'Отрицательные начисления', logistics: 'Проверить логистику' };
@@ -65,12 +96,14 @@
       if (open) notes.push('Сегодняшние данные предварительные.');
       if (coverage.foreignRecords) notes.push('Показаны только рублёвые операции.');
     }
+    const daily = (data?.daily || []).map(day => ({ date: day.date, orderedRevenue: coverage.orders === true ? finite(day.orderedRevenue) : null, orderedUnits: coverage.orders === true ? finite(day.orderedUnits) : null, realized: coverage.finance === true ? finite(day.realized) : null }));
     return {
       state, range, scope: unsupported ? 'Wildberries' : store ? 'Ozon · ' + (data?.stores?.find(s => s.id === store)?.name || 'выбранный магазин') : market === 'Ozon' ? 'Ozon · все магазины' : 'Ozon · все магазины · WB отдельно',
       message: state === 'loading' ? 'Загружаем сохранённые данные…' : state === 'error' ? 'Не удалось загрузить данные. Попробуйте ещё раз.' : state === 'unsupported' ? 'Данные Wildberries доступны в отдельной сводке продаж и прибыли.' : '',
       period: { ...period, days: data?.days || (period.from && period.to ? Math.round((Date.parse(period.to) - Date.parse(period.from)) / 86400000) + 1 : 28), open },
       metrics,
-      daily: (data?.daily || []).map(day => ({ date: day.date, orderedRevenue: coverage.orders === true ? finite(day.orderedRevenue) : null, orderedUnits: coverage.orders === true ? finite(day.orderedUnits) : null, realized: coverage.finance === true ? finite(day.realized) : null })),
+      daily,
+      cumulativeDaily: cumulative(daily, period.from),
       alerts: Object.entries(alertLabels).map(([id, label]) => ({ id, label, description: alertDescriptions[id], count: finite(alerts[id]) }))
         .sort((a, b) => Number(b.count > 0) - Number(a.count > 0)),
       leaders, attentionCount, coverageState,
