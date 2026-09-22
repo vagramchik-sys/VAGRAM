@@ -6,9 +6,13 @@ const shift = (day, amount) => new Date(Date.parse(`${day}T00:00:00Z`) + amount 
 const moscowDay = date => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' }).format(date);
 function clean(error) { return error instanceof OzonAcquisitionError ? error : new OzonAcquisitionError('SECTION_FAILED', 'Ozon section is temporarily unavailable'); }
 
-function createOzonSnapshotCollector({ fetchFn = globalThis.fetch, sleep = delay, now = () => new Date() } = {}) {
-  if (typeof fetchFn !== 'function' || typeof sleep !== 'function' || typeof now !== 'function') throw new TypeError('fetchFn, sleep and now are required');
+function createOzonSnapshotCollector({ fetchFn = globalThis.fetch, api, sleep = delay, now = () => new Date() } = {}) {
+  if (api !== undefined && typeof api !== 'function' || typeof fetchFn !== 'function' || typeof sleep !== 'function' || typeof now !== 'function') throw new TypeError('fetchFn, sleep and now are required');
   async function request(store, key, route, payload) {
+    if (api) {
+      try { return await api(store, key, route, payload); }
+      catch (error) { throw new OzonAcquisitionError(error?.code || 'NETWORK_ERROR', 'Ozon section is temporarily unavailable', error?.retryAfterMs); }
+    }
     for (let attempt = 0; attempt < 3; attempt++) {
       let response; try { response = await fetchFn(`https://api-seller.ozon.ru${route}`, { method: 'POST', redirect: 'error', headers: { 'Content-Type': 'application/json', 'Client-Id': store.clientId, 'Api-Key': key }, body: JSON.stringify(payload), signal: AbortSignal.timeout(45000) }); }
       catch { if (attempt < 2) { await sleep(2000 * (attempt + 1)); continue; } throw new OzonAcquisitionError('NETWORK_ERROR', 'Ozon did not respond'); }
@@ -32,6 +36,6 @@ function createOzonSnapshotCollector({ fetchFn = globalThis.fetch, sleep = delay
     await section('finance', async () => { const end = Date.parse(`${data.period.to}T00:00:00Z`); for (let time = Date.parse(`${data.period.from}T00:00:00Z`); time <= end; time += 86400000) { const date = new Date(time).toISOString().slice(0, 10); let last = ''; const seen = new Set(); for (let page = 0; page < 1000; page++) { const value = await request(store, key, '/v1/finance/accrual/by-day', { date, last_id: last }); if (!Array.isArray(value.accruals)) throw new OzonAcquisitionError('INVALID_RESPONSE', 'Ozon finance has an unknown shape'); data.operations.push(...value.accruals.map(row => ({ ...row, operation_id: row.accrual_id, amount: Number(row.total_amount?.amount || 0), operation_type: row.accrued_category, operation_type_name: row.accrued_category }))); progress('finance', data.operations.length); if (!value.accruals.length || !value.last_id) break; if (seen.has(value.last_id) || page === 999) throw new OzonAcquisitionError('PAGINATION_FAILED', 'Ozon finance pagination did not complete'); seen.add(value.last_id); last = value.last_id; await sleep(1100); } await sleep(1100); } data.sections.finance = { ok: true, count: data.operations.length, source: '/v1/finance/accrual/by-day' }; });
     data.completedAt = now().toISOString(); return { snapshot: data, status: errors.length ? 'partial' : 'done', errors };
   }
-  return Object.freeze({ collect });
+  return Object.freeze({ collect, usesDatabaseCredentials: api?.usesDatabaseCredentials === true });
 }
 module.exports = { createOzonSnapshotCollector, OzonAcquisitionError };

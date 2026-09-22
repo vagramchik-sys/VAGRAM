@@ -4,6 +4,15 @@ const { createOzonSnapshotCollector } = require('../storage/acquisition/postgres
 const response = (status, value, headers = {}) => ({ status, ok: status >= 200 && status < 300, headers: { get: name => headers[name] ?? null }, async json() { return value; } });
 const fixed = () => new Date('2026-09-22T10:00:00.000Z');
 
+test('SQL API handles every Ozon section without Node fetch or duplicate unknown retry',async()=>{
+ let productCalls=0;
+ const api=Object.assign(async(_store,_key,route)=>{if(route==='/v3/product/list'){productCalls++;throw Object.assign(Error('private'),{code:'NETWORK_ERROR'})}if(route==='/v1/description-category/tree')return{result:[]};if(route==='/v4/product/info/stocks')return{result:{items:[]}};if(route==='/v1/finance/accrual/by-day')return{accruals:[]};throw Error('Unexpected route')},{usesDatabaseCredentials:true});
+ const collector=createOzonSnapshotCollector({api,fetchFn:async()=>{assert.fail('Node HTTP must not run')},sleep:async()=>{},now:fixed});
+ assert.equal(collector.usesDatabaseCredentials,true);
+ const result=await collector.collect({store:{name:'Synthetic',clientId:'1'},key:'postgresql-managed'});
+ assert.equal(result.status,'partial');assert.equal(productCalls,1);assert.equal(JSON.stringify(result).includes('private'),false);
+});
+
 test('Ozon collector preserves section semantics, prior categories and sanitizes failures', async () => {
   let productPage = 0;
   const fetchFn = async (url, options) => {

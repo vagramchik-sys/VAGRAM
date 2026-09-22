@@ -12,6 +12,14 @@ test('coordinator passes the caller command/CAS once and publishes only after co
   assert.deepEqual(d.calls.map(row => row[0]), ['decrypt', 'collect', 'publish','ledger']);
 });
 
+test('SQL credential collector bypasses Node decryption and still publishes once', async () => {
+  const d = dependencies({ decrypt: async () => { throw Error('Node must not decrypt Ozon keys'); } });
+  d.values.ozonCollector.usesDatabaseCredentials = true;
+  await createMarketAcquisition(d.values).acquire({ storeId:'1',expectedRevision:'1',commandId:COMMAND });
+  assert.deepEqual(d.calls.map(row=>row[0]), ['collect','publish','ledger']);
+  assert.equal(d.calls[0][1].key,'postgresql-managed');
+});
+
 test('collector/decrypt/write failures never trigger a hidden publish retry', async () => {
   let publishes = 0; const failed = dependencies({ ozonCollector: { collect: async () => { throw Object.assign(Error('safe'), { code: 'NETWORK_ERROR' }); } }, marketWriter: { readCommand: async () => null, publish: async () => { publishes++; } } });
   await assert.rejects(createMarketAcquisition(failed.values).acquire({ storeId: '1', expectedRevision: '1', commandId: COMMAND }), { code: 'NETWORK_ERROR' }); assert.equal(publishes, 0);

@@ -14,7 +14,7 @@ function createCostsPricesAcquisition({ stateStore, storesRepository, decrypt, o
     const prior = await repo.readCommand(commandId); if (prior) { if (prior.before.revision !== String(expectedRevision)) throw new CostsPricesError('COMMAND_ID_REUSED', 'Acquisition command revision differs'); return { revision: prior.after.revision, replayed: true, sourcePath, count: prior.after.value.items.length }; }
     const store = await storesRepository.protectedStore(storeId); if (!store) throw new CostsPricesError('STORE_MISSING', 'Store is not connected');
     let key;
-    try { key = await decrypt(store.key); if (typeof key !== 'string' || !key) throw Error('credential'); const value = storeId.startsWith('wb-') ? await loadWbPrices(key, (url, options) => fetchFn(url, { ...options, redirect: 'error' })) : await loadCosts({ ...store, clientId: storeId }, key, ozonApi); const result = await repo.compareAndSet(value, { expectedRevision, commandId }); return { ...result, sourcePath, count: value.items.length }; }
+    try { key = !storeId.startsWith('wb-') && ozonApi.usesDatabaseCredentials === true ? 'postgresql-managed' : await decrypt(store.key); if (typeof key !== 'string' || !key) throw Error('credential'); const value = storeId.startsWith('wb-') ? await loadWbPrices(key, (url, options) => fetchFn(url, { ...options, redirect: 'error' })) : await loadCosts({ ...store, clientId: storeId }, key, ozonApi); const result = await repo.compareAndSet(value, { expectedRevision, commandId }); return { ...result, sourcePath, count: value.items.length }; }
     catch (error) { if (safeCodes.has(error?.code)) throw error; throw new CostsPricesError('ACQUISITION_FAILED', 'Costs/prices acquisition failed'); }
     finally { key = null; }
   }

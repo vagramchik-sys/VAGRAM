@@ -38,8 +38,11 @@ function createPostgresStoreCommands({ stateStore, protect, ozonApi, wbApi, sche
     if (!allowedNames.has(name) || !/^[0-9]+$/u.test(clientId) || typeof key !== 'string' || key.length < 20 || key.length > 500) fail('INVALID_ARGUMENT', 'Проверьте магазин, Client ID и ключ.');
     const old = await journal(op, intent); if (old) { const savedStore = await replayCredential(old.row, key); if (savedStore.name !== name || String(savedStore.clientId) !== clientId) fail('COMMAND_ID_REUSED', 'commandId уже использован для другой команды.', 409); return finishSync({ revision: old.row.after.revision, replayed: true, ...old.saved }, op); }
     const loaded = await load(op); if (Object.hasOwn(loaded.value, clientId)) fail('STORE_EXISTS', 'Этот магазин уже подключён.', 409);
-    try { await ozonApi({ name, clientId }, key, '/v3/product/list', { filter: { visibility: 'ALL' }, last_id: '', limit: 1 }); } catch { fail('UPSTREAM_REJECTED', 'Ozon не подтвердил ключ магазина.'); }
     let ciphertext; try { ciphertext = await protect(key, false); } catch { fail('CREDENTIAL_UNAVAILABLE', 'Не удалось защитить ключ магазина.', 503); } if (typeof ciphertext !== 'string' || !ciphertext || ciphertext === key) fail('CREDENTIAL_UNAVAILABLE', 'Не удалось защитить ключ магазина.', 503);
+    try {
+      if (typeof ozonApi.verifyConnection === 'function') await ozonApi.verifyConnection({ name, clientId }, ciphertext);
+      else await ozonApi({ name, clientId }, key, '/v3/product/list', { filter: { visibility: 'ALL' }, last_id: '', limit: 1 });
+    } catch { fail('UPSTREAM_REJECTED', 'Ozon не подтвердил ключ магазина.'); }
     const next = structuredClone(loaded.value); next[clientId] = { name, clientId, key: ciphertext, connectedAt: op.timestamp };
     return finishSync(await persist(next, op, intent), op);
   }

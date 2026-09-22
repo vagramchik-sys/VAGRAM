@@ -19,7 +19,7 @@ function createMarketAcquisition({ storesRepository, marketRepository, marketWri
     const store = await storesRepository.protectedStore(storeId); if (!store) throw new MarketAcquisitionError('STORE_MISSING', 'Store is not connected');
     let key;
     try {
-      try { key = await decrypt(store.key); } catch { throw new MarketAcquisitionError('CREDENTIAL_UNAVAILABLE', 'Protected store credential is unavailable'); }
+      try { key = !storeId.startsWith('wb-') && ozonCollector.usesDatabaseCredentials === true ? 'postgresql-managed' : await decrypt(store.key); } catch { throw new MarketAcquisitionError('CREDENTIAL_UNAVAILABLE', 'Protected store credential is unavailable'); }
       if (typeof key !== 'string' || !key) throw new MarketAcquisitionError('CREDENTIAL_UNAVAILABLE', 'Protected store credential is unavailable');
       const collector = storeId.startsWith('wb-') ? wbCollector : ozonCollector;
       const previousSnapshot = storeId.startsWith('wb-') ? null : await marketRepository.getSnapshot(storeId);

@@ -48,12 +48,12 @@ async function launch({ port = 4317, partnerPort = 4319, checkOnly = false,
   createApplication = value => require('../storage/postgres-application.cjs').createPostgresApplication(value)
 } = {}) {
   const staticFiles = await publicFiles(staticDir);
-  let pool, readPool, running, closePromise;
+  let pool, readPool, ozonHttpPool, running, closePromise;
   function close() {
     if (!closePromise) closePromise = (async () => {
       try { await running?.close(); }
       finally {
-        const pools = [...new Set([readPool, pool].filter(Boolean))];
+        const pools = [...new Set([ozonHttpPool, readPool, pool].filter(Boolean))];
         const results = await Promise.allSettled(pools.map(value => value.end()));
         const failed = results.find(result => result.status === 'rejected');
         if (failed) throw failed.reason;
@@ -64,7 +64,8 @@ async function launch({ port = 4317, partnerPort = 4319, checkOnly = false,
   try {
     pool = await poolFactory({ bootstrapFile, profile: 'runtime' });
     readPool = await poolFactory({ bootstrapFile, profile: 'ui' });
-    const app = await createApplication({ pool, readPool, staticDir, staticFiles, partnerPort });
+    ozonHttpPool = await poolFactory({ bootstrapFile, profile: 'outbound' });
+    const app = await createApplication({ pool, readPool, ozonHttpPool, staticDir, staticFiles, partnerPort });
     if (typeof app?.readiness !== 'function' || typeof app?.start !== 'function') fail('APPLICATION_CONTRACT_INVALID');
     const ready = await app.readiness();
     if (ready?.ready !== true || !Array.isArray(ready.missingAdapters) || ready.missingAdapters.length) fail('RUNTIME_NOT_READY');

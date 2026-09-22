@@ -9,6 +9,7 @@ const { Pool } = require('pg');
 const ROOT = path.resolve(__dirname, '..');
 const DEFAULT_BOOTSTRAP = path.join(ROOT, '.private', 'postgres-setup', 'admin.dpapi');
 const TEST_SUITES = Object.freeze({
+  'ozon-http': 'test/postgres-ozon-http.test.cjs',
   xway: 'test/postgres-xway.test.cjs',
   'archive-repository': 'test/postgres-archive-repository.test.cjs',
   'history-import': 'test/postgres-history-import.test.cjs',
