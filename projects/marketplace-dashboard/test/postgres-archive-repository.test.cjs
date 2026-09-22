@@ -16,6 +16,7 @@ const gzipHash = crypto.createHash('sha256').update(payload).digest();
 function scriptedPool({ clientSteps = [], poolSteps = [], connectError } = {}) {
   const calls = [], client = {
     released: 0,
+    releaseArgs: [],
     async query(sql, values) {
       calls.push({ target: 'client', sql, values });
       if (sql === 'SAVEPOINT pult_write_fence_contract' || sql.includes('pg_advisory_xact_lock_shared') || sql === 'RELEASE SAVEPOINT pult_write_fence_contract') return { rows: [], rowCount: 1 };
@@ -24,7 +25,7 @@ function scriptedPool({ clientSteps = [], poolSteps = [], connectError } = {}) {
       if (step.error) throw step.error;
       return typeof step.result === 'function' ? step.result(sql, values) : step.result;
     },
-    release() { this.released++; }
+    release(destroy) { this.released++; this.releaseArgs.push(destroy); }
   };
   const pool = {
     async connect() { calls.push({ target: 'pool', sql: 'CONNECT' }); if (connectError) throw connectError; return client; },
@@ -75,7 +76,7 @@ test('same content retry preserves immutable version values and may advance late
   const f = scriptedPool({ clientSteps: [
     { result: {} },
     { result: { rowCount: 0, rows: [] } },
-    { result: { rowCount: 1, rows: [{ content_hash: contentHash, source_bytes: String(raw.length), archive_payload: payload, archive_gzip_hash: gzipHash }] } },
+    { result: { rowCount: 1, rows: [{ content_hash: contentHash, source_bytes: String(raw.length), facts_status: 'pending', archive_payload: payload, archive_gzip_hash: gzipHash }] } },
     { result: { rowCount: 1 } },
     { result: {} }
   ] });
@@ -86,6 +87,26 @@ test('same content retry preserves immutable version values and may advance late
   assert.deepEqual(latest.values, ['insights-1.json', raw.length + ':999', contentHash, 999]);
   assert.equal(f.calls.some(call => /^UPDATE .*archive_versions/.test(call.sql)), false);
   assert.equal(f.client.released, 1);
+});
+
+test('duplicate add reports the gzip hash and status actually stored by an earlier import', async () => {
+  const importedRaw = Buffer.from(JSON.stringify({ items: Array.from({ length: 2000 }, (_, index) => `value-${index % 37}-${index}`) }));
+  const importedContentHash = crypto.createHash('sha256').update(importedRaw).digest('hex');
+  const importedPayload = gzipSync(importedRaw, { level: 9, mtime: 0 });
+  const proposedPayload = gzipSync(importedRaw, { level: 1, mtime: 0 });
+  assert.notDeepEqual(importedPayload, proposedPayload);
+  const importedGzipHash = crypto.createHash('sha256').update(importedPayload).digest();
+  const f = scriptedPool({ clientSteps: [
+    { result: {} },
+    { result: { rowCount: 0, rows: [] } },
+    { result: { rowCount: 1, rows: [{ content_hash: importedContentHash, source_bytes: importedRaw.length, facts_status: 'imported', archive_payload: importedPayload, archive_gzip_hash: importedGzipHash }] } },
+    { result: { rowCount: 1 } },
+    { result: {} }
+  ] });
+  const result = await createPostgresArchiveRepository({ pool: f.pool }).add({ sourceFile: 'data-1.json', sourceMtime: 12, raw: importedRaw, capturedAt: '2026-09-22T08:00:00.000Z' });
+  assert.equal(result.changed, false);
+  assert.equal(result.gzipHash, importedGzipHash.toString('hex'));
+  assert.equal(result.factsStatus, 'imported');
 });
 
 test('an older concurrent capture is archived but cannot replace a newer latest pointer', async () => {
@@ -115,7 +136,7 @@ test('latest returns verified raw content and rejects a corrupt compressed hash'
 test('failed fact ingestion rolls back and leaves the exact pending status untouched', async () => {
   const f = scriptedPool({ clientSteps: [
     { result: {} },
-    { result: { rowCount: 1, rows: [{ source_file: 'insights-1.json', content_hash: contentHash, captured_at_text: '2026-09-22T01:00:00.000Z', source_bytes: raw.length, archive_payload: payload, archive_gzip_hash: gzipHash }] } },
+    { result: { rowCount: 1, rows: [{ source_file: 'insights-1.json', content_hash: contentHash, captured_at_text: '2026-09-22T01:00:00.000Z', source_bytes: raw.length, facts_status: 'pending', archive_payload: payload, archive_gzip_hash: gzipHash }] } },
     { result: {} }
   ] });
   const repository = createPostgresArchiveRepository({ pool: f.pool, history: { ingestInTransaction: async () => { throw Error('raw driver secret 991'); } } });
@@ -130,7 +151,7 @@ test('successful pending fact import uses the archive identity and marks importe
   const f = scriptedPool({
     clientSteps: [
       { result: {} },
-      { result: { rowCount: 1, rows: [{ source_file: 'insights-1.json', content_hash: contentHash, captured_at_text: '2026-09-22T01:00:00.000Z', source_bytes: raw.length, archive_payload: payload, archive_gzip_hash: gzipHash }] } },
+      { result: { rowCount: 1, rows: [{ source_file: 'insights-1.json', content_hash: contentHash, captured_at_text: '2026-09-22T01:00:00.000Z', source_bytes: raw.length, facts_status: 'pending', archive_payload: payload, archive_gzip_hash: gzipHash }] } },
       { result: { rowCount: 1 } },
       { result: {} }
     ],
@@ -157,6 +178,11 @@ test('connect, query and uncertain COMMIT errors are redacted and always release
   const commit = scriptedPool({ clientSteps: [{ result: {} }, { result: { rowCount: 1, rows: [{}] } }, { result: {} }, { error: Error('server detail private') }, { result: {} }] });
   await assert.rejects(() => createPostgresArchiveRepository({ pool: commit.pool }).add({ sourceFile: 'data-1.json', sourceMtime: 1, raw }), error => error.code === 'OUTCOME_UNKNOWN' && /те же sourceFile и содержимое/u.test(error.message) && !error.message.includes('private'));
   assert.equal(commit.client.released, 1);
+  assert.deepEqual(commit.client.releaseArgs, [true]);
+
+  const rollback = scriptedPool({ clientSteps: [{ result: {} }, { error: Error('write failed') }, { error: Error('rollback failed') }] });
+  await assert.rejects(() => createPostgresArchiveRepository({ pool: rollback.pool }).add({ sourceFile: 'data-1.json', sourceMtime: 1, raw }), error => error.code === 'DATABASE_ERROR');
+  assert.deepEqual(rollback.client.releaseArgs, [true]);
 });
 
 const integrationUrl = process.env.PULT_TEST_DATABASE_URL;
