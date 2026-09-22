@@ -2,5 +2,6 @@ work/
 outputs/
 .sites-runtime/
 .private/
+node_modules/
 __pycache__/
 *.pyc
