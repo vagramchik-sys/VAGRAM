@@ -69,10 +69,10 @@ class FakeDatabase {
       .sort((a, b) => a.index - b.index).slice(0, values[2])
       .map(row => ({ store_id: row.store_id, source_index: row.index, raw_row: row.raw, row_sha256: row.row_sha256,
         ...Object.fromEntries(TYPED[selectMatch[1]].map(name => [name, row[name]])) })) };
-    if (text.includes('FROM pult_market.stock_items') && text.includes('SELECT stock_source_index')) return { rows: this.rows.get('stock_items')
+    if (text.includes('FROM pult_market.stock_items') && text.includes('SELECT store_id,stock_source_index')) return { rows: this.rows.get('stock_items')
       .filter(row => row.snapshotId === values[0]).sort((a, b) => a.stock_source_index - b.stock_source_index || a.item_index - b.item_index)
       .slice(values[1], values[1] + values[2]) };
-    if (text.includes('FROM pult_market.finance_operation_skus') && text.includes('SELECT operation_source_index')) return { rows: this.rows.get('finance_operation_skus')
+    if (text.includes('FROM pult_market.finance_operation_skus') && text.includes('SELECT store_id,operation_source_index')) return { rows: this.rows.get('finance_operation_skus')
       .filter(row => row.snapshotId === values[0]).sort((a, b) => a.operation_source_index - b.operation_source_index || a.item_index - b.item_index || a.sku.localeCompare(b.sku))
       .slice(values[1], values[1] + values[2]) };
     if (text.includes('UPDATE pult_market.snapshot_versions SET')) {
@@ -212,8 +212,10 @@ test('PostgreSQL integration: applies schema, imports, verifies and reuses snaps
   const parsed = new URL(integrationUrl);
   const databaseName = decodeURIComponent(parsed.pathname.replace(/^\//u, ''));
   assert.match(databaseName, /test/iu, 'PULT_TEST_DATABASE_URL must name an explicit test database');
-  const { Pool } = require('pg');
-  const pool = new Pool({ connectionString: integrationUrl, max: 3 });
+  const { Pool, types } = require('pg');
+  const pool = new Pool({ connectionString: integrationUrl, max: 3, types: {
+    getTypeParser: (oid, format) => oid === 1082 ? () => { throw Error('Business dates must be selected as text without timezone conversion'); } : types.getTypeParser(oid, format)
+  } });
   const sourceDir = await fixture();
   let createdSchema = false;
   t.after(() => fs.rm(sourceDir, { recursive: true, force: true }));

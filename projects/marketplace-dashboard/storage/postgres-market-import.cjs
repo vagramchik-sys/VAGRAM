@@ -3,6 +3,7 @@
 const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { acquireMutationFence } = require('./postgres-write-fence.cjs');
 
 const BATCH_SIZE = 1000;
 const DATA_FILE = /^data-((?:wb-)?[0-9]+)\.json$/u;
@@ -105,6 +106,7 @@ async function importRegistry(pool, sourceDir) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+    await acquireMutationFence(client);
     const documentId = await exactDocument(client, 'stores.json', bytes, sha256(bytes));
     for (const [storeId, row] of Object.entries(registry)) {
       if (!/^(?:wb-)?[0-9]+$/u.test(storeId) || !row || Array.isArray(row) || typeof row !== 'object')
@@ -202,14 +204,16 @@ async function verifySnapshot(client, snapshotId, storeId, snapshot) {
     if (verified[spec.source] !== expected[spec.source]) fail('VERIFY_COUNT_MISMATCH', 'Imported row count does not match source');
     for (let offset = 0; offset < rows.length; offset += BATCH_SIZE) {
       const result = await client.query(
-        `SELECT store_id,source_index,${spec.columns.join(',')}${spec.columns.length ? ',' : ''}row_sha256,raw_row FROM pult_market.${spec.table}
+        `SELECT store_id,source_index,${spec.columns.map(column => column === 'operation_day' ? 'operation_day::text AS operation_day' : column).join(',')}${spec.columns.length ? ',' : ''}row_sha256,raw_row FROM pult_market.${spec.table}
           WHERE snapshot_id=$1 AND source_index >= $2 ORDER BY source_index LIMIT $3`, [snapshotId, offset, BATCH_SIZE]
       );
+      if (result.rows.length !== Math.min(BATCH_SIZE, rows.length - offset)) fail('VERIFY_COUNT_MISMATCH', 'Source verification page is incomplete');
       for (const row of result.rows) {
         if (row.store_id !== storeId) fail('VERIFY_TYPED_MISMATCH', 'Stored row is assigned to the wrong store');
         const index = Number(row.source_index), rawDigest = rowHash(row.raw_row);
         if (!equal(rawDigest, row.row_sha256)) fail('VERIFY_DIGEST_MISMATCH', 'Stored source row hash does not match JSON');
-        const typed = spec.columns.map(column => row[column] instanceof Date ? row[column].toISOString().slice(0, 10) : row[column] == null ? null : String(row[column]));
+        // A business date has no timezone; DATE must arrive as SQL text, not a local-midnight JS Date.
+        const typed = spec.columns.map(column => row[column] == null ? null : String(row[column]));
         if (canonical(typed) !== canonical(spec.typed(rows[index]))) fail('VERIFY_TYPED_MISMATCH', 'Typed source projection does not match JSON');
         digestRow(sqlAggregate, spec.source, index, rowHash({ raw: row.raw_row, typed }));
       }
@@ -222,6 +226,7 @@ async function verifySnapshot(client, snapshotId, storeId, snapshot) {
   for (let offset = 0; offset < expectedStockItems.length; offset += BATCH_SIZE) {
     const result = await client.query(`SELECT store_id,stock_source_index,item_index,sku,warehouse,raw_row
       FROM pult_market.stock_items WHERE snapshot_id=$1 ORDER BY stock_source_index,item_index OFFSET $2 LIMIT $3`, [snapshotId, offset, BATCH_SIZE]);
+    if (result.rows.length !== Math.min(BATCH_SIZE, expectedStockItems.length - offset)) fail('VERIFY_COUNT_MISMATCH', 'Stock verification page is incomplete');
     result.rows.forEach((row, index) => {
       if (row.store_id !== storeId) fail('VERIFY_DERIVED_MISMATCH', 'Derived stock row is assigned to the wrong store');
       const wanted = expectedStockItems[offset + index];
@@ -237,13 +242,14 @@ async function verifySnapshot(client, snapshotId, storeId, snapshot) {
   verified.financeOperationSkus = Number(skuCount.rows[0].count);
   if (verified.financeOperationSkus !== expected.financeOperationSkus) fail('VERIFY_COUNT_MISMATCH', 'Derived operation SKU count does not match source');
   for (let offset = 0; offset < expectedOperationSkus.length; offset += BATCH_SIZE) {
-    const result = await client.query(`SELECT store_id,operation_source_index,item_index,sku,operation_day,raw_item
+    const result = await client.query(`SELECT store_id,operation_source_index,item_index,sku,operation_day::text AS operation_day,raw_item
       FROM pult_market.finance_operation_skus WHERE snapshot_id=$1 ORDER BY operation_source_index,item_index,sku OFFSET $2 LIMIT $3`, [snapshotId, offset, BATCH_SIZE]);
+    if (result.rows.length !== Math.min(BATCH_SIZE, expectedOperationSkus.length - offset)) fail('VERIFY_COUNT_MISMATCH', 'Operation verification page is incomplete');
     result.rows.forEach((row, index) => {
       if (row.store_id !== storeId) fail('VERIFY_DERIVED_MISMATCH', 'Derived operation row is assigned to the wrong store');
       const wanted = expectedOperationSkus[offset + index];
       const actual = { sourceIndex: Number(row.operation_source_index), itemIndex: Number(row.item_index), sku: row.sku,
-        operationDay: row.operation_day instanceof Date ? row.operation_day.toISOString().slice(0, 10) : row.operation_day, raw: row.raw_item };
+        operationDay: row.operation_day, raw: row.raw_item };
       if (canonical(actual) !== canonical(wanted)) fail('VERIFY_DERIVED_MISMATCH', 'Derived operation SKU projection does not match source');
     });
   }
@@ -279,6 +285,7 @@ async function importSnapshot(pool, sourceDir, name, knownStores, progress) {
   const client = await pool.connect();
   try {
     await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+    await acquireMutationFence(client);
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`market:${storeId}`]);
     const existing = (await client.query(
       `SELECT v.snapshot_id,v.complete,v.source_byte_length::text AS source_byte_length,v.row_digest,

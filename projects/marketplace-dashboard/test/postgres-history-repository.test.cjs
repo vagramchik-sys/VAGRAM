@@ -32,6 +32,8 @@ test('ingest is one transaction, parameterized, atomic and keeps closed zero day
   const result = await repo.ingest({ sourceFile: 'insights-001.json', contentHash: 'hash', data: insights(), capturedAt: '2026-09-21T09:00:00Z' });
   assert.deepEqual(result, { duplicate: false, ingestionId: 7, snapshotCount: 3, factCount: 1 });
   assert.equal(pool.calls[1].text, 'BEGIN');
+  assert.equal(pool.calls.some(call => call.text?.includes('pg_advisory_xact_lock_shared')), true);
+  assert.ok(pool.calls.findIndex(call => call.text?.includes('pg_advisory_xact_lock_shared')) < pool.calls.findIndex(call => call.text?.includes('ingestions')));
   assert.equal(pool.calls.at(-2).text, 'COMMIT');
   assert.deepEqual(pool.calls.at(-1), { release: true });
   const ingestion = pool.calls.find(call => call.text?.includes('INSERT INTO "pult_history"."ingestions"'));
@@ -44,6 +46,20 @@ test('ingest is one transaction, parameterized, atomic and keeps closed zero day
   const facts = pool.calls.find(call => call.text?.includes('INSERT INTO "pult_history"."facts"'));
   assert.ok(facts);
   assert.equal(facts.values.includes('0001'), true);
+});
+
+test('ingestInTransaction reuses the supplied protected transaction without lifecycle queries', async () => {
+  let snapshotId = 70;
+  const pool = fakePool(text => {
+    if (text.includes('ingestions')) return { rows: [{ id: '12' }], rowCount: 1 };
+    if (text.includes('snapshots')) return { rows: [{ id: String(++snapshotId) }], rowCount: 1 };
+    return { rows: [], rowCount: 1 };
+  });
+  const result = await createMarketHistoryRepository({ pool }).ingestInTransaction({ sourceFile: 'insights-1.json', contentHash: 'outer', data: insights() }, pool.client);
+  assert.equal(result.ingestionId, 12);
+  assert.equal(pool.calls.some(call => ['BEGIN', 'COMMIT', 'ROLLBACK'].includes(call.text)), false);
+  assert.equal(pool.calls.some(call => call.text?.includes('pg_advisory_xact_lock_shared')), false);
+  assert.equal(pool.calls.some(call => call.release), false);
 });
 
 test('same source hash is a no-op and never creates snapshots', async () => {
@@ -87,7 +103,7 @@ test('finance keeps cents conversion, unknown units and null metric columns dist
   const result = await createMarketHistoryRepository({ pool }).ingest({ sourceFile: 'ledger-1.json', contentHash: 'finance', data: { stamp: '2026-09-19T08:00:00Z', data: { period: { from: '2026-09-18', to: '2026-09-18' }, completedAt: '2026-09-19T08:00:00Z', complete: true, skuDaily: [{ date: '2026-09-18', sku: '0001', values: { soldUnits: 3, returnedUnits: 1, realized: 500, ads: 40, unknownUnitRows: 2 } }] } } });
   assert.equal(result.factCount, 1);
   const facts = pool.calls.find(call => call.text?.includes('INSERT INTO "pult_history"."facts"'));
-  assert.deepEqual(facts.values, ['4', '0001', '2026-09-19T08:00:00.000Z', '2026-09-19T08:00:00.000Z', null, null, 3, 1, 5, 0.4, 2]);
+  assert.deepEqual(facts.values, ['4', '0001', '2026-09-19T08:00:00Z', '2026-09-19T08:00:00Z', null, null, 3, 1, 5, 0.4, 2]);
 });
 
 test('WB writes grouped facts and exact order events in the same transaction', async () => {
@@ -99,7 +115,7 @@ test('WB writes grouped facts and exact order events in the same transaction', a
   const result = await createMarketHistoryRepository({ pool }).ingest({ sourceFile: 'wb-orders-wb-2.json', contentHash: 'wb', data: { day: '2026-09-18', fetchedAt: '2026-09-19T01:00:00Z', complete: true, orders: [{ at: '2026-09-18T10:15:00Z', amount: 19.5, nmId: 77 }] } });
   assert.deepEqual(result, { duplicate: false, ingestionId: 5, snapshotCount: 1, factCount: 1 });
   const events = pool.calls.find(call => call.text?.includes('INSERT INTO "pult_history"."order_events"'));
-  assert.deepEqual(events.values, ['6', '77', '2026-09-18T10:15:00.000Z', '2026-09-18T10:15:00.000Z', 19.5]);
+  assert.deepEqual(events.values, ['6', '77', '2026-09-18T10:15:00Z', '2026-09-18T10:15:00Z', 19.5]);
 });
 
 test('database failure rolls back the whole ingestion and releases the client', async () => {
@@ -204,18 +220,41 @@ test('PostgreSQL integration: ingest, correction selection and report parity', {
   const parsed = new URL(integrationUrl), databaseName = decodeURIComponent(parsed.pathname.replace(/^\//u, ''));
   assert.match(databaseName, /test/iu, 'PULT_TEST_DATABASE_URL must name an explicit test database');
   const { Pool } = require('pg'), pool = new Pool({ connectionString: integrationUrl, max: 2 });
+  let lastSqlState = null, lastSqlPosition = null;
+  const diagnosticPool = {
+    query: (...args) => pool.query(...args),
+    connect: async () => {
+      const client = await pool.connect();
+      return {
+        query: async (...args) => {
+          try { return await client.query(...args); }
+          catch (error) {
+            lastSqlState = /^[0-9A-Z]{5}$/u.test(error?.code || '') ? error.code : 'UNKNOWN';
+            lastSqlPosition = /^\d+$/u.test(error?.position || '') ? error.position : null;
+            throw error;
+          }
+        },
+        release: () => client.release()
+      };
+    }
+  };
   const schema = `pult_history_test_${crypto.randomBytes(8).toString('hex')}`;
   let owned = false;
   try {
     const existing = await pool.query('SELECT to_regnamespace($1)::text AS namespace', [schema]);
     assert.equal(existing.rows[0].namespace, null);
     await pool.query(schemaSql.replaceAll('pult_history', schema)); owned = true;
-    const repo = createMarketHistoryRepository({ pool, schema });
-    const first = await repo.ingest({ sourceFile: 'insights-1.json', contentHash: 'one', data: insights('2026-09-21T08:00:00Z'), capturedAt: '2026-09-21T09:00:00Z' });
+    const repo = createMarketHistoryRepository({ pool: diagnosticPool, schema });
+    const capturedText = '2026-09-21T12:00:00+03:00', actualText = '2026-09-21T11:00:00+03:00';
+    const first = await repo.ingest({ sourceFile: 'insights-1.json', contentHash: 'one', data: insights(actualText), capturedAt: capturedText });
     assert.equal(first.duplicate, false);
+    const exactTimes = await pool.query(`SELECT i.captured_at_text,s.source_actual_at_text FROM "${schema}".ingestions i JOIN "${schema}".snapshots s ON s.ingestion_id=i.id WHERE i.content_hash='one' ORDER BY s.id LIMIT 1`);
+    assert.deepEqual(exactTimes.rows[0], { captured_at_text: capturedText, source_actual_at_text: actualText });
     assert.deepEqual(await repo.ingest({ sourceFile: 'insights-1.json', contentHash: 'one', data: insights() }), { duplicate: true });
     await repo.ingest({ sourceFile: 'insights-1.json', contentHash: 'old', data: insights('2026-09-21T07:00:00Z', [{ date: '2026-09-18', sku: '0001', units: 9, revenue: 900 }]) });
-    const report = await repo.report({ from: '2026-09-18', to: '2026-09-20', market: 'Ozon', storeId: '1', productId: '0001', metric: 'revenue' });
+    let report;
+    try { report = await repo.report({ from: '2026-09-18', to: '2026-09-20', market: 'Ozon', storeId: '1', productId: '0001', metric: 'revenue' }); }
+    catch (error) { assert.fail(`report failed with sanitized SQLSTATE ${lastSqlState || 'UNKNOWN'}, position ${lastSqlPosition || 'UNKNOWN'}, repository code ${error.code || 'UNKNOWN'}`); }
     assert.equal(report.rows[0].totals.value, 100);
     assert.equal(report.coverage.confirmedStoreDays, 3);
     assert.equal((await repo.status()).ingestions, 2);

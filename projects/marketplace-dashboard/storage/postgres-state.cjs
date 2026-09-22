@@ -1,6 +1,7 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const { acquireMutationFence } = require('./postgres-write-fence.cjs');
 
 const DEFAULT_MAX_PAYLOAD_BYTES = 320 * 1024 * 1024;
 
@@ -135,6 +136,7 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
       client = await pool.connect();
       await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
       transactionOpen = true;
+      await acquireMutationFence(client);
 
       const locks = [`command:${commandId}`, `key:${key}`].sort();
       for (const lock of locks)

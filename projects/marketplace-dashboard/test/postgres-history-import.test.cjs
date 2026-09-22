@@ -112,8 +112,10 @@ test('PostgreSQL integration imports all SQLite history tables, verifies hashes 
   try {
     const existing = await pool.query(`SELECT to_regnamespace('pult_history')::text AS namespace`);
     assert.equal(existing.rows[0].namespace, null, 'test database already contains pult_history; refusing destructive integration test');
-    const first = await importHistory({ pool, sourceDir: fixture.history, onProgress: event => progress.push(event) });
+    await assert.rejects(importHistory({ pool, sourceDir: fixture.history }), { code: 'HISTORY_SCHEMA_REQUIRED' });
+    await pool.query(require('../storage/postgres-history-schema.cjs'));
     ownedSchema = true;
+    const first = await importHistory({ pool, sourceDir: fixture.history, onProgress: event => progress.push(event) });
     assert.equal(first.counts.facts, 1);
     assert.equal(first.counts.archive_versions, 1);
     assert.equal(first.counts.stock_rows, 1);

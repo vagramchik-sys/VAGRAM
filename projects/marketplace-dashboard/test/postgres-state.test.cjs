@@ -39,7 +39,8 @@ test('write uses one serializable transaction, ordered advisory locks, CAS and a
 
   assert.deepEqual(result, { revision: '8', replayed: false });
   assert.equal(pool.calls[1].text, 'BEGIN ISOLATION LEVEL SERIALIZABLE');
-  const lockCalls = pool.calls.filter(call => call.text?.includes('pg_advisory_xact_lock'));
+  const lockCalls = pool.calls.filter(call => call.text?.includes('pg_advisory_xact_lock('));
+  assert.equal(pool.calls.filter(call => call.text?.includes('pg_advisory_xact_lock_shared')).length, 1);
   assert.deepEqual(lockCalls.map(call => call.values[0]), [`command:${COMMAND}`, 'key:settings/account'].sort());
   const stateWrite = pool.calls.find(call => call.text?.includes('INSERT INTO "pult"."document_states"'));
   assert.deepEqual(stateWrite.values[2], content);

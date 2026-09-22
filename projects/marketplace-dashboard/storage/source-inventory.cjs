@@ -16,12 +16,61 @@ const CONNECTIONS = new Set([
 ]);
 const MARKET = /^(data|insights|intraday|wb-orders|costs|prices|ozon-funnel|ledger|order-category-catalog)-(?:wb-)?[0-9]+\.json$/;
 const BUYER = /^buyer-(?:order-segments|product-segments|segments-wb-[0-9]+)-[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}-[0-9]{2}-[0-9]{2}(?:-retry-[0-9]+)?(?:\.partial)?\.json$/;
+const PRIVATE_AUDIT_CODE = new Set([
+  'atlas-ozon-export.cjs', 'collect-buyer-order-segments.cjs', 'collect-buyer-order-segments.test.cjs',
+  'collect-wb-buyer-segments.cjs', 'conversion-rnp-audit.cjs', 'conversion-validate.cjs',
+  'procurement-smoke.cjs',
+]);
+const PRIVATE_AUDIT_EXACT = new Set([
+  'atlas-ozon-export.json', 'partner-terms-draft.md',
+]);
+const SETUP_EXCLUSIONS = new Set([
+  'postgres-setup/edb-binaries.html', 'postgres-setup/postgresql-18.6-windows-x64.zip',
+  'postgres-setup/admin.dpapi', 'postgres-setup/application.dpapi', 'postgres-setup/migrator.dpapi',
+  'postgres-setup/importer.dpapi', 'postgres-setup/provisioning.json', 'control-sql-restore/NEXT-STEPS.md',
+  'control-sql-restore/SK_Control-20260921.bak', 'control-sql-restore/SQL2025-Express-Setup.exe',
+  'control-sql-restore/en-US/SqlLocalDB.msi',
+]);
+
+function auditArtifact(relativePath) {
+  if (PRIVATE_AUDIT_CODE.has(relativePath)) return { kind: 'runtime', domain: 'audit-reproducibility', target: 'sql-artifact-and-metadata' };
+  if (PRIVATE_AUDIT_EXACT.has(relativePath) ||
+      /^(?:category-day-recovery|charity-seller-evidence)-[0-9]{4}-[0-9]{2}-[0-9]{2}\.(?:md|json)$/.test(relativePath) ||
+      /^truestats-audit-[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}-[0-9]{2}-[0-9]{2}\.json$/.test(relativePath) ||
+      /^sql-(?:capacity-preflight|migration-preflight|source-classification)-[0-9]{8}\.json$/.test(relativePath)) {
+    return { kind: 'runtime', domain: 'audit-evidence', target: 'sql-artifact-and-metadata' };
+  }
+  if (/^candidates\/buyer-order-segments-[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}-[0-9]{2}-[0-9]{2}-[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{9}Z-[0-9]+\.candidate\.json$/.test(relativePath)) {
+    return { kind: 'runtime', domain: 'quarantined-business-candidate', target: 'sql-quarantine-artifact' };
+  }
+  if (/^product-category-audit\/(?:[a-z0-9-]+\.(?:json|cjs)|llm-batches\/[0-9]{2}-[a-z0-9-]+\.json|validation-[0-9]+\/(?:order-category-intraday|report)\.json)$/.test(relativePath)) {
+    return { kind: 'runtime', domain: 'category-audit-evidence', target: 'sql-artifact-and-metadata' };
+  }
+  return null;
+}
+
+function stockEvidence(relativePath) {
+  if (/^stock-history-imports\/(?:dry-run|result|store-map)\.json$/.test(relativePath) ||
+      /^stock-history-imports\/[a-f0-9]{64}\/(?:cluster-supply-last-good|manifest|ozon-cabinet-stock-core|ozon-product-daily-snapshots|ozon-seller-stock-core)\.json$/.test(relativePath) ||
+      /^stock-history-imports\/[a-f0-9]{64}\/stock-api-diagnostics\/[A-Za-z0-9._-]+\.json$/.test(relativePath) ||
+      /^stock-history-imports\/[a-f0-9]{64}\/stock-audit\/[A-Za-z0-9._-]+\.jsonl$/.test(relativePath)) {
+    return { kind: 'runtime', domain: 'stock-provenance', target: 'sql-artifact-and-metadata' };
+  }
+  return null;
+}
 
 function classify(relativePath) {
   if (typeof relativePath !== 'string' || !relativePath || relativePath.includes('\\') ||
       relativePath.startsWith('/') || relativePath.includes(':') ||
       relativePath.split('/').some(s => !s || s === '.' || s === '..')) {
     throw new TypeError('Expected a canonical relative inventory path');
+  }
+  const audit = auditArtifact(relativePath);
+  if (audit) return audit;
+  const evidence = stockEvidence(relativePath);
+  if (evidence) return evidence;
+  if (SETUP_EXCLUSIONS.has(relativePath) || /^postgres-setup\/admin-failed-[0-9]{8}-[0-9]{6}\.dpapi$/.test(relativePath)) {
+    return { kind: 'candidate-source', domain: relativePath.endsWith('.dpapi') ? 'protected-bootstrap' : 'migration-tooling', target: 'protected-local-exclusion' };
   }
   if (CONNECTIONS.has(relativePath)) return { kind: 'runtime', domain: 'protected-connections', target: 'sql-ciphertext-and-settings' };
   if (REGISTERS.has(relativePath)) return { kind: 'runtime', domain: 'business-state', target: 'sql-state' };
@@ -31,8 +80,7 @@ function classify(relativePath) {
   if (/^history\/(products|archive|stocks)\.sqlite-(wal|shm)$/.test(relativePath)) return { kind: 'sqlite-sidecar', domain: 'history', target: 'consistent-sqlite-backup' };
   if (/^history\/snapshots\/[a-f0-9]{2}\/[a-f0-9]{64}\.json\.gz$/.test(relativePath)) return { kind: 'runtime', domain: 'archive-content', target: 'sql-blob' };
   if (/^loan-contracts\/[^/]+\.(json|pdf|docx|png|jpe?g)$/i.test(relativePath)) return { kind: 'runtime', domain: 'documents', target: 'sql-blob-and-metadata' };
-  if (relativePath.startsWith('stock-history-imports/')) return { kind: 'source-evidence', domain: 'stock-provenance', target: 'review-for-sql-blob' };
-  if (relativePath.startsWith('control-sql-restore/')) return { kind: 'candidate-source', domain: 'external-sql-backup-and-media', target: 'isolated-review' };
+  if (relativePath.startsWith('stock-history-imports/')) return { kind: 'source-evidence', domain: 'stock-provenance', target: 'manual-classification' };
   if (relativePath.startsWith('backups/') || relativePath.startsWith('ui-before-seller-reference/')) return { kind: 'backup', domain: 'backup', target: 'protected-backup' };
   if (/^(b2b-agent\/process|pult-atlas-export)\.lock$/.test(relativePath)) return { kind: 'ephemeral', domain: 'process-lock', target: 'local' };
   if (/\.log$/.test(relativePath)) return { kind: 'diagnostic', domain: 'log', target: 'protected-diagnostics' };

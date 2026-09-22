@@ -21,6 +21,25 @@ test('partial checkpoints and originals remain migration sources; WAL is not a s
   assert.equal(classify('stock-history-imports/source.json').kind, 'source-evidence');
 });
 
+test('known audit evidence and quarantined candidates are preserved as SQL artifacts', () => {
+  assert.deepEqual(classify('sql-source-classification-20260922.json'), { kind: 'runtime', domain: 'audit-evidence', target: 'sql-artifact-and-metadata' });
+  assert.equal(classify('product-category-audit/validation-1789904111299/report.json').kind, 'runtime');
+  assert.equal(classify('candidates/buyer-order-segments-2026-09-20_2026-09-20-2026-09-21T121111267Z-49516.candidate.json').target, 'sql-quarantine-artifact');
+  assert.equal(classify('stock-history-imports/dry-run.json').target, 'sql-artifact-and-metadata');
+  assert.equal(classify('stock-history-imports/' + 'a'.repeat(64) + '/stock-audit/synthetic-run.jsonl').kind, 'runtime');
+  assert.equal(classify('stock-history-imports/' + 'a'.repeat(64) + '/unexpected.exe').kind, 'source-evidence');
+});
+
+test('only exact setup and bootstrap paths receive a protected local exclusion', () => {
+  for (const name of [
+    'postgres-setup/edb-binaries.html', 'postgres-setup/postgresql-18.6-windows-x64.zip',
+    'postgres-setup/admin.dpapi', 'postgres-setup/admin-failed-20260922-101239.dpapi',
+    'control-sql-restore/SK_Control-20260921.bak', 'control-sql-restore/en-US/SqlLocalDB.msi'
+  ]) assert.equal(classify(name).target, 'protected-local-exclusion', name);
+  assert.equal(classify('postgres-setup/admin-failed-latest.dpapi').kind, 'review');
+  assert.equal(classify('control-sql-restore/unreviewed.bak').kind, 'review');
+});
+
 test('unknown business files block completeness without reading secret contents', async t => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'pult-inventory-'));
   t.after(() => fs.rm(root, { recursive: true, force: true }));
@@ -54,5 +73,6 @@ test('reject absolute/traversal paths and distinguish backup from an active data
     assert.throws(() => classify(key), TypeError);
   }
   assert.equal(classify('backups/stores.json').kind, 'backup');
-  assert.equal(classify('control-sql-restore/external.bak').kind, 'candidate-source');
+  assert.equal(classify('control-sql-restore/SK_Control-20260921.bak').kind, 'candidate-source');
+  assert.equal(classify('control-sql-restore/external.bak').kind, 'review');
 });

@@ -1,6 +1,7 @@
 'use strict';
 
 const path = require('node:path');
+const { acquireMutationFence } = require('./postgres-write-fence.cjs');
 
 const DAY = /^\d{4}-\d{2}-\d{2}$/u;
 const MAX_REPORT_DAYS = 3660;
@@ -40,7 +41,7 @@ function days(from, to) { if (!validDay(from) || !validDay(to) || from > to) thr
 function finiteNumber(value, label, { integer = false, min } = {}) { if (value === null || value === undefined || value === '' || !Number.isFinite(value) || integer && !Number.isSafeInteger(value) || min !== undefined && value < min) throw Error('Некорректное значение ' + label); if (!Number.isSafeInteger(Math.round(value * 100))) throw Error('Слишком большое значение ' + label); return value; }
 const optionalUnits = (value, label) => value === undefined ? 0 : finiteNumber(value, label, { integer: true, min: 0 });
 const optionalCents = (value, label) => value === undefined ? 0 : finiteNumber(value, label, { integer: true }) / 100;
-function requiredTime(value, label) { const parsed = Date.parse(value); if (!Number.isFinite(parsed)) throw Error('Некорректное время ' + label); return new Date(parsed).toISOString(); }
+function requiredTime(value, label) { if (typeof value !== 'string' || !Number.isFinite(Date.parse(value))) throw Error('Некорректное время ' + label); return value; }
 function storeFrom(file, prefix, pattern = '\\d+') { const name = path.basename(String(file || '')), match = name.match(new RegExp('^' + prefix + '-(' + pattern + ')\\.json$')); if (!match) throw Error('Неподдерживаемое имя файла источника'); return match[1]; }
 const safeInteger = value => { const number = Number(value); return Number.isSafeInteger(number) ? number : String(value); };
 const countNumber = value => { const number = Number(value); if (!Number.isSafeInteger(number) || number < 0) throw Error('Некорректный счётчик истории'); return number; };
@@ -116,21 +117,22 @@ function createMarketHistoryRepository({ pool, schema = 'pult_history', now = Da
   const prefix = ident(schema), table = name => `${prefix}."${name}"`;
 
   async function addSnapshot(client, ingestionId, snapshot) {
-    const inserted = await queryDatabase(client, `INSERT INTO ${table('snapshots')}(ingestion_id,source_kind,market,store_id,day,source_actual_at,source_actual_at_text,closed_confirmed,partial_reason) VALUES($1,$2,$3,$4,$5::date,$6::timestamptz,$6,$7,$8) RETURNING id`, [ingestionId, snapshot.sourceKind, snapshot.market, String(snapshot.storeId), snapshot.day, snapshot.actual, snapshot.closed, snapshot.reason || null]);
+    const inserted = await queryDatabase(client, `INSERT INTO ${table('snapshots')}(ingestion_id,source_kind,market,store_id,day,source_actual_at,source_actual_at_text,closed_confirmed,partial_reason) VALUES($1,$2,$3,$4,$5::date,$6::text::timestamptz,$6::text,$7,$8) RETURNING id`, [ingestionId, snapshot.sourceKind, snapshot.market, String(snapshot.storeId), snapshot.day, snapshot.actual, snapshot.closed, snapshot.reason || null]);
     const snapshotId = inserted.rows[0].id;
     const facts = snapshot.rows.map(row => ({ snapshot_id: snapshotId, product_id: String(row.productId), observed_at: row.observedAt || null, observed_at_text: row.observedAt || null, units: row.units ?? null, revenue: row.revenue ?? null, sold_units: row.soldUnits ?? null, returned_units: row.returnedUnits ?? null, realized: row.realized ?? null, ads: row.ads ?? null, unknown_unit_rows: row.unknownUnitRows || 0 }));
     await batchInsert(client, table('facts'), ['snapshot_id', 'product_id', 'observed_at', 'observed_at_text', 'units', 'revenue', 'sold_units', 'returned_units', 'realized', 'ads', 'unknown_unit_rows'], facts);
     return snapshotId;
   }
 
-  async function ingest({ sourceFile, contentHash, data, capturedAt } = {}) {
+  function prepareIngestion({ sourceFile, contentHash, data, capturedAt } = {}) {
     if (!sourceFile || !contentHash || !data || typeof data !== 'object') throw Error('Не указаны sourceFile, contentHash или data');
     capturedAt = requiredTime(capturedAt || new Date(now()).toISOString(), 'capturedAt');
-    const { base, kind, storeId } = sourceSpec(sourceFile), client = await connectDatabase(pool);
-    try {
-      await queryDatabase(client, 'BEGIN');
-      const inserted = await queryDatabase(client, `INSERT INTO ${table('ingestions')}(source_file,content_hash,captured_at,captured_at_text,source_kind) VALUES($1,$2,$3::timestamptz,$3,$4) ON CONFLICT(source_file,content_hash) DO NOTHING RETURNING id`, [base, String(contentHash), capturedAt, kind]);
-      if (!inserted.rowCount) { await queryDatabase(client, 'COMMIT', undefined, { commitOutcome: true }); return { duplicate: true }; }
+    return { ...sourceSpec(sourceFile), contentHash: String(contentHash), data, capturedAt };
+  }
+
+  async function ingestPrepared({ base, kind, storeId, contentHash, data, capturedAt }, client) {
+    const inserted = await queryDatabase(client, `INSERT INTO ${table('ingestions')}(source_file,content_hash,captured_at,captured_at_text,source_kind) VALUES($1,$2,$3::text::timestamptz,$3::text,$4) ON CONFLICT(source_file,content_hash) DO NOTHING RETURNING id`, [base, contentHash, capturedAt, kind]);
+      if (!inserted.rowCount) return { duplicate: true };
       const ingestionId = inserted.rows[0].id, prepared = rowsForIngestion(kind, storeId, data);
       let snapshotCount = 0, factCount = 0;
       if (kind === 'catalog') {
@@ -140,8 +142,8 @@ function createMarketHistoryRepository({ pool, schema = 'pult_history', now = Da
           if (id === undefined || id === null || String(id) === '') continue;
           const market = String(item.market || data.market || (String(storeId).startsWith('wb-') ? 'WB' : 'Ozon')), name = String(item.name ?? item.title ?? item.offer_id ?? item.vendorCode ?? id);
           if (!['Ozon', 'WB'].includes(market)) throw Error('Некорректная площадка каталога');
-          await queryDatabase(client, `INSERT INTO ${table('product_names')} AS existing_row(market,store_id,product_id,name,source_actual_at,source_actual_at_text) VALUES($1,$2,$3,$4,$5::timestamptz,$5) ON CONFLICT(market,store_id,product_id) DO UPDATE SET name=EXCLUDED.name,source_actual_at=EXCLUDED.source_actual_at,source_actual_at_text=EXCLUDED.source_actual_at_text WHERE EXCLUDED.source_actual_at>=existing_row.source_actual_at`, [market, String(storeId), String(id), name, capturedAt]);
-          for (const alias of [item.sku, item.product_id, item.nmID, item.offer_id, item.vendorCode]) if (alias !== undefined && alias !== null && String(alias) !== String(id)) await queryDatabase(client, `INSERT INTO ${table('product_aliases')} AS existing_row(market,store_id,alias,product_id,source_actual_at,source_actual_at_text) VALUES($1,$2,$3,$4,$5::timestamptz,$5) ON CONFLICT(market,store_id,alias) DO UPDATE SET product_id=EXCLUDED.product_id,source_actual_at=EXCLUDED.source_actual_at,source_actual_at_text=EXCLUDED.source_actual_at_text WHERE EXCLUDED.source_actual_at>=existing_row.source_actual_at`, [market, String(storeId), String(alias), String(id), capturedAt]);
+        await queryDatabase(client, `INSERT INTO ${table('product_names')} AS existing_row(market,store_id,product_id,name,source_actual_at,source_actual_at_text) VALUES($1,$2,$3,$4,$5::text::timestamptz,$5::text) ON CONFLICT(market,store_id,product_id) DO UPDATE SET name=EXCLUDED.name,source_actual_at=EXCLUDED.source_actual_at,source_actual_at_text=EXCLUDED.source_actual_at_text WHERE EXCLUDED.source_actual_at>=existing_row.source_actual_at`, [market, String(storeId), String(id), name, capturedAt]);
+        for (const alias of [item.sku, item.product_id, item.nmID, item.offer_id, item.vendorCode]) if (alias !== undefined && alias !== null && String(alias) !== String(id)) await queryDatabase(client, `INSERT INTO ${table('product_aliases')} AS existing_row(market,store_id,alias,product_id,source_actual_at,source_actual_at_text) VALUES($1,$2,$3,$4,$5::text::timestamptz,$5::text) ON CONFLICT(market,store_id,alias) DO UPDATE SET product_id=EXCLUDED.product_id,source_actual_at=EXCLUDED.source_actual_at,source_actual_at_text=EXCLUDED.source_actual_at_text WHERE EXCLUDED.source_actual_at>=existing_row.source_actual_at`, [market, String(storeId), String(alias), String(id), capturedAt]);
         }
         factCount = prepared.products.length;
       } else {
@@ -154,8 +156,22 @@ function createMarketHistoryRepository({ pool, schema = 'pult_history', now = Da
           }
         }
       }
-      await queryDatabase(client, 'COMMIT', undefined, { commitOutcome: true });
       return { duplicate: false, ingestionId: safeInteger(ingestionId), snapshotCount, factCount };
+  }
+
+  async function ingestInTransaction(input, client) {
+    if (!client || typeof client.query !== 'function') throw new TypeError('transaction client is required');
+    return ingestPrepared(prepareIngestion(input), client);
+  }
+
+  async function ingest(input) {
+    const prepared = prepareIngestion(input), client = await connectDatabase(pool);
+    try {
+      await queryDatabase(client, 'BEGIN');
+      await acquireMutationFence(client);
+      const result = await ingestPrepared(prepared, client);
+      await queryDatabase(client, 'COMMIT', undefined, { commitOutcome: true });
+      return result;
     } catch (error) { try { await client.query('ROLLBACK'); } catch {} throw error; }
     finally { releaseDatabase(client); }
   }
@@ -179,10 +195,10 @@ function createMarketHistoryRepository({ pool, schema = 'pult_history', now = Da
       if (market) { baseValues.push(String(market)); coverageFilters.push(`market=$${baseValues.length}`); rowFilters.push(`r.market=$${baseValues.length}`); }
       if (storeId) { baseValues.push(String(storeId)); coverageFilters.push(`store_id=$${baseValues.length}`); rowFilters.push(`r.store_id=$${baseValues.length}`); }
       const ranked = `WITH ranked AS (SELECT s.*,row_number() OVER(PARTITION BY source_kind,market,store_id,day ORDER BY source_actual_at DESC,id DESC) rn FROM ${table('snapshots')} s WHERE closed_confirmed=true AND day BETWEEN $1::date AND $2::date AND source_kind=ANY($3::text[]))`;
-      const coverageResult = await queryDatabase(client, `${ranked} SELECT market,store_id,to_char(day,'YYYY-MM-DD') day FROM ranked WHERE rn=1${coverageFilters.length ? ' AND ' + coverageFilters.join(' AND ') : ''}`, baseValues);
+      const coverageResult = await queryDatabase(client, `${ranked} SELECT market,store_id,to_char(day,'YYYY-MM-DD') AS "day" FROM ranked WHERE rn=1${coverageFilters.length ? ' AND ' + coverageFilters.join(' AND ') : ''}`, baseValues);
       const factValues = [...baseValues], factFilters = [...rowFilters];
       if (productId) { factValues.push(String(productId)); factFilters.push(`f.product_id=$${factValues.length}`); }
-      const factsResult = await queryDatabase(client, `${ranked} SELECT r.market,r.store_id,to_char(r.day,'YYYY-MM-DD') day,f.product_id,f.${metricSpec.column} value,f.unknown_unit_rows,p.name FROM ranked r JOIN ${table('facts')} f ON f.snapshot_id=r.id LEFT JOIN ${table('product_aliases')} a ON a.market=r.market AND a.store_id=r.store_id AND a.alias=f.product_id LEFT JOIN ${table('product_names')} p ON p.market=r.market AND p.store_id=r.store_id AND p.product_id=coalesce(a.product_id,f.product_id) WHERE r.rn=1${factFilters.length ? ' AND ' + factFilters.join(' AND ') : ''}`, factValues);
+      const factsResult = await queryDatabase(client, `${ranked} SELECT r.market,r.store_id,to_char(r.day,'YYYY-MM-DD') AS "day",f.product_id,f.${metricSpec.column} value,f.unknown_unit_rows,p.name FROM ranked r JOIN ${table('facts')} f ON f.snapshot_id=r.id LEFT JOIN ${table('product_aliases')} a ON a.market=r.market AND a.store_id=r.store_id AND a.alias=f.product_id LEFT JOIN ${table('product_names')} p ON p.market=r.market AND p.store_id=r.store_id AND p.product_id=coalesce(a.product_id,f.product_id) WHERE r.rn=1${factFilters.length ? ' AND ' + factFilters.join(' AND ') : ''}`, factValues);
       await queryDatabase(client, 'COMMIT');
       const coverageMap = new Map();
       for (const row of coverageResult.rows) { const key = row.market + '\0' + row.store_id, list = coverageMap.get(key) || []; list.push(row.day); coverageMap.set(key, list); }
@@ -207,7 +223,7 @@ function createMarketHistoryRepository({ pool, schema = 'pult_history', now = Da
     finally { releaseDatabase(client); }
   }
 
-  return { ingest, status, report, async close() {} };
+  return { ingest, ingestInTransaction, status, report, async close() {} };
 }
 
 module.exports = { createMarketHistoryRepository, HistoryRepositoryError, MAX_REPORT_DAYS };

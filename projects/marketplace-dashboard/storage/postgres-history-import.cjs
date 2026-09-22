@@ -7,7 +7,7 @@ const { Transform, Writable } = require('node:stream');
 const { pipeline } = require('node:stream/promises');
 const { createGunzip } = require('node:zlib');
 const { DatabaseSync } = require('node:sqlite');
-const schemaSql = require('./postgres-history-schema.cjs');
+const { acquireMutationFence } = require('./postgres-write-fence.cjs');
 
 const MAX_BATCH = 1000;
 const MAX_PARAMETERS = 60000;
@@ -192,7 +192,7 @@ async function importTable(client, db, spec, onProgress) {
     const rows = statement.all(requested, count);
     if (!rows.length) break;
     await client.query('BEGIN');
-    try { await insertBatch(client, spec, rows); await client.query('COMMIT'); }
+    try { await acquireMutationFence(client); await insertBatch(client, spec, rows); await client.query('COMMIT'); }
     catch (error) { await client.query('ROLLBACK'); throw error; }
     for (const row of rows) hash.update(stable(canonicalRow(row, spec)) + '\n');
     count += rows.length;
@@ -257,8 +257,14 @@ async function importHistory({ pool, sourceDir, onProgress } = {}) {
     const lock = await client.query(`SELECT pg_try_advisory_lock(hashtext('pult_history.import')) AS acquired`);
     if (!lock.rows[0]?.acquired) throw Object.assign(Error('Another history import is running'), { code: 'HISTORY_IMPORT_BUSY' });
     locked = true;
-    await client.query(schemaSql);
+    // DDL belongs to pult_migrator. The importer has only DML privileges.
+    const requiredTables = [...TABLES.map(table => table.name), 'import_runs', 'import_state'];
+    const ready = await client.query('SELECT count(*)::integer AS n FROM information_schema.tables WHERE table_schema=$1 AND table_name=ANY($2::text[])', ['pult_history', requiredTables]);
+    if (ready.rows[0]?.n !== requiredTables.length) throw Object.assign(Error('History schema must be provisioned before import'), { code: 'HISTORY_SCHEMA_REQUIRED' });
+    await client.query('BEGIN');
+    await acquireMutationFence(client);
     await client.query('INSERT INTO pult_history.import_runs(run_id,status) VALUES($1,$2)', [runId, 'running']);
+    await client.query('COMMIT');
     for (const base of TABLES) {
       const spec = { ...base, historyDir };
       const result = await importTable(client, dbs[spec.db], spec, onProgress);
@@ -267,6 +273,7 @@ async function importHistory({ pool, sourceDir, onProgress } = {}) {
 
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
     try {
+      await acquireMutationFence(client);
       for (const base of TABLES) {
         const target = await verifyTarget(client, base);
         if (target.count !== counts[base.name] || target.hash !== hashes[base.name]) throw Object.assign(Error(`Verification failed for ${base.name}`), { code: 'HISTORY_VERIFICATION_FAILED', table: base.name });
@@ -283,7 +290,12 @@ async function importHistory({ pool, sourceDir, onProgress } = {}) {
     } catch (error) { await client.query('ROLLBACK'); throw error; }
   } catch (error) {
     try { if (client) await client.query('ROLLBACK'); } catch {}
-    try { if (client) await client.query(`UPDATE pult_history.import_runs SET status='failed',error_code=$2 WHERE run_id=$1 AND status='running'`, [runId, String(error.code || 'IMPORT_FAILED').slice(0, 120)]); } catch {}
+    try { if (client) {
+      await client.query('BEGIN');
+      await acquireMutationFence(client);
+      await client.query(`UPDATE pult_history.import_runs SET status='failed',error_code=$2 WHERE run_id=$1 AND status='running'`, [runId, String(error.code || 'IMPORT_FAILED').slice(0, 120)]);
+      await client.query('COMMIT');
+    } } catch { if (client) await client.query('ROLLBACK').catch(() => {}); }
     throw error;
   } finally {
     if (sourceTransactions) for (const db of Object.values(dbs)) try { db.exec('ROLLBACK'); } catch {}

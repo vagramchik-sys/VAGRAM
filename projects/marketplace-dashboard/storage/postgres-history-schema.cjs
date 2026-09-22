@@ -103,13 +103,17 @@ CREATE TABLE IF NOT EXISTS pult_history.archive_versions (
   source_mtime double precision NOT NULL,
   source_bytes bigint NOT NULL CHECK (source_bytes >= 0),
   archive_bytes bigint NOT NULL CHECK (archive_bytes >= 0),
-  object_path text COLLATE "C" NOT NULL,
+  object_path text COLLATE "C",
   facts_status text COLLATE "C" NOT NULL,
   archive_payload bytea NOT NULL,
   archive_gzip_hash bytea NOT NULL CHECK (octet_length(archive_gzip_hash) = 32),
   PRIMARY KEY (source_file, content_hash),
   CHECK (octet_length(archive_payload) = archive_bytes)
 );
+
+CREATE INDEX IF NOT EXISTS archive_versions_pending_facts_idx
+  ON pult_history.archive_versions(captured_at, source_file, content_hash)
+  WHERE facts_status = 'pending';
 
 CREATE TABLE IF NOT EXISTS pult_history.archive_latest (
   source_file text COLLATE "C" PRIMARY KEY,

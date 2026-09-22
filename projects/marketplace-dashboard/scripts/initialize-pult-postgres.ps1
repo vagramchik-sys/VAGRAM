@@ -48,7 +48,7 @@ $ciphertext = [Security.Cryptography.ProtectedData]::Protect([Text.Encoding]::UT
 [IO.File]::WriteAllBytes($adminFile,$ciphertext)
 [IO.File]::WriteAllText($passwordFile,$password,[Text.UTF8Encoding]::new($false))
 try {
-  & (Join-Path $binDirectory 'initdb.exe') --pgdata $dataDirectory --username=pult_admin --encoding=UTF8 --locale-provider=builtin --locale=C.UTF-8 --auth=scram-sha-256 --data-checksums --pwfile=$passwordFile
+  & (Join-Path $binDirectory 'initdb.exe') --pgdata $dataDirectory --username=pult_admin --encoding=UTF8 --locale=C --locale-provider=builtin --builtin-locale=C.UTF-8 --auth=scram-sha-256 --data-checksums --pwfile=$passwordFile
   if ($LASTEXITCODE -ne 0) { throw 'PostgreSQL initialization failed. Existing diagnostics are preserved for inspection.' }
 } finally {
   # Only this exact disposable password file is removed; never delete a cluster.
@@ -76,7 +76,10 @@ $hba = "host all all 127.0.0.1/32 scram-sha-256`n"
 if ($StartServer) {
   $serverLog = Join-Path $dataDirectory 'postgresql.log'
   $arguments = @('-D',('"' + $dataDirectory + '"'),'-l',('"' + $serverLog + '"'),'-w','-t','30','start')
-  $launch = Start-Process -FilePath (Join-Path $binDirectory 'pg_ctl.exe') -ArgumentList $arguments -WindowStyle Hidden -Wait -PassThru
+  # Start-Process -Wait also waits for the long-lived PostgreSQL descendants.
+  # Wait only for pg_ctl, which independently confirms readiness with -w.
+  $launch = Start-Process -FilePath (Join-Path $binDirectory 'pg_ctl.exe') -ArgumentList $arguments -WindowStyle Hidden -PassThru
+  if (-not $launch.WaitForExit(45000)) { throw 'PostgreSQL startup confirmation timed out. Inspect the private server log before retrying.' }
   if ($launch.ExitCode -ne 0) { throw 'PostgreSQL did not confirm startup. Inspect the private server log.' }
   Write-Output 'PostgreSQL cluster started on loopback. Application migration has not run.'
 } else {
