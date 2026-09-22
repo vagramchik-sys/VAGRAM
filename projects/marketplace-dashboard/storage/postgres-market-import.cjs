@@ -59,6 +59,9 @@ function stockRowFields(row) {
 function metadata(snapshot) {
   return Object.fromEntries(Object.entries(snapshot).filter(([, value]) => !Array.isArray(value)));
 }
+function arrayPresence(snapshot) {
+  return Object.fromEntries(ARRAY_SPECS.map(spec => [spec.source, Object.hasOwn(snapshot, spec.source)]));
+}
 function expectedCounts(snapshot) {
   const counts = Object.fromEntries(ARRAY_SPECS.map(spec => [spec.source, Array.isArray(snapshot[spec.source]) ? snapshot[spec.source].length : 0]));
   counts.stockItems = (snapshot.stocks || []).reduce((sum, row) => sum + (Array.isArray(row?.stocks) ? row.stocks.length : 0), 0);
@@ -289,6 +292,7 @@ async function importSnapshot(pool, sourceDir, name, knownStores, progress) {
     await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`market:${storeId}`]);
     const existing = (await client.query(
       `SELECT v.snapshot_id,v.complete,v.source_byte_length::text AS source_byte_length,v.row_digest,
+              v.source_metadata,v.expected_counts,v.source_array_presence,
               d.exact_bytes,d.sha256 AS document_sha256,d.byte_length::text AS document_byte_length
          FROM pult_market.snapshot_versions v JOIN pult_market.source_documents d USING(source_document_id)
         WHERE v.store_id=$1 AND v.source_sha256=$2`,
@@ -303,6 +307,15 @@ async function importSnapshot(pool, sourceDir, name, knownStores, progress) {
       const verified = await verifySnapshot(client, existing.snapshot_id, storeId, snapshot);
       if (!existing.row_digest || !equal(existing.row_digest, verified.digest))
         fail('SNAPSHOT_CONFLICT', 'Existing snapshot verification digest conflicts with source');
+      if (canonical(existing.source_metadata) !== canonical(metadata(snapshot)) || canonical(existing.expected_counts) !== canonical(expectedCounts(snapshot)))
+        fail('SNAPSHOT_CONFLICT', 'Existing snapshot metadata conflicts with source');
+      const presence = arrayPresence(snapshot);
+      if (existing.source_array_presence && Object.keys(existing.source_array_presence).length === 0) {
+        // Upgrade an older verified staging row only from its identical proven source bytes.
+        await client.query('UPDATE pult_market.snapshot_versions SET source_array_presence=$2::jsonb WHERE snapshot_id=$1', [existing.snapshot_id, JSON.stringify(presence)]);
+      } else if (canonical(existing.source_array_presence) !== canonical(presence)) {
+        fail('SNAPSHOT_CONFLICT', 'Existing snapshot array presence conflicts with source');
+      }
       await client.query('COMMIT');
       return { imported: false, verified: true, snapshotId: existing.snapshot_id };
     }
@@ -310,9 +323,9 @@ async function importSnapshot(pool, sourceDir, name, knownStores, progress) {
     const snapshotId = crypto.randomUUID();
     const counts = expectedCounts(snapshot);
     await client.query(
-      `INSERT INTO pult_market.snapshot_versions(snapshot_id,store_id,source_document_id,source_sha256,source_byte_length,source_metadata,expected_counts)
-       VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)`,
-      [snapshotId, storeId, documentId, sourceHash, String(bytes.length), JSON.stringify(metadata(snapshot)), JSON.stringify(counts)]
+      `INSERT INTO pult_market.snapshot_versions(snapshot_id,store_id,source_document_id,source_sha256,source_byte_length,source_metadata,expected_counts,source_array_presence)
+       VALUES($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb,$8::jsonb)`,
+      [snapshotId, storeId, documentId, sourceHash, String(bytes.length), JSON.stringify(metadata(snapshot)), JSON.stringify(counts), JSON.stringify(arrayPresence(snapshot))]
     );
     for (const spec of ARRAY_SPECS) await insertRows(client, snapshotId, storeId, spec, snapshot[spec.source] || [], progress);
     await insertDerived(client, snapshotId, storeId, snapshot, progress);

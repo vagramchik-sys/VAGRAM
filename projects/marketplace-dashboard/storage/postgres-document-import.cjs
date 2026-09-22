@@ -55,7 +55,7 @@ async function readVerifiedFile(root, item) {
 }
 
 function sameBaseline(row, item, content) {
-  return row && row.source_path === item.path && row.logical_key === item.logicalKey && row.domain === item.domain &&
+  return row && row.baseline_present === true && row.source_path === item.path && row.logical_key === item.logicalKey && row.domain === item.domain &&
     row.source_media_type === item.mediaType && row.media_type === item.mediaType &&
     String(row.source_bytes) === item.bytes && String(row.revision) === '1' && row.deleted === false &&
     Buffer.isBuffer(row.source_sha256) && row.source_sha256.toString('hex') === item.sha256 &&
@@ -78,7 +78,7 @@ async function importDocuments({ pool, sourceDir, schema = 'pult', onProgress = 
     if (error instanceof DocumentImportError) throw error;
     fail('INVALID_SNAPSHOT', 'Checkpoint verification failed');
   }
-  const select = `SELECT f.source_path,f.logical_key,f.domain,f.media_type AS source_media_type,
+  const select = `SELECT f.source_path,f.logical_key,f.domain,f.media_type AS source_media_type,f.baseline_present,
     f.source_bytes::text,f.source_sha256,d.media_type,d.content,d.sha256,d.revision::text,d.deleted
     FROM ${namespace}.source_files f JOIN ${namespace}.document_states d USING(logical_key)
     WHERE f.source_path=$1`;
@@ -121,7 +121,7 @@ async function importDocuments({ pool, sourceDir, schema = 'pult', onProgress = 
     await verifyMigrationSnapshot(sourceDir);
     client = await pool.connect();
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-    const catalog = await client.query(`SELECT source_path FROM ${namespace}.source_files ORDER BY source_path COLLATE "C"`);
+    const catalog = await client.query(`SELECT source_path FROM ${namespace}.source_files WHERE baseline_present=true ORDER BY source_path COLLATE "C"`);
     const expected = new Set(selected.map(item => item.path));
     if (catalog.rows.length !== expected.size || catalog.rows.some(row => !expected.has(row.source_path)))
       fail('BASELINE_CONFLICT', 'SQL provenance contains missing or unexpected checkpoint files');

@@ -18,11 +18,13 @@ CREATE TABLE IF NOT EXISTS pult_market.snapshot_versions (
  snapshot_id uuid PRIMARY KEY, store_id text COLLATE "C" NOT NULL REFERENCES pult_market.stores(store_id),
  source_document_id bigint NOT NULL REFERENCES pult_market.source_documents(source_document_id),
  source_sha256 bytea NOT NULL CHECK(octet_length(source_sha256)=32), source_byte_length bigint NOT NULL,
- source_metadata jsonb NOT NULL, expected_counts jsonb NOT NULL, verified_counts jsonb,
+ source_metadata jsonb NOT NULL, source_array_presence jsonb NOT NULL DEFAULT '{}'::jsonb,
+ expected_counts jsonb NOT NULL, verified_counts jsonb,
  row_digest bytea CHECK(row_digest IS NULL OR octet_length(row_digest)=32), complete boolean NOT NULL DEFAULT false,
  imported_at timestamptz NOT NULL DEFAULT clock_timestamp(), completed_at timestamptz,
  UNIQUE(store_id,source_sha256)
 );
+ALTER TABLE pult_market.snapshot_versions ADD COLUMN IF NOT EXISTS source_array_presence jsonb NOT NULL DEFAULT '{}'::jsonb;
 CREATE TABLE IF NOT EXISTS pult_market.current_snapshots (
  store_id text COLLATE "C" PRIMARY KEY REFERENCES pult_market.stores(store_id),
  snapshot_id uuid NOT NULL UNIQUE REFERENCES pult_market.snapshot_versions(snapshot_id),

@@ -104,6 +104,7 @@ async function main() {
       await owner.query(`GRANT USAGE,SELECT ON ALL SEQUENCES IN SCHEMA ${schema} TO pult_app,pult_importer`);
     }
     await owner.query('REVOKE UPDATE,DELETE ON pult.commands FROM pult_app');
+    await owner.query('REVOKE UPDATE,DELETE ON pult.source_files FROM pult_app');
     await owner.query('REVOKE INSERT,UPDATE,DELETE ON pult.schema_versions FROM pult_app');
     const privileges = await owner.query(`SELECT r.rolname,r.rolsuper,r.rolcreatedb,r.rolcreaterole,r.rolreplication,r.rolbypassrls,
       has_schema_privilege(r.rolname,'pult','CREATE') OR has_schema_privilege(r.rolname,'pult_history','CREATE') OR has_schema_privilege(r.rolname,'pult_market','CREATE') AS can_ddl
@@ -111,8 +112,8 @@ async function main() {
     if (privileges.rows.length !== 2 || privileges.rows.some(row => row.rolsuper || row.rolcreatedb || row.rolcreaterole || row.rolreplication || row.rolbypassrls || row.can_ddl)) fail('EXCESSIVE_ROLE_PRIVILEGES');
     const app = await require('../storage/postgres-connection.cjs').createApplicationPool({ bootstrapFile: path.join(DIRECTORY, 'application.dpapi') });
     try {
-      const checks = (await app.query("SELECT has_table_privilege(current_user,'pult.commands','UPDATE') AS can_rewrite_journal, has_table_privilege(current_user,'pult.document_states','INSERT') AS can_write_state")).rows[0];
-      if (checks.can_rewrite_journal || !checks.can_write_state) fail('APPLICATION_PRIVILEGES_INVALID');
+      const checks = (await app.query("SELECT has_table_privilege(current_user,'pult.commands','UPDATE') AS can_rewrite_journal, has_table_privilege(current_user,'pult.document_states','INSERT') AS can_write_state, has_table_privilege(current_user,'pult.source_files','SELECT') AS can_read_sources, has_table_privilege(current_user,'pult.source_files','INSERT') AS can_add_sources, has_table_privilege(current_user,'pult.source_files','UPDATE') OR has_table_privilege(current_user,'pult.source_files','DELETE') AS can_rewrite_sources")).rows[0];
+      if (checks.can_rewrite_journal || !checks.can_write_state || !checks.can_read_sources || !checks.can_add_sources || checks.can_rewrite_sources) fail('APPLICATION_PRIVILEGES_INVALID');
     } finally { await app.end(); }
     const record = await fs.open(markerFile, 'r+');
     try { await record.truncate(0); await record.writeFile(JSON.stringify({ version: 1, invocation, status: 'complete', imported: false, cutover: false }) + '\n'); await record.sync(); } finally { await record.close(); }

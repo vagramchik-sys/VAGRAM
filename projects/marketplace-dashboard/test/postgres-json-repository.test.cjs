@@ -13,6 +13,13 @@ function memoryStore(initial = null) {
   return {
     calls,
     async read(key, options) { calls.push({ action: 'read', key, options }); return current; },
+    async readCommand(key, commandId, { operation, sourceMapping }) {
+      calls.push({ action: 'readCommand', key, commandId, operation, sourceMapping });
+      const item = commands.get(commandId);
+      if (!item) return null;
+      if (item.key !== key || operation !== 'write') throw Object.assign(Error('reused'), { code: 'COMMAND_ID_REUSED' });
+      return item.command;
+    },
     async write(key, bytes, options) {
       calls.push({ action: 'write', key, bytes, options });
       const request = JSON.stringify([key, options.expectedRevision, options.mediaType, bytes.toString('base64')]);
@@ -23,9 +30,13 @@ function memoryStore(initial = null) {
       }
       if ((current?.revision || '0') !== options.expectedRevision)
         throw Object.assign(new Error('conflict'), { code: 'REVISION_CONFLICT' });
-      const revision = (BigInt(options.expectedRevision) + 1n).toString();
+      const before = current, revision = (BigInt(options.expectedRevision) + 1n).toString();
       current = { revision, deleted: false, mediaType: options.mediaType, content: bytes, sha256: digest(bytes) };
-      commands.set(options.commandId, { request, revision });
+      commands.set(options.commandId, { request, revision, key, command: {
+        commandId: options.commandId,
+        before: before ? { revision: before.revision, mediaType: before.mediaType, content: before.content, sha256: before.sha256, deleted: before.deleted } : { revision: '0', mediaType: null, content: null, sha256: null, deleted: null },
+        after: { ...current }
+      } });
       return { revision, replayed: false };
     },
     async remove(key, options) { calls.push({ action: 'remove', key, options }); return { revision: '4', replayed: false }; }
@@ -55,6 +66,17 @@ test('same logical JSON retry is byte-identical; conflicting revision remains a 
   assert.deepEqual(await repo.compareAndSet({ items: [{ a: 0, b: null }], schema: 1 }, request), { revision: '1', replayed: true });
   await assert.rejects(repo.compareAndSet({ schema: 1, items: [] }, { ...request, commandId: 'request-2' }), error => error.code === 'REVISION_CONFLICT');
   assert.deepEqual((await repo.read()).value.items, [{ a: 0, b: null }]);
+});
+
+test('readCommand decodes verified durable before and after JSON images', async () => {
+  const store = memoryStore(), repo = repository(store);
+  await repo.compareAndSet({ schema: 1, items: [] }, { expectedRevision: '0', commandId: 'request-1' });
+  await repo.compareAndSet({ schema: 1, items: [{ value: 1 }] }, { expectedRevision: '1', commandId: 'request-2' });
+  const command = await repo.readCommand('request-2');
+  assert.deepEqual(command.before.value, { schema: 1, items: [] });
+  assert.deepEqual(command.after.value, { schema: 1, items: [{ value: 1 }] });
+  assert.equal(command.before.revision, '1');
+  assert.equal((await repository(memoryStore()).readCommand('missing')), null);
 });
 
 test('corrupt stored bytes, wrong media type, invalid UTF-8 and schema fail closed', async () => {
@@ -103,4 +125,20 @@ test('unknown commit outcome passes through once with the original caller comman
   assert.equal(attempts, 1);
   await repository(store).remove({ expectedRevision: '3', commandId: 'delete-command' });
   assert.deepEqual(store.calls[0].options, { expectedRevision: '3', commandId: 'delete-command', mediaType: 'application/json' });
+});
+
+test('explicit runtime source path is validated and propagated to every mutation and replay lookup', async () => {
+  const sourcePath = 'ideas.json';
+  const logicalKey = 'file/' + crypto.createHash('sha256').update(sourcePath).digest('hex');
+  const store = memoryStore();
+  const repo = createJsonDocumentRepository({ stateStore: store, logicalKey, sourcePath, validate: document });
+  await repo.compareAndSet({ schema: 1, items: [] }, { expectedRevision: '0', commandId: 'request-1' });
+  const mapping = { sourcePath, logicalKey, domain: 'business-state', mediaType: 'application/json' };
+  assert.deepEqual(store.calls.find(call => call.action === 'write').options.sourceMapping, mapping);
+  await repo.readCommand('request-1');
+  assert.deepEqual(store.calls.find(call => call.action === 'readCommand').sourceMapping, mapping);
+  await repo.remove({ expectedRevision: '1', commandId: 'delete-1' });
+  assert.deepEqual(store.calls.find(call => call.action === 'remove').options.sourceMapping, mapping);
+  assert.throws(() => createJsonDocumentRepository({ stateStore: store, logicalKey, sourcePath: '../ideas.json', validate: document }), TypeError);
+  assert.throws(() => createJsonDocumentRepository({ stateStore: store, logicalKey, sourcePath: 'history/stocks.sqlite', validate: document }), TypeError);
 });

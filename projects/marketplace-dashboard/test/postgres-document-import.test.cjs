@@ -74,13 +74,21 @@ test('PostgreSQL baseline import preserves all exact bytes, reuses safely and re
   const bytes = [...entries.values()].reduce((sum, value) => sum + value.length, 0);
   const result = await importDocuments({ pool, sourceDir: backup, schema });
   assert.deepEqual(result, { inserted: 5, reused: 0, verified: 5, bytes: String(bytes), delegatedHistoryFiles: 0, cutoverReady: false });
+  assert.equal((await pool.query(`SELECT bool_and(baseline_present) AS all_baseline FROM "${schema}".source_files`)).rows[0].all_baseline, true);
   for (const [name, content] of entries) {
     const row = (await pool.query(`SELECT content FROM "${schema}".document_states WHERE logical_key=$1`, [sourceKey(name)])).rows[0];
     assert.deepEqual(row.content, content);
   }
-  assert.deepEqual(await importDocuments({ pool, sourceDir: backup, schema }), { ...result, inserted: 0, reused: 5 });
   assert.equal((await pool.query(`SELECT count(*)::text AS n FROM "${schema}".commands`)).rows[0].n, '0');
   const store = require('../storage/postgres-state.cjs').createStateStore({ pool, schema });
+  const runtimePath = 'ideas.json', runtimeKey = sourceKey(runtimePath);
+  await store.write(runtimeKey, Buffer.from('{"schema":1}'), {
+    expectedRevision: '0', commandId: crypto.randomUUID(), mediaType: 'application/json',
+    sourceMapping: { sourcePath: runtimePath, logicalKey: runtimeKey, domain: 'business-state', mediaType: 'application/json' }
+  });
+  assert.equal((await pool.query(`SELECT baseline_present FROM "${schema}".source_files WHERE source_path=$1`, [runtimePath])).rows[0].baseline_present, false);
+  assert.deepEqual(await importDocuments({ pool, sourceDir: backup, schema }), { ...result, inserted: 0, reused: 5 });
+  assert.equal((await pool.query(`SELECT count(*)::text AS n FROM "${schema}".commands`)).rows[0].n, '1');
   const changed = Buffer.from('{"items":[{"id":"new-live-record"}]}');
   await store.write(sourceKey('management.json'), changed, { expectedRevision: '1', commandId: crypto.randomUUID(), mediaType: 'application/json' });
   await assert.rejects(importDocuments({ pool, sourceDir: backup, schema }), { code: 'BASELINE_CONFLICT' });

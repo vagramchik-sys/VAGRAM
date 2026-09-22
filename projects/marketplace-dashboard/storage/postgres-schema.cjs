@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS pult.commands (
  operation text NOT NULL CHECK (operation IN ('write','delete')), logical_key text COLLATE "C" NOT NULL,
  request_hash bytea NOT NULL CHECK (octet_length(request_hash)=32),
  before_revision bigint NOT NULL CHECK (before_revision >= 0), after_revision bigint NOT NULL,
- media_type text NOT NULL, before_content bytea,
+ media_type text NOT NULL, before_media_type text, before_content bytea,
  before_sha256 bytea CHECK (before_sha256 IS NULL OR octet_length(before_sha256)=32),
  before_deleted boolean, after_content bytea,
  after_sha256 bytea CHECK (after_sha256 IS NULL OR octet_length(after_sha256)=32),
@@ -32,8 +32,12 @@ CREATE TABLE IF NOT EXISTS pult.commands (
   (after_deleted AND after_content IS NULL AND after_sha256 IS NULL)
  )
 );
+ALTER TABLE pult.commands ADD COLUMN IF NOT EXISTS before_media_type text;
 CREATE INDEX IF NOT EXISTS commands_logical_key_revision_idx ON pult.commands(logical_key,after_revision);
 INSERT INTO pult.schema_versions(version_number,description)
 VALUES(1,'Authoritative document state and durable command journal')
+ON CONFLICT(version_number) DO NOTHING;
+INSERT INTO pult.schema_versions(version_number,description)
+VALUES(2,'Durable before media type for exact command replay')
 ON CONFLICT(version_number) DO NOTHING;
 COMMIT;`;

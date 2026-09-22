@@ -18,7 +18,15 @@ const TEST_SUITES = Object.freeze({
   'json-repository': 'test/postgres-json-repository.test.cjs',
   'document-import': 'test/postgres-document-import.test.cjs',
   'write-fence': 'test/postgres-write-fence.test.cjs',
-  'stock-repository': 'test/postgres-stock-repository.test.cjs'
+  'stock-repository': 'test/postgres-stock-repository.test.cjs',
+  'market-repository': 'test/postgres-market-repository.test.cjs',
+  'document-journal': 'test/postgres-document-journal.test.cjs',
+  'document-replay': 'test/postgres-document-replay.test.cjs',
+  'b2b-queue': 'test/postgres-b2b-queue.test.cjs',
+  'b2b-runner': 'test/postgres-b2b-runner.test.cjs',
+  ideas: 'test/postgres-ideas.test.cjs',
+  procurement: 'test/postgres-procurement.test.cjs',
+  backup: 'test/postgres-backup.test.cjs'
 });
 const TEST_FILES = Object.values(TEST_SUITES);
 
@@ -64,19 +72,21 @@ async function readAdminBootstrap(filename) {
   } finally { if (Buffer.isBuffer(plaintext)) plaintext.fill(0); }
 }
 
-function runTestFile(file, connectionUrl) {
+function runTestFile(file, connectionUrl, restoreUrl) {
   return new Promise((resolve, reject) => {
     const env = { ...process.env, PULT_TEST_DATABASE_URL: connectionUrl };
+    delete env.PULT_TEST_RESTORE_DATABASE_URL;
+    if (restoreUrl) env.PULT_TEST_RESTORE_DATABASE_URL = restoreUrl;
     const child = spawn(process.execPath, ['--test', file], { cwd: ROOT, env, stdio: 'inherit', windowsHide: true });
     child.on('error', () => reject(runnerError('TEST_PROCESS_FAILED')));
     child.on('close', (code, signal) => resolve(code === 0 && !signal));
   });
 }
 
-async function writeCleanupRecord(invocationId, role, database, code) {
+async function writeCleanupRecord(invocationId, role, database, code, restoreDatabase) {
   const directory = path.join(ROOT, '.private', 'postgres-setup');
   const filename = path.join(directory, `test-cleanup-${invocationId}.json`);
-  const record = { version: 1, invocationId, role, database, code, recordedAt: new Date().toISOString() };
+  const record = { version: 1, invocationId, role, database, restoreDatabase, code, recordedAt: new Date().toISOString() };
   try { await fs.writeFile(filename, JSON.stringify(record) + '\n', { encoding: 'utf8', flag: 'wx', mode: 0o600 }); } catch {}
 }
 
@@ -93,29 +103,43 @@ async function main() {
   const invocationId = crypto.randomBytes(12).toString('hex');
   const role = `pult_test_${invocationId}`;
   const database = `pult_test_${invocationId}`;
+  const restoreDatabase = `pult_test_${invocationId}_restore`;
+  const needsRestore = selectedFiles.includes(TEST_SUITES.backup);
   const testPassword = crypto.randomBytes(36).toString('base64url');
-  let config = await readAdminBootstrap(bootstrap), adminPool, ownedRole = false, ownedDatabase = false;
+  let config = await readAdminBootstrap(bootstrap), adminPool, ownedRole = false, ownedDatabase = false, ownedRestore = false;
   let testsPassed = false, cleanupCode = null;
   try {
     adminPool = new Pool({ ...config, application_name: 'pult_test_runner', max: 1, connectionTimeoutMillis: 5000, statement_timeout: 60000 });
     const identity = await adminPool.query('SELECT current_user AS role,current_database() AS database,rolsuper,rolcreatedb,rolcreaterole FROM pg_roles WHERE rolname=current_user');
     const current = identity.rows[0];
     if (!current || current.role !== 'pult_admin' || current.database !== 'postgres' || !current.rolsuper || !current.rolcreatedb || !current.rolcreaterole) throw runnerError('ADMIN_IDENTITY_INVALID');
-    const collision = await adminPool.query('SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1) AS role_exists,EXISTS(SELECT 1 FROM pg_database WHERE datname=$2) AS database_exists', [role, database]);
+    const collision = await adminPool.query('SELECT EXISTS(SELECT 1 FROM pg_roles WHERE rolname=$1) AS role_exists,EXISTS(SELECT 1 FROM pg_database WHERE datname=ANY($2::text[])) AS database_exists', [role, [database, restoreDatabase]]);
     if (collision.rows[0].role_exists || collision.rows[0].database_exists) throw runnerError('GENERATED_NAME_COLLISION');
     await adminPool.query(`CREATE ROLE ${quoteIdentifier(role)} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION PASSWORD '${testPassword}'`);
     ownedRole = true;
     await adminPool.query(`CREATE DATABASE ${quoteIdentifier(database)} OWNER ${quoteIdentifier(role)} TEMPLATE template0 ENCODING 'UTF8'`);
     ownedDatabase = true;
+    if (needsRestore) {
+      await adminPool.query(`CREATE DATABASE ${quoteIdentifier(restoreDatabase)} OWNER ${quoteIdentifier(role)} TEMPLATE template0 ENCODING 'UTF8'`);
+      ownedRestore = true;
+    }
     const connectionUrl = new URL('postgresql://127.0.0.1/');
     connectionUrl.port = String(config.port); connectionUrl.username = role; connectionUrl.password = testPassword; connectionUrl.pathname = '/' + database;
+    const restoreUrl = new URL(connectionUrl); restoreUrl.pathname = '/' + restoreDatabase;
     testsPassed = true;
     for (const file of selectedFiles) {
-      if (!await runTestFile(file, connectionUrl.toString())) testsPassed = false;
+      if (!await runTestFile(file, connectionUrl.toString(), file === TEST_SUITES.backup ? restoreUrl.toString() : undefined)) testsPassed = false;
     }
   } finally {
     config = null;
     if (adminPool) {
+      if (ownedRestore) {
+        try {
+          await adminPool.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()', [restoreDatabase]);
+          await adminPool.query(`DROP DATABASE ${quoteIdentifier(restoreDatabase)} WITH (FORCE)`);
+          ownedRestore = false;
+        } catch { cleanupCode = 'DROP_OWNED_RESTORE_DATABASE_FAILED'; }
+      }
       if (ownedDatabase) {
         try {
           await adminPool.query('SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=$1 AND pid<>pg_backend_pid()', [database]);
@@ -123,13 +147,13 @@ async function main() {
           ownedDatabase = false;
         } catch { cleanupCode = 'DROP_OWNED_DATABASE_FAILED'; }
       }
-      if (ownedRole && !ownedDatabase) {
+      if (ownedRole && !ownedDatabase && !ownedRestore) {
         try { await adminPool.query(`DROP ROLE ${quoteIdentifier(role)}`); ownedRole = false; }
         catch { cleanupCode ||= 'DROP_OWNED_ROLE_FAILED'; }
       }
       await adminPool.end().catch(() => { cleanupCode ||= 'ADMIN_POOL_CLOSE_FAILED'; });
     }
-    if (cleanupCode) await writeCleanupRecord(invocationId, role, database, cleanupCode);
+    if (cleanupCode) await writeCleanupRecord(invocationId, role, database, cleanupCode, needsRestore ? restoreDatabase : undefined);
   }
   if (cleanupCode) throw runnerError(cleanupCode);
   if (!testsPassed) throw runnerError('POSTGRES_TESTS_FAILED');

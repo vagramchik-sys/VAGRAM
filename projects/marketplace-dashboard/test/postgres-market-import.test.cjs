@@ -35,10 +35,12 @@ class FakeDatabase {
       const item = [...this.snapshots.values()].find(row => row.storeId === values[0] && row.sha.equals(values[1]));
       const document = item && [...this.documents.values()].find(value => value.id === item.documentId);
       return { rows: item ? [{ snapshot_id: item.id, complete: item.complete, source_byte_length: item.byteLength,
-        row_digest: item.rowDigest, exact_bytes: document.bytes, document_sha256: document.sha, document_byte_length: String(document.bytes.length) }] : [] };
+        row_digest: item.rowDigest, source_metadata: item.metadata, expected_counts: item.counts, source_array_presence: item.presence,
+        exact_bytes: document.bytes, document_sha256: document.sha, document_byte_length: String(document.bytes.length) }] : [] };
     }
     if (text.includes('INSERT INTO pult_market.snapshot_versions')) {
-      this.snapshots.set(values[0], { id: values[0], storeId: values[1], documentId: values[2], sha: Buffer.from(values[3]), byteLength: values[4], complete: false });
+      this.snapshots.set(values[0], { id: values[0], storeId: values[1], documentId: values[2], sha: Buffer.from(values[3]), byteLength: values[4], complete: false,
+        metadata: JSON.parse(values[5]), counts: JSON.parse(values[6]), presence: JSON.parse(values[7]) });
       return { rows: [], rowCount: 1 };
     }
     for (const [table, width] of Object.entries(WIDTHS)) if (text.includes(`INSERT INTO pult_market.${table}`)) {
@@ -75,6 +77,10 @@ class FakeDatabase {
     if (text.includes('FROM pult_market.finance_operation_skus') && text.includes('SELECT store_id,operation_source_index')) return { rows: this.rows.get('finance_operation_skus')
       .filter(row => row.snapshotId === values[0]).sort((a, b) => a.operation_source_index - b.operation_source_index || a.item_index - b.item_index || a.sku.localeCompare(b.sku))
       .slice(values[1], values[1] + values[2]) };
+    if (text.includes('SET source_array_presence=')) {
+      this.snapshots.get(values[0]).presence = JSON.parse(values[1]);
+      return { rows: [], rowCount: 1 };
+    }
     if (text.includes('UPDATE pult_market.snapshot_versions SET')) {
       this.snapshots.get(values[0]).complete = true;
       this.snapshots.get(values[0]).rowDigest = Buffer.from(values[2]);

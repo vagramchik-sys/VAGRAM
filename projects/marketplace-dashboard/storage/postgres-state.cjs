@@ -1,7 +1,9 @@
 'use strict';
 
 const crypto = require('node:crypto');
+const path = require('node:path');
 const { acquireMutationFence } = require('./postgres-write-fence.cjs');
+const { classify } = require('./source-inventory.cjs');
 
 const DEFAULT_MAX_PAYLOAD_BYTES = 320 * 1024 * 1024;
 
@@ -60,6 +62,22 @@ function requestHash(operation, key, expectedRevision, mediaType, content) {
   return hash.digest();
 }
 const contentHash = content => crypto.createHash('sha256').update(content).digest();
+const EMPTY_SHA256 = contentHash(Buffer.alloc(0));
+function validateSourceMapping(value, key, mediaType) {
+  if (value == null) return null;
+  if (!value || typeof value !== 'object' || Array.isArray(value) || typeof value.sourcePath !== 'string')
+    fail('INVALID_ARGUMENT', 'sourceMapping is invalid');
+  let classification;
+  try { classification = classify(value.sourcePath); } catch { fail('INVALID_ARGUMENT', 'sourceMapping path is invalid'); }
+  const expectedKey = 'file/' + crypto.createHash('sha256').update(Buffer.from(value.sourcePath, 'utf8')).digest('hex');
+  const expectedMedia = ({ '.json': 'application/json', '.jsonl': 'application/x-ndjson', '.dpapi': 'application/vnd.pult.dpapi',
+    '.pdf': 'application/pdf', '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', '.png': 'image/png',
+    '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg' })[path.extname(value.sourcePath).toLowerCase()] || 'application/octet-stream';
+  if (classification.kind !== 'runtime' || ['history', 'archive-content'].includes(classification.domain) || value.logicalKey !== key ||
+      expectedKey !== key || value.domain !== classification.domain || value.mediaType !== mediaType || expectedMedia !== mediaType)
+    fail('INVALID_ARGUMENT', 'sourceMapping does not match the document identity');
+  return { sourcePath: value.sourcePath, logicalKey: key, domain: classification.domain, mediaType };
+}
 
 function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX_PAYLOAD_BYTES } = {}) {
   if (!pool || typeof pool.query !== 'function' || typeof pool.connect !== 'function')
@@ -121,24 +139,61 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
     return (result.rows || []).map(row => project(row, includeContent));
   }
 
+  async function readCommand(logicalKey, commandId, { operation, sourceMapping } = {}) {
+    const key = validateKey(logicalKey), id = validateCommandId(commandId);
+    if (!['write', 'delete'].includes(operation)) fail('INVALID_ARGUMENT', 'operation must be write or delete');
+    const row = first(await query(
+      `SELECT command_id::text AS command_id,operation,logical_key,request_hash,
+              before_revision::text AS before_revision,after_revision::text AS after_revision,
+              media_type,before_media_type,before_content,before_sha256,before_deleted,
+              after_content,after_sha256,after_deleted,committed_at
+         FROM ${table('commands')} WHERE command_id=$1`, [id]
+    ));
+    if (!row) return null;
+    if (row.logical_key !== key || row.operation !== operation)
+      fail('COMMAND_ID_REUSED', 'commandId was already used for a different key or operation');
+    const mapping = validateSourceMapping(sourceMapping, key, String(row.media_type));
+    if (mapping) {
+      const mappedRows = await query(`SELECT source_path,logical_key,domain,media_type,baseline_present FROM ${table('source_files')} WHERE source_path=$1 OR logical_key=$2`, [mapping.sourcePath, key]);
+      const mapped = first(mappedRows);
+      if (mappedRows.rows.length !== 1 || mapped.source_path !== mapping.sourcePath || mapped.logical_key !== key || mapped.domain !== mapping.domain || mapped.media_type !== mapping.mediaType)
+        fail('SOURCE_MAPPING_MISSING', 'Runtime source mapping is missing or conflicts with the command');
+    }
+    const record = (revision, mediaType, content, sha256, deleted) => ({
+      revision: String(revision),
+      mediaType: mediaType == null ? null : String(mediaType),
+      content: content == null ? null : Buffer.from(content),
+      sha256: sha256 == null ? null : Buffer.from(sha256),
+      deleted: deleted == null ? null : Boolean(deleted)
+    });
+    return {
+      commandId: String(row.command_id), operation: row.operation, logicalKey: row.logical_key,
+      requestHash: Buffer.from(row.request_hash), committedAt: row.committed_at,
+      before: record(row.before_revision, row.before_media_type, row.before_content, row.before_sha256, row.before_deleted),
+      after: record(row.after_revision, row.media_type, row.after_content, row.after_sha256, row.after_deleted)
+    };
+  }
+
   async function mutate(operation, logicalKey, content, options = {}) {
     const key = validateKey(logicalKey);
     const commandId = validateCommandId(options.commandId);
     const expectedRevision = validateRevision(options.expectedRevision);
     const mediaType = validateMediaType(options.mediaType || 'application/octet-stream');
+    const sourceMapping = validateSourceMapping(options.sourceMapping, key, mediaType);
     const body = operation === 'write' ? validateContent(content, maxPayloadBytes) : null;
     const sha256 = body && contentHash(body);
     const fingerprint = requestHash(operation, key, expectedRevision, mediaType, body);
     let client;
     let transactionOpen = false;
     let duringCommit = false;
+    let destroyClient = false;
     try {
       client = await pool.connect();
       await client.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
       transactionOpen = true;
       await acquireMutationFence(client);
 
-      const locks = [`command:${commandId}`, `key:${key}`].sort();
+      const locks = [`command:${commandId}`, `key:${key}`, ...(sourceMapping ? [`source:${sourceMapping.sourcePath}`] : [])].sort();
       for (const lock of locks)
         await client.query('SELECT pg_advisory_xact_lock(hashtextextended($1, 0))', [lock]);
 
@@ -149,6 +204,12 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
       if (recorded) {
         if (!Buffer.from(recorded.request_hash).equals(fingerprint))
           fail('COMMAND_ID_REUSED', 'commandId was already used for a different request');
+        if (sourceMapping) {
+          const mappedRows = await client.query(`SELECT source_path,logical_key,domain,media_type,baseline_present FROM ${table('source_files')} WHERE source_path=$1 OR logical_key=$2 FOR UPDATE`, [sourceMapping.sourcePath, key]);
+          const mapped = first(mappedRows);
+          if (mappedRows.rows.length !== 1 || mapped.source_path !== sourceMapping.sourcePath || mapped.logical_key !== key || mapped.domain !== sourceMapping.domain || mapped.media_type !== sourceMapping.mediaType)
+            fail('SOURCE_MAPPING_MISSING', 'Runtime source mapping is missing or conflicts with the command');
+        }
         duringCommit = true;
         await client.query('COMMIT');
         transactionOpen = false;
@@ -162,6 +223,15 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
       const actualRevision = before ? String(before.revision) : '0';
       if (actualRevision !== expectedRevision)
         fail('REVISION_CONFLICT', 'expectedRevision does not match current revision');
+      let insertMapping = false;
+      if (sourceMapping) {
+        const mappedRows = await client.query(`SELECT source_path,logical_key,domain,media_type,baseline_present FROM ${table('source_files')} WHERE source_path=$1 OR logical_key=$2 FOR UPDATE`, [sourceMapping.sourcePath, key]);
+        const mapped = first(mappedRows);
+        if (mappedRows.rows.length > 1 || mapped && (mapped.source_path !== sourceMapping.sourcePath || mapped.logical_key !== key || mapped.domain !== sourceMapping.domain || mapped.media_type !== sourceMapping.mediaType))
+          fail('SOURCE_MAPPING_CONFLICT', 'Runtime source mapping conflicts with existing provenance');
+        if (!mapped && actualRevision !== '0') fail('SOURCE_MAPPING_MISSING', 'An existing document has no verified source mapping');
+        insertMapping = !mapped;
+      }
       const afterRevision = (BigInt(actualRevision) + 1n).toString();
 
       await client.query(
@@ -173,12 +243,18 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
            revision=EXCLUDED.revision,deleted=EXCLUDED.deleted,modified_at=EXCLUDED.modified_at`,
         [key, mediaType, body, sha256, afterRevision, operation === 'delete']
       );
+      if (insertMapping) await client.query(
+        `INSERT INTO ${table('source_files')}(source_path,logical_key,domain,media_type,source_bytes,source_sha256,baseline_present)
+         VALUES($1,$2,$3,$4,0,$5,false)`,
+        [sourceMapping.sourcePath, key, sourceMapping.domain, sourceMapping.mediaType, EMPTY_SHA256]
+      );
       await client.query(
         `INSERT INTO ${table('commands')}
-           (command_id,operation,logical_key,request_hash,before_revision,after_revision,media_type,
+           (command_id,operation,logical_key,request_hash,before_revision,after_revision,media_type,before_media_type,
             before_content,before_sha256,before_deleted,after_content,after_sha256,after_deleted)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [commandId, operation, key, fingerprint, actualRevision, afterRevision, mediaType,
+          before?.media_type == null ? null : String(before.media_type),
           before?.content == null ? null : Buffer.from(before.content),
           before?.sha256 == null ? null : Buffer.from(before.sha256),
           before ? Boolean(before.deleted) : null, body, sha256, operation === 'delete']
@@ -188,17 +264,19 @@ function createStateStore({ pool, schema = 'pult', maxPayloadBytes = DEFAULT_MAX
       transactionOpen = false;
       return { revision: afterRevision, replayed: false };
     } catch (error) {
+      destroyClient = duringCommit;
       if (transactionOpen && client) {
-        try { await client.query('ROLLBACK'); } catch {}
+        try { await client.query('ROLLBACK'); } catch { destroyClient = true; }
       }
       throw wrapDatabaseError(error, duringCommit);
     } finally {
-      if (client) client.release();
+      if (client) { try { client.release(destroyClient); } catch {} }
     }
   }
 
   return Object.freeze({
     read,
+    readCommand,
     list,
     write: (key, content, options) => mutate('write', key, content, options),
     remove: (key, options) => mutate('delete', key, null, options)

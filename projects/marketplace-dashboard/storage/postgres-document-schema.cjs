@@ -7,8 +7,10 @@ CREATE TABLE IF NOT EXISTS pult.source_files (
  domain text NOT NULL, media_type text NOT NULL,
  source_bytes bigint NOT NULL CHECK(source_bytes>=0),
  source_sha256 bytea NOT NULL CHECK(octet_length(source_sha256)=32),
+ baseline_present boolean NOT NULL DEFAULT true,
  imported_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
+ALTER TABLE pult.source_files ADD COLUMN IF NOT EXISTS baseline_present boolean NOT NULL DEFAULT true;
 COMMENT ON TABLE pult.source_files IS
- 'Verified file checkpoint provenance. Initial bytes live in document_states; runtime revisions must not be overwritten by baseline imports. Market facts are normalized separately.';
+ 'Verified file checkpoint provenance and atomic runtime path identity. baseline_present=false marks a document created after the checkpoint. Market facts are normalized separately.';
 COMMIT;`;
