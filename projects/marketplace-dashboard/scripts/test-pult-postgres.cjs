@@ -9,6 +9,7 @@ const { Pool } = require('pg');
 const ROOT = path.resolve(__dirname, '..');
 const DEFAULT_BOOTSTRAP = path.join(ROOT, '.private', 'postgres-setup', 'admin.dpapi');
 const TEST_SUITES = Object.freeze({
+  xway: 'test/postgres-xway.test.cjs',
   'archive-repository': 'test/postgres-archive-repository.test.cjs',
   'history-import': 'test/postgres-history-import.test.cjs',
   'history-repository': 'test/postgres-history-repository.test.cjs',
@@ -197,7 +198,7 @@ async function main() {
     const restrictedUrl = new URL(connectionUrl); restrictedUrl.username = appRole; restrictedUrl.password = appPassword;
     testsPassed = true;
     for (const file of selectedFiles) {
-      const needsRestricted = [TEST_SUITES.state, TEST_SUITES['state-batch'], TEST_SUITES['market-writer'], TEST_SUITES['finance-documents'], TEST_SUITES['finance-document-routes'], TEST_SUITES['source-providers'], TEST_SUITES['store-commands'], TEST_SUITES['live-repository']].includes(file);
+      const needsRestricted = [TEST_SUITES.xway, TEST_SUITES.state, TEST_SUITES['state-batch'], TEST_SUITES['market-writer'], TEST_SUITES['finance-documents'], TEST_SUITES['finance-document-routes'], TEST_SUITES['source-providers'], TEST_SUITES['store-commands'], TEST_SUITES['live-repository']].includes(file);
       if (!await runTestFile(file, connectionUrl.toString(), file === TEST_SUITES.backup ? restoreUrl.toString() : undefined, needsRestricted ? restrictedUrl.toString() : undefined)) testsPassed = false;
     }
   } finally {

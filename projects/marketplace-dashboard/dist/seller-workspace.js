@@ -32,6 +32,9 @@
       ['Воронка по товарам', '/?view=funnel'],
       ['Падение продаж', '/?view=sales-decline']
     ]],
+    ['xway', 'XWAY', [
+      ['Реклама · проверенные данные', '/xway.html']
+    ]],
     ['purchases', 'Закупки', [
       ['Закупки B2B', '/procurement.html'],
       ['Поставщики', '/suppliers.html']

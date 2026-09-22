@@ -18,7 +18,7 @@ const READ_ROUTES = Object.freeze({
 });
 
 const ROUTE_CAPABILITIES = Object.freeze({
-  '/api/stores': 'core', '/api/data': 'core',
+  '/api/stores': 'core', '/api/data': 'core', '/api/xway': 'xway-read',
   '/api/manage': 'owner', '/api/manage/preview': 'owner', '/api/manage/drafts': 'owner', '/api/manage/transition': 'owner', '/api/manage/note': 'owner',
   '/api/finance': 'owner', '/api/finance/loans': 'owner', '/api/finance/payments': 'owner',
   '/api/suppliers': 'owner', '/api/suppliers/preview': 'owner', '/api/suppliers/category': 'owner', '/api/suppliers/portal': 'owner',
@@ -34,6 +34,7 @@ const ROUTE_CAPABILITIES = Object.freeze({
 });
 const BACKGROUND_CAPABILITIES = Object.freeze({ schedulerExecution: 'scheduler-runner', periodicAttempts: 'cadence-producer', marketSnapshots: 'market-acquisition', costsAndPrices: 'costs-prices', orders: 'insights-orders', funnel: 'insights-funnel', wbOrders: 'wb-orders-acquisition', intradayCapture: 'intraday-writer', categoryCapture: 'category-writer' });
 const HANDLER_GROUPS = Object.freeze({
+  'xway-read': ['xway-read'],
   'store-commands': ['store-commands'],
   'finance-documents': ['finance-documents'],
   'partner-tools': ['partner-tools'],

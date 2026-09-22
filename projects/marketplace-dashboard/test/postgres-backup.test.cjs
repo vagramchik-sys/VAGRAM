@@ -47,6 +47,7 @@ test('restore target name must be explicitly disposable', async t => {
 test('legacy manifests without a schema list retain the original three-schema scope',()=>{
   assert.deepEqual(_test.manifestSchemas({}),['pult','pult_history','pult_market']);
   assert.deepEqual(_test.manifestSchemas({schemas:['pult','pult_live']}),['pult','pult_live']);
+  assert.deepEqual(_test.manifestSchemas({schemas:['pult','pult_xway']}),['pult','pult_xway']);
   assert.throws(()=>_test.manifestSchemas({schemas:['pult','unknown']}),error=>error.code==='BACKUP_INVALID');
 });
 
@@ -73,13 +74,15 @@ test('PostgreSQL integration: custom dump restores with exact rows, keys and cat
   try {
     const schemaCount = async pool => Number((await pool.query(
       'SELECT count(*)::integer AS count FROM pg_namespace WHERE nspname=ANY($1::text[])',
-      [['pult', 'pult_history', 'pult_market','pult_live']]
+      [['pult', 'pult_history', 'pult_market','pult_live','pult_xway']]
     )).rows[0].count);
     assert.equal(await schemaCount(sourcePool), 0, 'source test database must not contain Pult schemas');
     assert.equal(await schemaCount(restorePool), 0, 'restore test database must not contain Pult schemas');
     sourceCleanupAuthorized = true;
     targetCleanupAuthorized = true;
-    await sourcePool.query(`CREATE SCHEMA pult; CREATE SCHEMA pult_history; CREATE SCHEMA pult_market;
+    await sourcePool.query(`CREATE SCHEMA pult; CREATE SCHEMA pult_history; CREATE SCHEMA pult_market; CREATE SCHEMA pult_xway;
+      CREATE TABLE pult_xway.observed_settings(account_key text NOT NULL,setting_key text NOT NULL,value text,observed_at timestamptz NOT NULL,PRIMARY KEY(account_key,setting_key));
+      INSERT INTO pult_xway.observed_settings VALUES('synthetic','connection','verified','2026-09-22T00:00:00Z');
       CREATE TABLE pult.commands(sequence bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,payload bytea NOT NULL);
       CREATE TABLE pult_history.parent("camelCaseId" bigint PRIMARY KEY,amount numeric(40,12) NOT NULL);
       CREATE TABLE pult_history.child(id bigint PRIMARY KEY,parent_id bigint NOT NULL REFERENCES pult_history.parent("camelCaseId"),note text);
@@ -105,7 +108,8 @@ test('PostgreSQL integration: custom dump restores with exact rows, keys and cat
     assert.equal(manifest.rollbackReady, false);
     assert.equal(manifest.upperSequence, '1');
     assert.equal(manifest.digestFormatVersion, _test.DIGEST_FORMAT_VERSION);
-    assert.deepEqual(manifest.schemas,['pult','pult_history','pult_market','pult_live']);
+    assert.deepEqual(manifest.schemas,['pult','pult_history','pult_market','pult_live','pult_xway']);
+    assert.deepEqual(manifest.tables.filter(table=>table.schema==='pult_xway').map(table=>table.table),['observed_settings']);
     const liveTables=['commands','facts','heads','incoming_rows','record_journal','scheduler_commands','scheduler_head','scheduler_jobs','scheduler_requests'];
     assert.deepEqual(manifest.tables.filter(table=>table.schema==='pult_live').map(table=>table.table),liveTables);
     assert.ok(manifest.constraints.some(item=>item.schema==='pult_live'&&item.table==='facts'));
@@ -136,6 +140,7 @@ test('PostgreSQL integration: custom dump restores with exact rows, keys and cat
     const result = await verifyRestore({ pool: restorePool, connection: target, binaryDirectory: BIN, backupDir: backup });
     assert.equal(result.verified, true);
     assert.equal(result.rollbackReady, false);
+    assert.deepEqual((await restorePool.query('SELECT account_key,setting_key,value FROM pult_xway.observed_settings')).rows,[{account_key:'synthetic',setting_key:'connection',value:'verified'}]);
     assert.equal((await restorePool.query('SELECT count(*)::text AS count FROM pult_market.duplicates')).rows[0].count, '2');
     assert.equal((await restorePool.query('SELECT count(*)::text AS count FROM pult_live.facts')).rows[0].count,'1');
     assert.equal((await restorePool.query('SELECT count(*)::text AS count FROM pult_live.record_journal')).rows[0].count,'1');
@@ -162,8 +167,8 @@ test('PostgreSQL integration: custom dump restores with exact rows, keys and cat
       assert.equal(changed.keySha256, largeTable.keySha256, 'non-corrupted primary key digest must remain stable');
     } finally { corruptedClient.release(); }
   } finally {
-    if (sourceCleanupAuthorized) await sourcePool.query('DROP SCHEMA IF EXISTS pult_live,pult_market,pult_history,pult CASCADE').catch(() => {});
-    if (targetCleanupAuthorized) await restorePool.query('DROP SCHEMA IF EXISTS pult_live,pult_market,pult_history,pult CASCADE').catch(() => {});
+    if (sourceCleanupAuthorized) await sourcePool.query('DROP SCHEMA IF EXISTS pult_xway,pult_live,pult_market,pult_history,pult CASCADE').catch(() => {});
+    if (targetCleanupAuthorized) await restorePool.query('DROP SCHEMA IF EXISTS pult_xway,pult_live,pult_market,pult_history,pult CASCADE').catch(() => {});
     await sourcePool.end();
     await restorePool.end();
   }
