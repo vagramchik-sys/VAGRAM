@@ -165,6 +165,32 @@ test('category snapshots use bounded parallel SQL reads and preserve source orde
   assert.equal(requestedEntities.every(value => JSON.stringify(value) === JSON.stringify(['records', 'productOrders', 'report.coverage.sources'])), true);
 });
 
+test('category snapshots reuse immutable verified source rows until the SQL head changes', async () => {
+  const sourcePath = 'buyer-order-segments-2026-09-22_2026-09-22.json';
+  let revision = 1, reads = 0;
+  const providers = createLiveSourceProviders({sources: {
+    identity() { return {}; },
+    async listSources() { return [{sourcePath, head: {revision}}]; },
+    async record() {
+      reads++;
+      return data(revision, {
+        records: [{market: 'Ozon', units: revision}], productOrders: [],
+        report: {coverage: {sources: []}}
+      });
+    }
+  }});
+  const options = {from: '2026-09-22', to: '2026-09-22'};
+  const first = await providers.getSnapshots(options), cached = await providers.getSnapshots(options);
+  assert.equal(reads, 1);
+  assert.equal(cached[0], first[0]);
+  assert.throws(() => { cached[0].records[0].units = 99; }, TypeError);
+  revision = 2;
+  const refreshed = await providers.getSnapshots(options);
+  assert.equal(reads, 2);
+  assert.equal(refreshed[0].records[0].units, 2);
+  assert.notEqual(refreshed[0], first[0]);
+});
+
 test('category SQL concurrency limit is global across simultaneous source groups', async () => {
   const entries = {};
   for (let index = 1; index <= 4; index++) {

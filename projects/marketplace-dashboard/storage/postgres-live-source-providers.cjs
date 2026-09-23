@@ -9,6 +9,8 @@ const STORE = /^(?:wb-)?[0-9]+$/u;
 const DAY = /^\d{4}-\d{2}-\d{2}$/u;
 const HASH = /^[a-f0-9]{64}$/u;
 const BUYER = /^buyer-(order-segments|product-segments)-(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})(?:-retry-(\d+))?(\.partial)?\.json$/u;
+const MAX_SNAPSHOT_CACHE_ROWS = 500000;
+const MAX_SNAPSHOT_CACHE_ENTRIES = 8;
 const clone = value => value == null ? value : structuredClone(value);
 const validDay = value => {
   if (typeof value !== 'string' || !DAY.test(value)) return false;
@@ -24,8 +26,35 @@ function createLiveSourceProviders({sources} = {}) {
   }
 
   // Share only active reads. A later request always observes a fresh SQL head.
-  const inFlight = new Map(), bulkWaiters = [];
+  const inFlight = new Map(), bulkWaiters = [], snapshotCache = new Map();
   let bulkActive = 0;
+  let snapshotCacheRows = 0;
+  function freezeSnapshot(value) {
+    if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+      for (const child of Object.values(value)) freezeSnapshot(child);
+      Object.freeze(value);
+    }
+    return value;
+  }
+  function cacheSnapshot(sourcePath, row) {
+    const revision = String(row.revision ?? '');
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(revision)) fail('CORRUPT_SOURCE', 'Live buyer source revision is invalid');
+    const value = row.value;
+    const cost = (Array.isArray(value.records) ? value.records.length : 0) +
+      (Array.isArray(value.productOrders) ? value.productOrders.length : 0);
+    if (cost > MAX_SNAPSHOT_CACHE_ROWS) return value;
+    const previous = snapshotCache.get(sourcePath);
+    if (previous) { snapshotCacheRows -= previous.cost; snapshotCache.delete(sourcePath); }
+    const immutable = freezeSnapshot(value);
+    snapshotCache.set(sourcePath, {revision, value: immutable, cost});
+    snapshotCacheRows += cost;
+    while (snapshotCache.size > MAX_SNAPSHOT_CACHE_ENTRIES || snapshotCacheRows > MAX_SNAPSHOT_CACHE_ROWS) {
+      const oldest = snapshotCache.keys().next().value, removed = snapshotCache.get(oldest);
+      snapshotCacheRows -= removed.cost;
+      snapshotCache.delete(oldest);
+    }
+    return immutable;
+  }
   async function shared(key, read) {
     let pending = inFlight.get(key);
     if (!pending) {
@@ -67,14 +96,14 @@ function createLiveSourceProviders({sources} = {}) {
     else bulkActive--;
   }
 
-  async function readMany(paths, entities) {
+  async function readMany(paths, entities, reader = read) {
     const rows = new Array(paths.length);
     let next = 0;
     async function worker() {
       while (next < paths.length) {
         const index = next++;
         await acquireBulkRead();
-        try { rows[index] = await read(paths[index], entities); }
+        try { rows[index] = await reader(paths[index], entities); }
         finally { releaseBulkRead(); }
       }
     }
@@ -188,12 +217,23 @@ function createLiveSourceProviders({sources} = {}) {
 
   async function getSnapshots(options = {}) {
     const ranged = options.from !== undefined || options.to !== undefined, requested = ranged ? period(options) : null, result = [];
-    const paths = (await buyerNames('order-segments')).filter(path => {
-      const match = BUYER.exec(path);
-      return match[4] === undefined && (!requested || match[2] <= requested.to && match[3] >= requested.from);
-    }).sort();
-    const rows = await readMany(paths, ['records', 'productOrders', 'report.coverage.sources']);
-    for (const row of rows) if (row) result.push(clone(row.value));
+    const selected = (await names()).filter(row => {
+      const match = BUYER.exec(row.sourcePath);
+      return match && match[1] === 'order-segments' && match[4] === undefined && (!requested || match[2] <= requested.to && match[3] >= requested.from);
+    }).sort((left, right) => left.sourcePath.localeCompare(right.sourcePath));
+    const rows = await readMany(selected, ['records', 'productOrders', 'report.coverage.sources'], async entry => {
+      const revision = String(entry.head?.revision ?? '');
+      if (!/^(?:0|[1-9][0-9]*)$/u.test(revision)) fail('CORRUPT_SOURCE', 'Live buyer source revision is invalid');
+      const cached = snapshotCache.get(entry.sourcePath);
+      if (cached?.revision === revision) {
+        snapshotCache.delete(entry.sourcePath);
+        snapshotCache.set(entry.sourcePath, cached);
+        return cached.value;
+      }
+      const row = await read(entry.sourcePath, ['records', 'productOrders', 'report.coverage.sources']);
+      return row ? cacheSnapshot(entry.sourcePath, row) : null;
+    });
+    for (const value of rows) if (value) result.push(value);
     return result;
   }
 

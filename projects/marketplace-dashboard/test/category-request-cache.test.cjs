@@ -6,7 +6,7 @@ const source=fs.readFileSync(require.resolve('../dist/turnover-chart.js'),'utf8'
 const flush=()=>new Promise(resolve=>setImmediate(()=>setImmediate(resolve)));
 function runtime(load,options={}){
  const nodes=new Map();
- const node=id=>{if(!nodes.has(id))nodes.set(id,{id,value:id==='ins-chart-metric'?'orderedRevenue':'',checked:false,hidden:false,innerHTML:'',textContent:'',insertAdjacentHTML(){},setAttribute(){},removeAttribute(){},closest(){return this}});return nodes.get(id)};
+ const node=id=>{if(!nodes.has(id))nodes.set(id,{id,value:id==='ins-chart-metric'?'orderedRevenue':'',checked:false,hidden:false,_innerHTML:'',innerHTMLWrites:0,get innerHTML(){return this._innerHTML},set innerHTML(value){this._innerHTML=value;this.innerHTMLWrites++},textContent:'',insertAdjacentHTML(){},setAttribute(){},removeAttribute(){},closest(){return this}});return nodes.get(id)};
  let calls=0;
  class Clock extends Date {constructor(...args){super(...(args.length?args:['2026-09-20T12:00:00Z']))}static now(){return Date.parse('2026-09-20T12:00:00Z')}}
  const context={document:{getElementById:node},window:{},Intl,Date:Clock,URLSearchParams,Promise,Map,Set,console};
@@ -84,6 +84,14 @@ test('choosing a child replaces its selected parent and search keeps the matchin
  app.node('chart-category-options').onchange({target:{type:'checkbox',value:'mesh',checked:true}});await flush();assert.match(app.node('chart-category-options').innerHTML,/value="mesh" checked/);
  app.node('chart-category-options').onchange({target:{type:'checkbox',value:'rodent',checked:true}});await flush();assert.doesNotMatch(app.node('chart-category-options').innerHTML,/value="mesh" checked/);assert.match(app.node('chart-category-options').innerHTML,/value="rodent" checked/);
  app.node('chart-category-search').value='грызунов';app.node('chart-category-search').oninput();assert.match(app.node('chart-category-options').innerHTML,/Сетки/);assert.match(app.node('chart-category-options').innerHTML,/Сетка от грызунов/);assert.doesNotMatch(app.node('chart-category-options').innerHTML,/Сетка штукатурная/);
+});
+
+test('choosing a category redraws controls once and keeps the unchanged table DOM',async()=>{
+ const app=runtime(()=>Promise.resolve(empty));app.update('2026-09-19');await flush();
+ const optionsWrites=app.node('chart-category-options').innerHTMLWrites,tableWrites=app.node('chart-category-tables').innerHTMLWrites;
+ app.node('chart-category-options').onchange({target:{type:'checkbox',value:'Перчатки',checked:true}});await flush();
+ assert.equal(app.node('chart-category-options').innerHTMLWrites,optionsWrites+1);
+ assert.equal(app.node('chart-category-tables').innerHTMLWrites,tableWrites,'the report did not change, so the large table stays mounted');
 });
 
 test('four category levels expand to separate product rows without inventing taxonomy nodes',async()=>{

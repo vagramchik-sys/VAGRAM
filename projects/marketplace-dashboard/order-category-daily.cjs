@@ -70,18 +70,30 @@ function build(data, options = {}) {
   if (storeId && !stores.has(storeId)) throw Error('Магазин не найден в каталоге заказов');
   const scope = [...stores.values()].filter(store => (!storeId || store.storeId === storeId) && (market === 'all' || store.market === market));
   const days = []; for (let value = from; value <= to; value = shift(value, 1)) days.push(value);
-  const canonical = latestProductOrders(data.snapshots), canonicalRowsByStoreDay = new Map(), today = moscowDay(options.now || Date.now());
+  const canonical = latestProductOrders(data.snapshots), canonicalRowsByStoreDay = new Map(), sourcesByScheme = new Map(), today = moscowDay(options.now || Date.now());
   for (const row of canonical.rows) {
     const date = moscowDay(row.orderedAt); if (!date) continue;
     const key = [row.market, row.storeId, date].join('\u001f'), rows = canonicalRowsByStoreDay.get(key);
     if (rows) rows.push(row); else canonicalRowsByStoreDay.set(key, [row]);
   }
-  const events = new Map(), productEvents = new Map(), orderedProducts = new Map(), coverage = [], missingProducts = new Map();
+  for (const source of canonical.coverage) {
+    const key = [source?.market, source?.storeId, source?.scheme].join('\u001f'), sources = sourcesByScheme.get(key);
+    if (sources) sources.push(source); else sourcesByScheme.set(key, [source]);
+  }
+  const events = new Map(), productEvents = new Map(), orderedProducts = new Map(), coverage = [], coverageByMarketDay = new Map(), coverageByStoreDay = new Map(), missingProducts = new Map();
+  const recordCoverage = item => {
+    coverage.push(item);
+    const marketDay = [item.market, item.date].join('\u001f'), relevant = coverageByMarketDay.get(marketDay);
+    if (relevant) relevant.push(item); else coverageByMarketDay.set(marketDay, [item]);
+    coverageByStoreDay.set([item.market, item.storeId, item.date].join('\u001f'), item);
+  };
   const add = (store, date, source, raw) => {
-    const key = [store.market, store.storeId, date].join('\u001f'); if (!events.has(key)) events.set(key, []);
+    const key = [store.market, store.storeId, date].join('\u001f'); if (!events.has(key)) events.set(key, new Map());
     const alias = store.aliases.get(String(raw.productId));
     if (!alias?.typeId) { missingProducts.set(key, checkedSum([missingProducts.get(key) || 0, raw.units], 'units')); return; }
-    events.get(key).push({ typeId: alias.typeId, units: raw.units, amountRub: raw.amountRub, source, productKey: alias.productKey });
+    const byType = events.get(key), rows = byType.get(alias.typeId);
+    const event = { typeId: alias.typeId, units: raw.units, amountRub: raw.amountRub, source, productKey: alias.productKey };
+    if (rows) rows.push(event); else byType.set(alias.typeId, [event]);
     if (!productEvents.has(key)) productEvents.set(key, new Map());
     const daily = productEvents.get(key), previous = daily.get(alias.productKey), amountKnown = raw.amountRub !== null;
     daily.set(alias.productKey, { units: checkedSum([previous?.units || 0, raw.units], 'units'), amountRub: checkedSum([previous?.amountRub || 0, amountKnown ? raw.amountRub : 0], 'revenue'), amountKnown: (previous?.amountKnown ?? true) && amountKnown });
@@ -90,37 +102,39 @@ function build(data, options = {}) {
   for (const store of scope) for (const date of days) {
     const key = [store.market, store.storeId, date].join('\u001f'), schemes = expectedSchemes(store.market);
     const rows = canonicalRowsByStoreDay.get(key) || [];
-    const schemeSourceCoverage = schemes.map(scheme => canonical.coverage.some(source => source.market === store.market && source.storeId === store.storeId && source.scheme === scheme && sourceCovers(source, date)));
+    const schemeSourceCoverage = schemes.map(scheme => (sourcesByScheme.get([store.market, store.storeId, scheme].join('\u001f')) || []).some(source => source.market === store.market && source.storeId === store.storeId && source.scheme === scheme && sourceCovers(source, date)));
     const schemeCoverage = schemes.map((scheme,index) => { const evidenceKey = [store.market, store.storeId, scheme, date].join('\u001f');return schemeSourceCoverage[index]&&(!canonical.orderEvidence.has(evidenceKey)||canonical.productEvidence.has(evidenceKey)); });
     const canonicalEvidence = schemes.some(scheme => canonical.orderEvidence.has([store.market, store.storeId, scheme, date].join('\u001f')));
     if (rows.length || schemeSourceCoverage.some(Boolean) && !canonicalEvidence) {
       for (const row of rows) { const units = safeUnits(row.units); if (units) add(store, date, 'canonical-orders', { productId: row.productId, units, amountRub: safeAmount(row.amountRub) }); }
-      coverage.push({ date, storeId: store.storeId, market: store.market, source: 'canonical-orders', complete: schemeCoverage.every(Boolean), observed: rows.length > 0 || !canonicalEvidence, schemes: Object.fromEntries(schemes.map((scheme, index) => [scheme, schemeCoverage[index]])) });
+      recordCoverage({ date, storeId: store.storeId, market: store.market, source: 'canonical-orders', complete: schemeCoverage.every(Boolean), observed: rows.length > 0 || !canonicalEvidence, schemes: Object.fromEntries(schemes.map((scheme, index) => [scheme, schemeCoverage[index]])) });
       continue;
     }
     if (date !== today && schemeSourceCoverage.some(Boolean)) {
-      coverage.push({ date, storeId: store.storeId, market: store.market, source: 'canonical-orders', complete: false, observed: false, schemes: Object.fromEntries(schemes.map((scheme, index) => [scheme, schemeCoverage[index]])) });
+      recordCoverage({ date, storeId: store.storeId, market: store.market, source: 'canonical-orders', complete: false, observed: false, schemes: Object.fromEntries(schemes.map((scheme, index) => [scheme, schemeCoverage[index]])) });
       continue;
     }
     if (date === today && store.market === 'Ozon') {
       const insight = data.insights?.[store.storeId], orders = insight?.orders, fresh = orders?.skuDailyCoverage === true && freshForDay(orders.skuUpdatedAt, date) && Array.isArray(orders.skuDaily);
       if (fresh) for (const row of orders.skuDaily.filter(item => item.date === date)) { const units = safeUnits(row.units); if (units) add(store, date, 'ozon-sku-today', { productId: row.sku, units, amountRub: safeAmount(row.revenue) }); }
-      coverage.push({ date, storeId: store.storeId, market: store.market, source: fresh ? 'ozon-sku-today' : 'unavailable', complete: fresh, schemes: { aggregateAnalytics: fresh } }); continue;
+      recordCoverage({ date, storeId: store.storeId, market: store.market, source: fresh ? 'ozon-sku-today' : 'unavailable', complete: fresh, schemes: { aggregateAnalytics: fresh } }); continue;
     }
     if (date === today && store.market === 'WB') {
       const state = data.wbOrders?.[store.storeId], fresh = state?.complete === true && state.day === date && Array.isArray(state.orders);
       if (fresh) for (const row of state.orders) { const units = 1; add(store, date, 'wb-orders-today', { productId: row.nmId, units, amountRub: safeAmount(row.amount) }); }
-      coverage.push({ date, storeId: store.storeId, market: store.market, source: fresh ? 'wb-orders-today' : 'unavailable', complete: fresh, schemes: { ordersSnapshot: fresh } }); continue;
+      recordCoverage({ date, storeId: store.storeId, market: store.market, source: fresh ? 'wb-orders-today' : 'unavailable', complete: fresh, schemes: { ordersSnapshot: fresh } }); continue;
     }
-    coverage.push({ date, storeId: store.storeId, market: store.market, source: 'unavailable', complete: false, schemes: Object.fromEntries(schemes.map(scheme => [scheme, false])) });
+    recordCoverage({ date, storeId: store.storeId, market: store.market, source: 'unavailable', complete: false, schemes: Object.fromEntries(schemes.map(scheme => [scheme, false])) });
   }
-  const leafIds = registry.types.filter(type => !registry.types.some(child => child.parentId === type.id)).map(type => type.id), markets = market === 'all' ? ['Ozon', 'WB'] : [market];
+  const parentIds = new Set(registry.types.map(type => type.parentId));
+  const leafIds = registry.types.filter(type => !parentIds.has(type.id)).map(type => type.id), markets = market === 'all' ? ['Ozon', 'WB'] : [market];
+  const scopeByMarket = new Map(markets.map(currentMarket => [currentMarket, scope.filter(store => store.market === currentMarket)]));
   const leafSeries = [];
   for (const currentMarket of markets) for (const typeId of leafIds) {
     const points = days.map(date => {
-      const relevantCoverage = coverage.filter(item => item.market === currentMarket && item.date === date), observed = relevantCoverage.some(item => item.source !== 'unavailable' && item.observed !== false);
-      const rows = scope.filter(store => store.market === currentMarket).flatMap(store => events.get([currentMarket, store.storeId, date].join('\u001f')) || []).filter(row => row.typeId === typeId);
-      const missing = relevantCoverage.some(item => !item.complete) || scope.filter(store => store.market === currentMarket).some(store => (missingProducts.get([currentMarket, store.storeId, date].join('\u001f')) || 0) > 0);
+      const relevantCoverage = coverageByMarketDay.get([currentMarket, date].join('\u001f')) || [], observed = relevantCoverage.some(item => item.source !== 'unavailable' && item.observed !== false);
+      const rows = scopeByMarket.get(currentMarket).flatMap(store => events.get([currentMarket, store.storeId, date].join('\u001f'))?.get(typeId) || []);
+      const missing = relevantCoverage.some(item => !item.complete) || scopeByMarket.get(currentMarket).some(store => (missingProducts.get([currentMarket, store.storeId, date].join('\u001f')) || 0) > 0);
       const amountKnown = observed && rows.every(row => row.amountRub !== null);
       return { date, orderedUnits: observed ? checkedSum(rows.map(row => row.units), 'units') : null, orderedRevenue: amountKnown ? Math.round(checkedSum(rows.map(row => row.amountRub), 'revenue') * 100) / 100 : null, complete: observed && !missing, unitsKnown: observed && !missing, revenueKnown: amountKnown && !missing, observed };
     });
@@ -129,14 +143,13 @@ function build(data, options = {}) {
   const storeLeafSeries = [];
   for (const store of scope) for (const typeId of leafIds) {
     const points = days.map(date => {
-      const storeCoverage = coverage.find(item => item.market === store.market && item.storeId === store.storeId && item.date === date), observed = !!storeCoverage && storeCoverage.source !== 'unavailable' && storeCoverage.observed !== false;
-      const rows = (events.get([store.market, store.storeId, date].join('\u001f')) || []).filter(row => row.typeId === typeId), missing = !storeCoverage?.complete || (missingProducts.get([store.market, store.storeId, date].join('\u001f')) || 0) > 0;
+      const key = [store.market, store.storeId, date].join('\u001f'), storeCoverage = coverageByStoreDay.get(key), observed = !!storeCoverage && storeCoverage.source !== 'unavailable' && storeCoverage.observed !== false;
+      const rows = events.get(key)?.get(typeId) || [], missing = !storeCoverage?.complete || (missingProducts.get(key) || 0) > 0;
       const amountKnown = observed && rows.every(row => row.amountRub !== null);
       return { date, orderedUnits: observed ? checkedSum(rows.map(row => row.units), 'units') : null, orderedRevenue: amountKnown ? Math.round(checkedSum(rows.map(row => row.amountRub), 'revenue') * 100) / 100 : null, complete: observed && !missing, unitsKnown: observed && !missing, revenueKnown: amountKnown && !missing, observed };
     });
     if (points.some(point => point.orderedUnits > 0)) storeLeafSeries.push({ storeId: store.storeId, storeName: store.name, typeId, market: store.market, aggregate: false, points });
   }
-  const coverageByStoreDay = new Map(coverage.map(item => [[item.market, item.storeId, item.date].join('\u001f'), item]));
   const byProduct = [];
   for (const { store, product } of orderedProducts.values()) {
     const points = days.map(date => {
@@ -147,18 +160,18 @@ function build(data, options = {}) {
     byProduct.push({ productKey: product.productKey, typeId: product.typeId, productId: product.productId, sku: product.sku, offerId: product.offerId, name: product.name, storeId: store.storeId, storeName: store.name, market: store.market, points });
   }
   const series = [...leafSeries];
-  for (const type of registry.types.filter(type => registry.types.some(child => child.parentId === type.id))) for (const currentMarket of markets) {
+  for (const type of registry.types.filter(type => parentIds.has(type.id))) for (const currentMarket of markets) {
     const leafSet = new Set(descendants(registry.types, type.id)), children = leafSeries.filter(item => item.market === currentMarket && leafSet.has(item.typeId)); if (!children.length) continue;
     const points = days.map((date, index) => { const values = children.map(child => child.points[index]), observed = values.some(value => value.observed), complete = observed && values.every(value => value.complete), units = observed ? checkedSum(values.map(value => value.orderedUnits || 0), 'units') : null, revenueAvailable = observed && values.every(value => value.orderedRevenue !== null), revenueKnown = complete && values.every(value => value.revenueKnown); return { date, orderedUnits: units, orderedRevenue: revenueAvailable ? Math.round(checkedSum(values.map(value => value.orderedRevenue), 'revenue') * 100) / 100 : null, complete, unitsKnown: complete, revenueKnown, observed }; });
     series.push({ typeId: type.id, market: currentMarket, aggregate: true, leafCount: children.length, points });
   }
   const byStore = [...storeLeafSeries];
-  for (const store of scope) for (const type of registry.types.filter(type => registry.types.some(child => child.parentId === type.id))) {
+  for (const store of scope) for (const type of registry.types.filter(type => parentIds.has(type.id))) {
     const leafSet = new Set(descendants(registry.types, type.id)), children = storeLeafSeries.filter(item => item.storeId === store.storeId && leafSet.has(item.typeId)); if (!children.length) continue;
     const points = days.map((date, index) => { const values = children.map(child => child.points[index]), observed = values.some(value => value.observed), complete = observed && values.every(value => value.complete), units = observed ? checkedSum(values.map(value => value.orderedUnits || 0), 'units') : null, revenueAvailable = observed && values.every(value => value.orderedRevenue !== null), revenueKnown = complete && values.every(value => value.revenueKnown); return { date, orderedUnits: units, orderedRevenue: revenueAvailable ? Math.round(checkedSum(values.map(value => value.orderedRevenue), 'revenue') * 100) / 100 : null, complete, unitsKnown: complete, revenueKnown, observed }; });
     byStore.push({ storeId: store.storeId, storeName: store.name, typeId: type.id, market: store.market, aggregate: true, leafCount: children.length, points });
   }
-  const typeIds = new Set(series.map(item => item.typeId)), selectedTypes = registry.types.filter(type => typeIds.has(type.id)).map(type => ({ ...type, leaf: !registry.types.some(child => child.parentId === type.id) }));
+  const typeIds = new Set(series.map(item => item.typeId)), selectedTypes = registry.types.filter(type => typeIds.has(type.id)).map(type => ({ ...type, leaf: !parentIds.has(type.id) }));
   const coveredDays = coverage.filter(item => item.source !== 'unavailable').map(item => item.date).sort(), coverageWithNames = coverage.map(item => ({ ...item, name: stores.get(item.storeId)?.name || null }));
   return { period: { from, to, days: days.length, timezone: TZ }, types: selectedTypes, series, byStore, byProduct, classificationRevision: registry.revision, classifiedAt, sourcePeriod: { from: coveredDays[0] || null, to: coveredDays.at(-1) || null }, coverage: { complete: coverage.length > 0 && coverage.every(item => item.complete) && missingProducts.size === 0, stores: coverageWithNames, missingProductUnits: checkedSum([...missingProducts.values()], 'units') }, limitations: ['Исторические категории пересчитаны по текущей ревизии справочника; сохранённые внутридневные точки не изменяются.', 'За день и магазин используется один источник: канонические заказы либо только сегодняшний SKU-снимок.', 'WB до текущего дня не показан без подтверждённой истории заказов.', 'Сумма равна null, если валюта RUB не подтверждена для всех включённых строк.', 'Неполные магазины и схемы дают частичную точку, а отсутствие источника — null.'] };
 }
