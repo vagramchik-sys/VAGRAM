@@ -17,8 +17,8 @@ test('category mode supports daily periods, combined roots and store lines witho
  assert.match(chart,/\/api\/order-category-daily\?/);
  assert.doesNotMatch(chart,/\/api\/order-categories\?/);
  assert.match(chart,/<option value="5" selected>5 уровней категорий<\/option>/);
- assert.match(chart,/<option value="products">До товаров<\/option>/);
- assert.match(chart,/все выбранные площадки/);
+ assert.match(chart,/<option value="products">товаров<\/option>/);
+ assert.match(chart,/Ozon и Wildberries объединены по нашим типам/);
  assert.match(chart,/daily\.byStore/);
  assert.match(chart,/store:'\+item\.storeId\+':'\+item\.typeId/);
  assert.match(chart,/categoryMarketItems\(daily,id\)/);

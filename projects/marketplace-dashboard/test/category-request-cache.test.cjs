@@ -113,6 +113,35 @@ test('five category levels expand to separate product rows without inventing tax
  assert.match(app.node('chart-category-tables').innerHTML,/data-product-key="s1:101"/);
 });
 
+test('table search finds SKU and preserves ancestors without another API request',async()=>{
+ const types=[{id:'root',parentId:null,name:'Крепёж'},{id:'black',parentId:'root',name:'Цвет: чёрный'},{id:'other',parentId:'root',name:'Цвет: белый'}],report={...empty,types,byProduct:[{productKey:'s1:101',typeId:'black',productId:'101',sku:'SKU-777',offerId:'ART-42',name:'Саморез',storeId:'s1',storeName:'Магазин',points:[]},{productKey:'s1:102',typeId:'other',productId:'102',sku:'SKU-888',name:'Шуруп',storeId:'s1',storeName:'Магазин',points:[]}]};
+ const app=runtime(()=>Promise.resolve(report));app.update('2026-09-19');await flush();const calls=app.calls();
+ app.node('chart-category-table-search').value='sku-777';app.node('chart-category-table-search').oninput();let html=app.node('chart-category-tables').innerHTML;
+ assert.match(html,/Крепёж/);assert.match(html,/Цвет: чёрный/);assert.match(html,/Саморез/);assert.match(html,/SKU-777/);assert.doesNotMatch(html,/Цвет: белый|Шуруп|SKU-888/);
+ assert.equal(app.node('chart-category-level').disabled,true);assert.equal(app.node('chart-category-collapse-all').disabled,true);assert.equal(app.node('chart-category-search-note').hidden,false);assert.equal(app.calls(),calls);
+ app.node('chart-category-table-search').value='цвет: чёрный';app.node('chart-category-table-search').oninput();html=app.node('chart-category-tables').innerHTML;
+ assert.match(html,/Саморез/,'a matching category exposes its descendant products');assert.doesNotMatch(html,/Шуруп/);
+ app.node('chart-category-table-search').value='';app.node('chart-category-table-search').oninput();assert.equal(app.node('chart-category-level').disabled,false);assert.equal(app.node('chart-category-search-note').hidden,true);
+});
+
+test('table sorting keeps known zero before missing values inside a branch',async()=>{
+ const point=(orderedUnits,orderedRevenue,complete,observed)=>({date:'2026-09-19',orderedUnits,orderedRevenue,complete,observed}),types=[{id:'root',parentId:null,name:'Группа'},{id:'missing',parentId:'root',name:'Альфа без данных'},{id:'zero',parentId:'root',name:'Якорь ноль'}],report={...empty,types,series:[{typeId:'zero',market:'Ozon',points:[point(0,0,true,true)]},{typeId:'missing',market:'Ozon',points:[point(null,null,false,false)]}],coverage:{complete:false,missingProductUnits:0,stores:[{market:'Ozon',storeId:'s1',date:'2026-09-19',complete:true,observed:true,source:'canonical-orders'}]}};
+ const app=runtime(()=>Promise.resolve(report));app.update('2026-09-19');await flush();const before=app.calls(),ordered=()=>{const html=app.node('chart-category-tables').innerHTML;return html.indexOf('Якорь ноль')<html.indexOf('Альфа без данных')};
+ assert.equal(ordered(),true);assert.match(app.node('chart-category-tables').innerHTML,/data-state="missing"/);
+ app.node('chart-category-sort').value='units';app.node('chart-category-sort').onchange();assert.equal(ordered(),true);
+ app.node('chart-category-sort').value='name';app.node('chart-category-sort').onchange();assert.equal(ordered(),true,'name sort still places missing data last');assert.equal(app.calls(),before);
+});
+
+test('collapse preserves graph selection and clear hides the stale inspector without network work',async()=>{
+ const hierarchy={...empty,types:[{id:'root',parentId:null,name:'Крепёж'},{id:'leaf',parentId:'root',name:'Саморезы'}]};
+ const app=runtime(()=>Promise.resolve(hierarchy));app.update('2026-09-19');await flush();const calls=app.calls();
+ app.node('chart-category-options').onchange({target:{type:'checkbox',value:'leaf',checked:true}});await flush();assert.equal(app.node('chart-category-selected-count').textContent,'На графике: 1');
+ app.node('chart-category-collapse-all').onclick();assert.doesNotMatch(app.node('chart-category-tables').innerHTML,/Саморезы/);assert.equal(app.node('chart-category-selected-count').textContent,'На графике: 1');assert.equal(app.calls(),calls);
+ app.node('chart-inspector').hidden=false;app.node('chart-interaction-hint').hidden=false;app.node('chart-category-clear').onclick();await flush();
+ assert.equal(app.node('chart-category-selected-count').textContent,'На графике: 0');assert.equal(app.node('chart-category-clear').disabled,true);assert.equal(app.node('chart-inspector').hidden,true);assert.equal(app.node('chart-interaction-hint').hidden,true);assert.equal(app.calls(),calls);
+ assert.match(app.node('chart-category-tables').innerHTML,/<th class="chart-category-plot-cell">График<\/th>/);assert.match(app.node('chart-category-tables').innerHTML,/<svg/);assert.doesNotMatch(app.node('chart-category-tables').innerHTML,/&#128065;|◌/);
+});
+
 test('confirmed zero orders on the other marketplace preserve the category amount',async()=>{
  const point={date:'2026-09-19',orderedUnits:1,orderedRevenue:100,complete:true,observed:true};
  const report={...empty,types:[{id:'a',parentId:null,name:'Only Ozon'}],series:[{typeId:'a',market:'Ozon',points:[point]}],coverage:{complete:true,missingProductUnits:0,stores:[{market:'Ozon',storeId:'s1',date:'2026-09-19',complete:true,observed:true,source:'canonical-orders'},{market:'WB',storeId:'wb-2',date:'2026-09-19',complete:true,observed:true,source:'canonical-orders'}]}};
