@@ -184,7 +184,8 @@ function createLiveSourceProviders({sources} = {}) {
   // Shared by category charts and financial reports: omitting daily rows would
   // synthesize zero sales, and omitting types would invalidate the ledger hash.
   const getInsights = () => listed('insights-', /^insights-[0-9]+\.json$/u, ['orders.daily', 'orders.skuDaily', 'orders.skuCoverage', 'types', 'errors'], (path, value) => ({storeId: path.slice(9, -5), value}));
-  const getWbOrders = () => listed('wb-orders-', /^wb-orders-wb-[0-9]+\.json$/u, ['orders'], (path, value) => ({storeId: path.slice(10, -5), value}));
+  const getOrderInsights = () => listed('insights-', /^insights-[0-9]+\.json$/u, ['orders.daily', 'errors'], (path, value) => ({storeId: path.slice(9, -5), value}));
+  const getWbOrders = () => listed('wb-orders-', /^wb-orders-wb-[0-9]+\.json$/u, ['points', 'orders'], (path, value) => ({storeId: path.slice(10, -5), value}));
 
   async function buyerNames(kind) {
     return (await names()).map(row => row.sourcePath).filter(path => {
@@ -258,7 +259,7 @@ function createLiveSourceProviders({sources} = {}) {
     return JSON.stringify(selected);
   }
 
-  return Object.freeze({exact, getMarketSnapshot, getReportCatalog, getProducts, getCatalog, getAllProducts, getOzonFunnel, getOzonLedger, getWbFinance, getCatalogs, getInsights, getWbOrders, getBuyerOrderSnapshot, getBuyerProductSnapshot, getBuyerOrderSnapshots, getSnapshots, categoryRevision});
+  return Object.freeze({exact, getMarketSnapshot, getReportCatalog, getProducts, getCatalog, getAllProducts, getOzonFunnel, getOzonLedger, getWbFinance, getCatalogs, getInsights, getOrderInsights, getWbOrders, getBuyerOrderSnapshot, getBuyerProductSnapshot, getBuyerOrderSnapshots, getSnapshots, categoryRevision});
 }
 
 module.exports = {createLiveSourceProviders, LiveSourceProviderError};

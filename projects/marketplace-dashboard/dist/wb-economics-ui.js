@@ -32,6 +32,7 @@
   const metric=(label,value,note,tone='')=>'<article class="wb-eco-kpi '+tone+'"><span>'+label+'</span><strong>'+value+'</strong><small>'+note+'</small></article>';
   const selectedScope=()=>({market:$('market')?.value||'',store:$('store')?.value||''});
   const visibleFor=scope=>scope.market!=='Ozon'&&(!scope.store||scope.store.startsWith('wb-'));
+  const sectionActive=()=>{const url=new URL(location.href),hash=location.hash.slice(1),view=document.body.dataset.pultView||url.searchParams.get('view')||'';return (hash?hash==='wb-economics':view==='wb-economics')&&!document.hidden};
   const accountMatches=(accounts,storeId)=>{
    const list=Array.isArray(accounts)?accounts:accounts?[accounts]:[];
    return list.length>0&&list.every(account=>String(account?.localStoreId||'')===String(storeId||''));
@@ -44,8 +45,10 @@
   };
   const schedule=()=>{
    clearTimeout(timer);
-   timer=setTimeout(()=>{if(lastReport&&visibleFor(selectedScope()))void load(lastReport);},Math.max(1,intervalMinutes)*60000);
+   if(!sectionActive())return;
+   timer=setTimeout(()=>{if(sectionActive()&&lastReport&&visibleFor(selectedScope()))void load(lastReport);},Math.max(1,intervalMinutes)*60000);
   };
+  const deactivate=()=>{clearTimeout(timer);timer=null;controller?.abort()};
   const setSevenDays=()=>{
    const select=$('ins-range');
    if(!select)return;
@@ -55,6 +58,9 @@
   $('wb-eco-seven').onclick=setSevenDays;
   $('wb-eco-range').onchange=()=>{const range=$('ins-range');range.value=$('wb-eco-range').value;range.dispatchEvent(new Event('change',{bubbles:true}))};
   document.querySelector('[data-nav="wb-economics"]')?.addEventListener('click',()=>{if(!visibleFor(selectedScope())){$('market').value='WB';$('market').dispatchEvent(new Event('change',{bubbles:true}));$('store').value='';$('store').dispatchEvent(new Event('change',{bubbles:true}))}});
+  window.addEventListener('hashchange',()=>{if(!sectionActive())deactivate()});
+  window.addEventListener('pult:view-change',()=>{if(!sectionActive())deactivate()});
+  document.addEventListener('visibilitychange',()=>{if(!sectionActive())deactivate();else if(lastReport)void load(lastReport)});
 
   function paint(data,request){
    const {from,to,store:requestedStore}=request;
@@ -103,6 +109,7 @@
    const scope=selectedScope();
    panel.hidden=!visibleFor(scope);
    if(panel.hidden){controller?.abort();clearTimeout(timer);return}
+   if(!sectionActive()){deactivate();return}
    const from=report?.current?.from,to=report?.current?.to;
    if(!from||!to){resetValues();$('wb-eco-status').textContent='Нет периода';$('wb-eco-message').textContent='Выберите период управленческой сводки.';return}
    controller?.abort();controller=new AbortController();

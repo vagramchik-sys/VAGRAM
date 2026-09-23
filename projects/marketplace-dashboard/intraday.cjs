@@ -1,6 +1,10 @@
 'use strict';
 const fs=require('node:fs'),path=require('node:path');
 const {INTERVAL,ORDERS_INTERVAL}=require('./refresh-policy.cjs');
+// Stores refresh serially, so one acquisition cycle can span longer than the
+// per-store orders cadence. Keep aggregate observations bounded by the normal
+// 30-minute freshness window without presenting a missing store as zero.
+const ORDER_COMBINE_INTERVAL=INTERVAL;
 const day=date=>new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(date);
 const covers=(s,d)=>s?.period?.from<=d&&s?.period?.to>=d;
 function point(source,data,products){
@@ -20,7 +24,7 @@ function point(source,data,products){
 // A combined point requires a new, sufficiently close observation from every selected store.
 // A failed store never becomes a zero and cannot create a false aggregate change.
 function combine(histories,source,date){
-  const interval=source==='orders'?ORDERS_INTERVAL:INTERVAL;
+  const interval=source==='orders'?ORDER_COMBINE_INTERVAL:INTERVAL;
   const lists=histories.map(h=>h.filter(p=>p.date===date&&p.source===source).sort((a,b)=>a.at.localeCompare(b.at)));
   if(!lists.length||lists.some(a=>!a.length))return [];
   const indices=lists.map(()=>0),out=[];
@@ -37,7 +41,7 @@ function combine(histories,source,date){
       values.ourMargin=known&&total('realized')>0?total('profit')/total('realized')*100:null;
       values.ourRoi=known&&total('cogs')>0?total('profit')/total('cogs')*100:null;
     }
-    out.push({at:new Date(end).toISOString(),sourceFromAt:new Date(start).toISOString(),...values});
+    out.push({at:new Date(end).toISOString(),sourceFromAt:new Date(start).toISOString(),sourceToAt:new Date(end).toISOString(),sourceSkewMs:end-start,staggered:start!==end,...values});
     for(let i=0;i<indices.length;i++)indices[i]++;
   }
   return out;

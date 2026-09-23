@@ -107,13 +107,14 @@ test('WB finance reads operations only and small providers request explicit coll
   const {providers, calls} = fixture({
     'data-wb-4.json': data(7, {completedAt: 'x', products: [{nmID: 1}], stocks: [], operations: [{rrdId: 2}]}),
     'insights-3.json': data(2, {orders: {daily: [{date: '2026-09-22'}], skuDaily: [], skuCoverage: []}, types: [], errors: []}),
-    'wb-orders-wb-4.json': data(3, {points: [], orders: [{id: 1}], rows: []})
+    'wb-orders-wb-4.json': data(3, {points: [{at:'2026-09-22T09:00:00Z',orderedRevenue:10,orderedUnits:1}], orders: [{id: 1}], rows: []})
   });
   assert.deepEqual(await providers.getWbFinance('wb-4'), {completedAt: 'x', products: [], stocks: [], operations: [{rrdId: 2}]});
-  await providers.getInsights(); await providers.getWbOrders();
+  await providers.getInsights(); const wb=await providers.getWbOrders();
   assert.deepEqual(calls.find(call => call[1] === 'data-wb-4.json')[2], ['operations']);
   assert.deepEqual(calls.find(call => call[1] === 'insights-3.json')[2], ['orders.daily', 'orders.skuDaily', 'orders.skuCoverage', 'types', 'errors']);
-  assert.deepEqual(calls.find(call => call[1] === 'wb-orders-wb-4.json')[2], ['orders']);
+  assert.deepEqual(calls.find(call => call[1] === 'wb-orders-wb-4.json')[2], ['points','orders']);
+  assert.equal(wb[0].value.points.length,1);
 });
 
 test('category revision fingerprints only relevant heads for the requested scope and period', async () => {
@@ -136,6 +137,14 @@ test('category revision fingerprints only relevant heads for the requested scope
     ['order-category-catalog-1.json','1']
   ]);
   assert.deepEqual(calls,[['list']]);
+});
+
+test('order chart projection requests daily totals only, leaving SKU detail and finance cold',async()=>{
+ const {providers,calls}=fixture({'insights-3.json':data(1,{orders:{daily:[{date:'2026-09-20',revenue:0,units:0}]}})});
+ const result=await providers.getOrderInsights();
+ assert.deepEqual(calls.find(call=>call[1]==='insights-3.json')[2],['orders.daily','errors']);
+ assert.equal(result[0].value.orders.daily[0].revenue,0);
+ assert.equal(calls.filter(call=>call[0]==='record').length,1);
 });
 
 test('category revision rejects malformed relevant heads', async () => {

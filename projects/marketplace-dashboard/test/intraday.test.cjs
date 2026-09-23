@@ -28,11 +28,13 @@ test('a stale store does not cause a fabricated combined point; later matching s
  const a=[sample('10',100),sample('12',200)],b=[sample('11',300),sample('12',400)];
  const r=combine([a,b],'orders',date);assert.equal(r.length,1);assert.equal(r[0].orderedRevenue,600);assert.equal(r[0].at,at('12'));
 });
-test('orders combine only observations within the shared ten-minute interval while finance keeps thirty minutes',()=>{
+test('orders combine staggered store refreshes within thirty minutes while keeping the ten-minute fetch cadence',()=>{
  assert.equal(ORDERS_INTERVAL,10*60*1000);
- const a=sample('10',100),b={...sample('10',200),at:'2026-09-16T10:10:00Z'};
- assert.equal(combine([[a],[b]],'orders',date)[0].orderedRevenue,300);
- b.at='2026-09-16T10:10:01Z';assert.equal(combine([[a],[b]],'orders',date).length,0);
+ const a=sample('10',100),b={...sample('10',200),at:'2026-09-16T10:30:00Z'};
+ const combined=combine([[a],[b]],'orders',date)[0];
+ assert.equal(combined.orderedRevenue,300);assert.equal(combined.at,'2026-09-16T10:30:00.000Z');assert.equal(combined.sourceFromAt,'2026-09-16T10:00:00.000Z');assert.equal(combined.sourceToAt,combined.at);assert.equal(combined.sourceSkewMs,30*60*1000);assert.equal(combined.staggered,true);
+ b.at='2026-09-16T10:30:01Z';assert.equal(combine([[a],[b]],'orders',date).length,0);
+ b.at='2026-09-16T10:30:00Z';
  a.source=b.source='finance';assert.equal(combine([[a],[b]],'finance',date).length,1);
 });
 test('history is durable, repeated reads do not add points, and unchanged imported values produce a flat next point',()=>{

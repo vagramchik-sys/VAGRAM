@@ -9,7 +9,7 @@ function runtime(load,options={}){
  const node=id=>{if(!nodes.has(id))nodes.set(id,{id,value:id==='ins-chart-metric'?'orderedRevenue':'',checked:false,hidden:false,_innerHTML:'',innerHTMLWrites:0,get innerHTML(){return this._innerHTML},set innerHTML(value){this._innerHTML=value;this.innerHTMLWrites++},textContent:'',insertAdjacentHTML(){},setAttribute(){},removeAttribute(){},closest(){return this}});return nodes.get(id)};
  let calls=0;
  class Clock extends Date {constructor(...args){super(...(args.length?args:['2026-09-20T12:00:00Z']))}static now(){return Date.parse('2026-09-20T12:00:00Z')}}
- const context={document:{getElementById:node},window:{},Intl,Date:Clock,URLSearchParams,Promise,Map,Set,console};
+ const context={document:{getElementById:node},window:{},PultStoreChart:require('../dist/turnover-chart-model.js'),Intl,Date:Clock,URLSearchParams,Promise,Map,Set,console};
  vm.runInNewContext(source,context);
  const chart=context.window.createPultStoreChart({api:url=>url==='/api/stores'?Promise.resolve([]):(calls++,load(url)),metricTitle:()=> 'Сумма'});
  if(options.from)node('ins-from').value=options.from;if(options.to)node('ins-to').value=options.to;
@@ -27,6 +27,18 @@ test('checkboxes and metric changes reuse the loaded report; data refresh invali
  app.update('2026-09-19');await flush();assert.equal(app.calls(),2);
  assert.match(app.node('chart-category-options').innerHTML,/value="Перчатки" checked/);
  app.update('2026-09-18');await flush();assert.equal(app.calls(),3);
+});
+
+test('store orders and forecast use the light report; financial selection cannot reuse a light response',async()=>{
+ const urls=[],current={from:'2026-09-20',to:'2026-09-20'},report={scope:'orders',days:1,current,metrics:{},intraday:{orders:[]},coverage:{}};
+ const app=runtime(url=>{urls.push(url);return Promise.resolve(report)},{categoryMode:false});
+ app.node('chart-forecast-enabled').checked=true;app.chart.update(report);await flush();
+ assert.equal(urls.length,1,'current orders reuse the supplied light response');
+ assert.match(urls[0],/scope=orders/);assert.match(urls[0],/from=2026-08-30/);
+ app.node('ins-chart-metric').value='net';await app.chart.render();
+ assert.equal(urls.length,2);assert.match(urls[1],/scope=full/);
+ app.node('ins-chart-metric').value='orderedRevenue';await app.chart.render();
+ assert.equal(urls.length,2,'switching back retains the separate light cache');
 });
 test('concurrent renders share a request and a failed request can be retried',async()=>{
  let resolve,reject;
@@ -156,6 +168,35 @@ test('today store filter does not request an unscoped intraday category report',
  const urls=[],app=runtime(url=>{urls.push(url);return Promise.resolve(empty)});
  app.node('store').value='s1';app.update('2026-09-20');await flush();
  assert.equal(urls.length,1);assert.match(urls[0],/order-category-daily.*store=s1/);
+});
+
+test('known category amounts survive missing marketplace coverage without claiming a full total',async()=>{
+ const point={date:'2026-09-19',orderedUnits:2,orderedRevenue:125,complete:false,revenueKnown:false,observed:true};
+ const report={...empty,types:[{id:'a',parentId:null,name:'Only Ozon'}],series:[{typeId:'a',market:'Ozon',points:[point]}],coverage:{complete:false,missingProductUnits:1,stores:[{market:'Ozon',storeId:'s1',date:point.date,complete:true,source:'ozon-sku-today'},{market:'WB',storeId:'wb-2',date:point.date,complete:true,source:'wb-orders-today'}]}};
+ const app=runtime(()=>Promise.resolve(report));app.update(point.date);await flush();
+ const html=app.node('chart-category-tables').innerHTML;
+ assert.match(html,/<td class="numeric" title="Известная сумма · данные неполные">125 ₽<\/td>/);
+ assert.match(html,/data-state="partial">Неполно/);assert.doesNotMatch(html,/Подтверждено/);
+ assert.match(html,/<tfoot>[\s\S]*125 ₽[\s\S]*Неполно/);
+});
+
+test('category and product period sums keep observed days while preserving unknown amounts',async()=>{
+ const points=[{date:'2026-09-18',orderedUnits:2,orderedRevenue:125,complete:true,observed:true},{date:'2026-09-19',orderedUnits:null,orderedRevenue:null,complete:false,observed:false}];
+ const report={...empty,period:{days:2},types:[{id:'a',parentId:null,name:'Known group'},{id:'b',parentId:null,name:'Unknown amount'}],series:[{typeId:'a',market:'Ozon',points},{typeId:'b',market:'Ozon',points:[{...points[0],orderedRevenue:null,complete:false}]}],byProduct:[{productKey:'s1:1',typeId:'a',name:'Known product',points}],coverage:{complete:false}};
+ const app=runtime(()=>Promise.resolve(report));app.chart.update({days:2,current:{from:'2026-09-18',to:'2026-09-19'}});await flush();
+ app.node('chart-category-level').value='products';app.node('chart-category-level').onchange();
+ const html=app.node('chart-category-tables').innerHTML;
+ assert.match(html,/Known group[\s\S]*?title="Известная сумма · данные неполные">125 ₽/);
+ assert.match(html,/Known product[\s\S]*?title="Известная сумма · данные неполные">125 ₽/);
+ assert.match(html,/Unknown amount[\s\S]*?title="Нет подтверждённой суммы">—/);
+ assert.match(html,/<tfoot>[\s\S]*125 ₽/,'parent and product must not be counted twice');
+});
+
+test('unobserved placeholders never contribute money or invent zero units',async()=>{
+ const report={...empty,types:[{id:'a',parentId:null,name:'Unobserved'}],series:[{typeId:'a',market:'Ozon',points:[{date:'2026-09-19',orderedUnits:10,orderedRevenue:999,complete:false,observed:false}]}],coverage:{complete:false}};
+ const app=runtime(()=>Promise.resolve(report));app.update('2026-09-19');await flush();
+ const html=app.node('chart-category-tables').innerHTML;
+ assert.doesNotMatch(html,/999 ₽|0 ₽/);assert.match(html,/Нет данных/);assert.match(html,/<td class="numeric">—<\/td>/);
 });
 
 test('opening categories starts SQL daily loading before the main report is ready and reuses it',async()=>{

@@ -1,12 +1,12 @@
 (function(root){'use strict';
  function points(report,key){
-  if(report.days===1){const source=key==='orderedRevenue'||key==='orderedUnits'?'orders':'finance';return (report.intraday?.[source]||[]).map(p=>({time:Date.parse(p.at),label:p.at,value:Number.isFinite(p[key])?p[key]:null})).filter(p=>Number.isFinite(p.time)).sort((a,b)=>a.time-b.time)}
+  if(report.days===1){const source=key==='orderedRevenue'||key==='orderedUnits'?'orders':'finance';return (report.intraday?.[source]||[]).map(p=>({time:Date.parse(p.at),label:p.at,value:Number.isFinite(p[key])?p[key]:null,...(p.staggered?{staggered:true,sourceFromAt:p.sourceFromAt,sourceToAt:p.sourceToAt}: {})})).filter(p=>Number.isFinite(p.time)).sort((a,b)=>a.time-b.time)}
   return (report.daily||[]).map(p=>({time:Date.parse(p.date+'T12:00:00Z'),label:p.date,value:Number.isFinite(p[key])?p[key]:null}));
  }
  function totals(report,key){const value=report.metrics?.[key]?.current;return Number.isFinite(value)?value:null}
  function categoryDailyLine(items,key,from,to,expectedDays){
   const dates=[];for(let at=Date.parse(from+'T12:00:00Z'),last=Date.parse(to+'T12:00:00Z');at<=last;at+=86400000)dates.push(new Date(at).toISOString().slice(0,10));
-  const points=dates.map(date=>{const matches=items.map(item=>(item.points||[]).find(point=>point.date===date)).filter(Boolean),values=matches.map(point=>point[key]).filter(Number.isFinite);return {time:Date.parse(date+'T12:00:00Z'),label:date,value:values.length?values.reduce((sum,value)=>sum+value,0):null,partial:matches.some(point=>point.complete!==true)}});
+  const points=dates.map(date=>{const matches=items.map(item=>(item.points||[]).find(point=>point.date===date)).filter(Boolean),values=matches.filter(point=>point.observed!==false).map(point=>point[key]).filter(Number.isFinite);return {time:Date.parse(date+'T12:00:00Z'),label:date,value:values.length?values.reduce((sum,value)=>sum+value,0):null,partial:matches.length!==items.length||values.length!==items.length||matches.some(point=>point.complete!==true)}});
   const knownValues=points.filter(point=>Number.isFinite(point.value)).map(point=>point.value),known=knownValues.length?knownValues.reduce((sum,value)=>sum+value,0):null,complete=points.length===expectedDays&&points.every(point=>Number.isFinite(point.value)&&!point.partial);
   return {points,total:complete?known:null,known,complete};
  }

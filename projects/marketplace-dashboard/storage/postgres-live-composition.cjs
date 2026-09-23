@@ -28,6 +28,17 @@ async function createLiveComposition({pool, stateSchema = 'pult', marketSchema =
     const head = await repository.getHead(sources.identity(sourcePath));
     return head ? {revision: String(head.revision), value: decodeMetadata(sourcePath,head.metadata), sha256: head.sourceMetadata.sourceSha256, deleted: false} : {revision:'0',value:null};
   };
-  return Object.freeze({stateStore, repository, sources, sourceProviders, marketRepository, marketWriter, scheduler, readMarketDocument, readDocument});
+  // Status pages need only the small head metadata. Read every requested source
+  // from one heads query and never touch the fact rows behind a live document.
+  const readSourceMetadata = async sourcePaths => {
+    if (!Array.isArray(sourcePaths) || sourcePaths.length > 100) throw new TypeError('sourcePaths are required');
+    const requested = [...new Set(sourcePaths)].map(sourcePath => ({sourcePath, identity: sources.identity(sourcePath)}));
+    const heads = await repository.listHeads(), byIdentity = new Map(heads.map(head => [`${head.domain}\u0000${head.storeId}`, head]));
+    return new Map(requested.map(({sourcePath,identity}) => {
+      const head = byIdentity.get(`${identity.domain}\u0000${identity.storeId}`);
+      return [sourcePath, head ? decodeMetadata(sourcePath,head.metadata) : null];
+    }));
+  };
+  return Object.freeze({stateStore, repository, sources, sourceProviders, marketRepository, marketWriter, scheduler, readMarketDocument, readDocument, readSourceMetadata});
 }
 module.exports = {createLiveComposition};

@@ -1,4 +1,4 @@
-const test=require('node:test'),assert=require('node:assert/strict');
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs');
 const {summarize}=require('../summary.cjs');
 const model=require('../dist/dashboard-model.js');
 test('financial groups and days preserve amounts, currencies and counts',()=>{
@@ -97,4 +97,16 @@ test('inactive filter preserves ready products and unknown WB statuses and is re
  const f={query:'',sort:'name',hideInactive:true};
  assert.deepEqual(model.filterRows(rows,f).map(p=>p.name),['C','D','F','G']);
  assert.equal(model.filterRows(rows,{...f,hideInactive:false}).length,7);
+});
+
+test('dashboard defers full store snapshots outside catalog, finance and store sections',()=>{
+ const source=fs.readFileSync(require.resolve('../dist/dashboard.js'),'utf8');
+ assert.match(source,/snapshotSections=new Set\(\['products','finance','stores'\]\)/);
+ assert.match(source,/document\.body\.dataset\.pultView\|\|url\.searchParams\.get\('view'\)/);
+ assert.match(source,/window\.addEventListener\('pult:view-change',nav\)/);
+ assert.match(source,/const need=loadSnapshots\?stores\.filter/);
+ assert.match(source,/setInterval\(\(\)=>\{if\(!document\.hidden\)void refresh\(false,false\)\}/);
+ assert.match(source,/Каталог загружается только при открытии этого раздела/);
+ assert.match(source,/Загрузятся при открытии финансов/);
+ assert.doesNotMatch(source,/setInterval\(\(\)=>\{if\(!document\.hidden\)void refresh\(\)\}/);
 });

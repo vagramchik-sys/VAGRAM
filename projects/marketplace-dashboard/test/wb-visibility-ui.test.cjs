@@ -7,13 +7,14 @@ const ui = fs.readFileSync(require.resolve('../dist/insights-ui.js'), 'utf8');
 const wbUi = fs.readFileSync(require.resolve('../dist/wb-economics-ui.js'), 'utf8');
 const index = fs.readFileSync(require.resolve('../dist/index.html'), 'utf8');
 
-function runtime({ href = 'http://127.0.0.1:4317/', fetchImpl } = {}) {
+function runtime({ href = 'http://127.0.0.1:4317/', market = 'WB', fetchImpl } = {}) {
   const nodes = new Map();
   const classes = new Map();
   const wbReports = [];
   const fetches = [];
   const homeUpdates = [];
   const intervals = [];
+  const windowListeners = new Map();
 
   class FakeElement {
     constructor(id = '') {
@@ -63,7 +64,7 @@ function runtime({ href = 'http://127.0.0.1:4317/', fetchImpl } = {}) {
   }
 
   for (const id of ['metrics', 'business-chart', 'focus-brief', 'focus-priorities', 'products', 'market', 'store', 'hide-inactive']) ensure(id);
-  ensure('market').value = 'WB';
+  ensure('market').value = market;
   ensure('store').value = '';
 
   const document = {
@@ -81,7 +82,7 @@ function runtime({ href = 'http://127.0.0.1:4317/', fetchImpl } = {}) {
   const inertView = () => ({ render() {} });
   const context = vm.createContext({
     document,
-    window: { addEventListener() {}, PultSellerHome: { update(value) { homeUpdates.push(value); } } },
+    window: { addEventListener(type, listener) { const list = windowListeners.get(type) || []; list.push(listener); windowListeners.set(type, list); }, dispatchEvent(event) { for (const listener of windowListeners.get(event.type) || []) listener(event); }, PultSellerHome: { update(value) { homeUpdates.push(value); } } },
     localStorage: { getItem() { return null; }, setItem() {}, removeItem() {} },
     location: { hash: new URL(href).hash, href },
     Event: class Event { constructor(type) { this.type = type; } },
@@ -101,14 +102,43 @@ function runtime({ href = 'http://127.0.0.1:4317/', fetchImpl } = {}) {
     createPultWBEconomics() { return { render(report) { wbReports.push(report); } }; },
     createPultEconomics: inertView,
     createPultSalesDecline: inertView,
-    createPultStoreChart: () => ({ render() {} }),
+    createPultStoreChart: () => ({ update() {}, render() {} }),
     createPultNetProfit: () => ({ element: new FakeElement(), render() {} }),
     PultFocusUI: { create: () => ({ render() {}, toggleFavorite() {}, detail() {} }) }
   });
 
   vm.runInContext(ui, context, { filename: 'insights-ui.js' });
-  return { nodes, wbReports, fetches, homeUpdates, intervals, context };
+  return { nodes, wbReports, fetches, homeUpdates, intervals, context, dispatch(type) { context.window.dispatchEvent({ type }); } };
 }
+
+function ordersReport() {
+  const metric = (current, previous, kind = 'money', source = 'orders') => ({ current, previous, kind, source });
+  return { scope: 'orders', days: 28, current: { from: '2026-08-26', to: '2026-09-22' }, previous: { from: '2026-07-29', to: '2026-08-25' }, coverage: { orders: true, previousOrders: true, finance: false, previousFinance: false }, metrics: { orderedRevenue: metric(120, 100), orderedUnits: metric(2, 1, 'units'), realized: metric(null, null, 'money', 'finance'), net: metric(null, null, 'money', 'finance') }, daily: [], stores: [{ id: '1', name: 'Store' }], products: [], fees: [], sources: [{ id: '1', name: 'Store', ordersAt: '2026-09-22T10:00:00Z', ordersHistoryAt: '2026-09-22T10:00:00Z', errors: [] }], jobs: {}, syncJobs: [], refresh: {} };
+}
+
+test('initial page-layout route event reuses the in-flight orders request and reaches ready', async () => {
+  let resolveInsights;
+  const app = runtime({ market: 'Ozon', fetchImpl: url => url.startsWith('/api/insights?') ? new Promise(resolve => { resolveInsights = resolve; }) : new Promise(() => {}) });
+  app.dispatch('pult:view-change');
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
+  resolveInsights({ ok: true, json: async () => ordersReport() });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(app.homeUpdates.at(-1).state, 'ready');
+  assert.match(app.nodes.get('ins-state').textContent, /Заказы загружены/);
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
+});
+
+test('latest report mode wins while an orders request is in flight', async () => {
+  let resolveInsights;
+  const app = runtime({ market: 'Ozon', fetchImpl: url => url.startsWith('/api/insights?') ? new Promise(resolve => { resolveInsights = resolve; }) : new Promise(() => {}) });
+  const metric = app.nodes.get('ins-chart-metric');
+  metric.value = 'net'; metric.dispatchEvent({ type: 'change' });
+  metric.value = 'orderedRevenue'; metric.dispatchEvent({ type: 'change' });
+  resolveInsights({ ok: true, json: async () => ordersReport() });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
+  assert.equal(app.homeUpdates.at(-1).state, 'ready');
+});
 
 test('periodic poll does not invalidate an in-flight insights response', async () => {
   let resolveInsights;
@@ -137,13 +167,9 @@ test('periodic poll does not invalidate an in-flight insights response', async (
 test('UI loads on WB and can switch to Ozon without a removed placeholder crash', () => {
   const app = runtime();
 
-  assert.equal(app.wbReports.length, 1);
+  assert.equal(app.wbReports.length, 0);
   assert.equal(app.nodes.get('executive').hidden, true);
-  assert.equal(app.fetches.length, 1);
-  assert.match(app.fetches[0], /^\/api\/profit-series\?/);
-  assert.match(app.fetches[0], /market=WB/);
-  assert.match(app.fetches[0], /from=\d{4}-\d{2}-\d{2}/);
-  assert.match(app.fetches[0], /to=\d{4}-\d{2}-\d{2}/);
+  assert.equal(app.fetches.length, 0);
   assert.equal(app.fetches.some(url => url.startsWith('/api/insights?')), false);
   assert.equal(app.homeUpdates.at(-1).state, 'unsupported');
 
@@ -151,8 +177,9 @@ test('UI loads on WB and can switch to Ozon without a removed placeholder crash'
   market.value = 'Ozon';
   assert.doesNotThrow(() => market.dispatchEvent({ type: 'change' }));
   assert.equal(app.nodes.get('executive').hidden, false);
-  assert.equal(app.fetches.length, 2);
-  assert.match(app.fetches[1], /^\/api\/insights\?/);
+  assert.equal(app.fetches.length, 1);
+  assert.match(app.fetches[0], /^\/api\/insights\?/);
+  assert.match(app.fetches[0], /scope=orders/);
   assert.equal(app.homeUpdates.at(-1).state, 'loading');
   assert.equal(app.homeUpdates.at(-1).market, 'Ozon');
 });
@@ -160,10 +187,43 @@ test('UI loads on WB and can switch to Ozon without a removed placeholder crash'
 test('homepage starts with completed days while existing deep links retain their default period', () => {
   const home = runtime();
   assert.equal(home.nodes.get('ins-range').value, '28');
-  const dates = home.wbReports[0].current;
-  assert.equal((Date.parse(dates.to) - Date.parse(dates.from)) / 86400000, 27);
+  assert.equal((Date.parse(home.nodes.get('ins-to').value) - Date.parse(home.nodes.get('ins-from').value)) / 86400000, 27);
   const analytics = runtime({ href: 'http://127.0.0.1:4317/?view=overview&section=business-chart' });
   assert.equal(analytics.nodes.get('ins-range').value, 'today');
+});
+
+test('business chart uses the orders scope while an explicit economics route loads the full report', () => {
+  const chart = runtime({ href: 'http://127.0.0.1:4317/#business-chart', market: 'Ozon' });
+  assert.equal(chart.fetches.length, 1);
+  assert.match(chart.fetches[0], /^\/api\/insights\?/);
+  assert.match(chart.fetches[0], /scope=orders/);
+  assert.equal(chart.fetches.some(url => url.startsWith('/api/profit-series?')), false);
+  assert.equal(chart.fetches.some(url => url.startsWith('/api/data?')), false);
+
+  const economics = runtime({ href: 'http://127.0.0.1:4317/#economics', market: 'Ozon' });
+  assert.equal(economics.fetches.length, 1);
+  assert.match(economics.fetches[0], /^\/api\/insights\?/);
+  assert.doesNotMatch(economics.fetches[0], /scope=orders/);
+  const queryEconomics = runtime({ href: 'http://127.0.0.1:4317/?view=economics', market: 'Ozon' });
+  assert.equal(queryEconomics.fetches.length, 1);
+  assert.doesNotMatch(queryEconomics.fetches[0], /scope=orders/);
+  assert.match(ui, /financialMetrics\.has\(\$\('ins-chart-metric'\)\.value\)\)void load\('full'\)/);
+  assert.match(ui, /else void load\('orders'\)/);
+  assert.match(ui, /!wantsFullReport\(\)&&currentHash\(\)!=='wb-economics'/);
+  assert.doesNotMatch(ui, /wbView\.render\(report\);focusView\.render\(report\);economicsView\.render\(report\);declineView\.render\(report\)/);
+});
+
+test('TrueStats management summary stays deferred until its section is explicitly opened', () => {
+  const overview = runtime({ market: 'Ozon' });
+  assert.equal(overview.fetches.some(url => url.startsWith('/api/profit-series?')), false);
+  const summary = runtime({ href: 'http://127.0.0.1:4317/#management-summary', market: 'Ozon' });
+  assert.equal(summary.fetches.filter(url => url.startsWith('/api/profit-series?')).length, 1);
+  assert.match(ui, /href="\/data-updates\.html">Обновление данных/);
+  assert.match(ui, /Сам экран автоматически читает только лёгкую сводку заказов/);
+  assert.match(ui, /60-дневная история заказов Ozon и воронка запускаются только вручную/);
+  assert.match(ui, /Уже сохранённые данные остаются доступны/);
+  assert.match(ui, /Тяжёлые отчёты и история: вручную/);
+  assert.doesNotMatch(ui, /Финансы, товары и себестоимость: каждые 30 минут/);
 });
 
 test('WB keeps its canonical selector value and dedicated report labels', () => {
@@ -171,6 +231,16 @@ test('WB keeps its canonical selector value and dedicated report labels', () => 
   assert.doesNotMatch(ui, /ins-wb/);
   assert.match(wbUi, /TRUESTATS · WILDBERRIES/);
   assert.match(wbUi, /Прямой отчёт WB/);
+});
+
+test('WB economics polls only while its own section is open and the document is visible', () => {
+  assert.match(wbUi, /hash\?hash==='wb-economics':view==='wb-economics'/);
+  assert.match(wbUi, /&&!document\.hidden/);
+  assert.match(wbUi, /if\(!sectionActive\(\)\)return/);
+  assert.match(wbUi, /window\.addEventListener\('hashchange',\(\)=>\{if\(!sectionActive\(\)\)deactivate\(\)\}\)/);
+  assert.match(wbUi, /window\.addEventListener\('pult:view-change'/);
+  assert.match(wbUi, /document\.addEventListener\('visibilitychange'/);
+  assert.match(wbUi, /else if\(lastReport\)void load\(lastReport\)/);
 });
 
 test('business chart exposes WB honestly and removes yesterday and week reference controls', () => {
@@ -194,8 +264,8 @@ test('business chart switches to categories without losing the store selection o
   assert.match(chart, /Исторические дни используют текущую подтверждённую классификацию/);
   assert.match(chart, /За сегодня показывается последний подтверждённый итог из API/);
   assert.match(chart, /Ozon и Wildberries объединены по нашим типам/);
-  assert.match(chart, /сумма остаётся пустой, если рублёвая сумма не подтверждена/);
-  assert.match(chart, /не выдаётся за полный итог/);
+  assert.match(chart, /Прочерк означает, что подтверждённых сумм нет; пропуски не заменяются нулём/);
+  assert.match(chart, /часть дней или площадок не загружена, она отмечена «Неполно»/);
   assert.match(chart, /function setMode\(next\)\{mode=next/);
 });
 

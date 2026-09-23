@@ -46,6 +46,28 @@ test('live SQL insight projection preserves sales, ledger evidence and warnings 
  assert.equal(empty.metrics.orderedRevenue.current,0);
 });
 test('insights preserves legacy report, intraday, schedule, jobs and history error shape',async()=>{const service=fixture(),result=await service.insights(params({store:'1',from:FROM,to:TO}));assert.equal(result.days,1);assert.equal(result.intraday.date,DAY);assert.equal(result.refresh.error,'history warning');assert.equal(result.refresh.nextAt,'2026-09-20T13:00:00Z');assert.equal(result.jobs[0].status,'idle');assert.equal(result.syncJobs[0].id,'1');assert.equal(result.metrics.orderedRevenue.current,120);});
+
+test('orders-only report leaves ledger, catalog, costs and full SKU insights cold',async()=>{
+ let orderReads=0;
+ const forbidden=async()=>{throw Error('Heavy source must not be read for the chart')};
+ const service=fixture({sourceOverrides:{getReportCatalog:forbidden,getOzonLedger:forbidden,exact:forbidden,getInsights:forbidden,async getOrderInsights(){orderReads++;return [{storeId:'1',value:{orders:{period:{from:'2026-09-19',to:TO},updatedAt:'2026-09-20T11:55:00Z',daily:[{date:DAY,revenue:120,units:2}]},errors:[]}}]}}});
+ const result=await service.insights(params({store:'1',from:FROM,to:TO,scope:'orders'}));
+ assert.equal(orderReads,1);assert.equal(result.scope,'orders');assert.equal(result.metrics.orderedRevenue.current,120);assert.equal(result.metrics.orderedUnits.current,2);
+ assert.equal(result.metrics.net.current,null);assert.equal(result.metrics.zeroStock.current,null);assert.equal(result.metrics.stocks.current,null);assert.deepEqual(result.products,[]);assert.deepEqual(result.fees,[]);
+ assert.equal(result.refresh.error,null,'deferred financial history must not appear as a chart error');
+ assert.equal(result.intraday.orders.length,1);assert.equal(result.intraday.orders[0].at,'2026-09-20T11:55:00.000Z');assert.equal(result.intraday.orders[0].orderedRevenue,120);
+ assert.equal(result.intraday.orders[0].sourceFromAt,result.intraday.orders[0].at);
+});
+
+test('live chart observations never invent current time or use a stale or future source day',async()=>{
+ for(const updatedAt of ['2026-09-19T11:00:00Z','2026-09-20T12:01:00Z',null]){
+  const service=fixture({sourceOverrides:{async getOrderInsights(){return [{storeId:'1',value:{orders:{period:{from:FROM,to:TO},updatedAt,daily:[{date:DAY,revenue:120,units:2}]},errors:[]}}]}}});
+  const result=await service.insights(params({store:'1',from:FROM,to:TO,scope:'orders'}));assert.deepEqual(result.intraday.orders,[]);
+ }
+ const service=fixture(),historical=await service.insights(params({store:'1',from:'2026-09-19',to:'2026-09-19',scope:'orders'}));
+ assert.deepEqual(historical.intraday.orders,[]);
+ await assert.rejects(service.insights(params({store:'1',from:FROM,to:TO,scope:'unknown'})),/состав отчёта/);
+});
 test('insights rejects missing or stale saved ledger without loading the raw market snapshot',async()=>{for(const saved of [null,{version:3,complete:true,period:{from:'2026-09-19',to:TO},completedAt:'2026-09-20T11:59:59Z',daily:[],skuDaily:[],fees:[]}]){let rawReads=0;const service=fixture({sourceOverrides:{async getOzonLedger(){return saved},async getMarketSnapshot(){rawReads++;throw Error('raw snapshot must stay cold')}}}),result=await service.insights(params({store:'1',from:FROM,to:TO}));assert.equal(result.coverage.finance,false);assert.equal(result.metrics.net.current,null);assert.equal(result.metrics.orderedRevenue.current,120);assert.equal(rawReads,0)}});
 test('enriched ledger evidence must match current SQL snapshot and insight types',async()=>{const digest='a'.repeat(64),source={snapshotId:'11111111-1111-4111-8111-111111111111',marketRevision:'7',marketSha256:digest},catalog={completedAt:'2026-09-20T12:00:00Z',period:{from:'2026-09-19',to:TO},sections:{stocks:{ok:true}},products:[],stocks:[],_source:source},ledger={version:3,complete:true,period:catalog.period,completedAt:catalog.completedAt,daily:[],skuDaily:[],fees:[]},saved={stamp:catalog.completedAt,source:{...source,typesSha256:typesHash([])},data:ledger},matching=await fixture({sourceOverrides:{async getReportCatalog(){return catalog},async getOzonLedger(){return saved}}}).insights(params({store:'1',from:FROM,to:TO}));assert.equal(matching.coverage.finance,true);const stale=await fixture({sourceOverrides:{async getReportCatalog(){return catalog},async getOzonLedger(){return{...saved,source:{...saved.source,marketRevision:'6'}}}}}).insights(params({store:'1',from:FROM,to:TO}));assert.equal(stale.coverage.finance,false)});
 test('sources, WB orders and economics compare use saved SQL shapes without refresh calls',async()=>{const service=fixture(),sources=await service.insightSources();assert.equal(sources.stores[0].data.orders.daily[0].units,2);const wb=await service.wbOrders(params({store:'wb-1',date:DAY}));assert.equal(wb.metrics.orderedRevenue.current,50);assert.equal(wb.coverage.orders,true);const comparison=await service.economicsCompare(params({store:'1',from:FROM,to:TO}));assert.equal(comparison.status,'ready');assert.deepEqual(comparison.input.period,{from:FROM,to:TO});});

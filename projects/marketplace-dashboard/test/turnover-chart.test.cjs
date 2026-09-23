@@ -7,6 +7,12 @@ test('missing series stays unavailable rather than becoming a zero',()=>{
  assert.deepEqual(model.points({days:1,intraday:{orders:[]}},'net'),[]);assert.equal(model.totals({metrics:{realized:{current:null}}},'realized'),null);
  assert.equal(model.totals({metrics:{realized:{current:0}}},'realized'),0);
 });
+
+test('store chart retains the real refresh time range for staggered observations',()=>{
+ const from='2026-09-20T10:00:00Z',to='2026-09-20T10:20:00Z';
+ const point=model.points({days:1,intraday:{orders:[{at:to,orderedRevenue:100,staggered:true,sourceFromAt:from,sourceToAt:to}]}},'orderedRevenue')[0];
+ assert.equal(point.time,Date.parse(to));assert.equal(point.staggered,true);assert.equal(point.sourceFromAt,from);assert.equal(point.sourceToAt,to);assert.equal(point.value,100);
+});
 test('category daily known total distinguishes missing values from observed zero',()=>{
  const missing=model.categoryDailyLine([{points:[{date:'2026-09-14',orderedRevenue:null,complete:false}]}],'orderedRevenue','2026-09-14','2026-09-14',1);
  assert.equal(missing.points[0].value,null);assert.equal(missing.known,null);assert.equal(missing.total,null);assert.equal(missing.complete,false);
@@ -18,6 +24,17 @@ test('category daily known total distinguishes missing values from observed zero
 test('daily gaps split line segments; negative values remain visible on a common axis',()=>{
  const points=model.points({days:3,daily:[{date:'2026-09-14',net:30},{date:'2026-09-15',net:null},{date:'2026-09-16',net:-10}]},'net');
  assert.deepEqual(model.segments(points).map(s=>s.map(p=>p.value)),[[30],[-10]]);assert.deepEqual(model.domain([{points},{points:[{value:100}]}]),{min:-10,max:100});
+});
+
+test('a missing category marketplace or amount keeps the known value explicitly partial',()=>{
+ const point={date:'2026-09-14',orderedRevenue:125,complete:true,observed:true};
+ for(const other of [[],[{...point,orderedRevenue:null}],[{...point,orderedRevenue:900,observed:false}]]){
+  const line=model.categoryDailyLine([{points:[point]},{points:other}],'orderedRevenue',point.date,point.date,1);
+  assert.equal(line.points[0].value,125);assert.equal(line.points[0].partial,true);
+  assert.equal(line.known,125);assert.equal(line.total,null);assert.equal(line.complete,false);
+ }
+ const knownPartial=model.categoryDailyLine([{points:[{...point,complete:false,revenueKnown:false}]}],'orderedRevenue',point.date,point.date,1);
+ assert.equal(knownPartial.known,125);assert.equal(knownPartial.total,null);assert.equal(knownPartial.points[0].partial,true);
 });
 test('total and individual store series remain independent and are never summed twice',()=>{
  const total={days:1,intraday:{orders:[{at:'2026-09-16T12:00:00Z',orderedRevenue:300}]}},shop={days:1,intraday:{orders:[{at:'2026-09-16T12:00:00Z',orderedRevenue:100}]}};
