@@ -128,6 +128,16 @@ test('initial page-layout route event reuses the in-flight orders request and re
   assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
 });
 
+test('buyer page does not start or poll the hidden insights report', () => {
+  const app = runtime({ href: 'http://127.0.0.1:4317/?view=buyers', market: 'Ozon' });
+  app.dispatch('pult:view-change');
+  app.intervals[0]();
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 0);
+  app.context.document.body.dataset.pultView = 'overview';
+  app.dispatch('pult:view-change');
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
+});
+
 test('latest report mode wins while an orders request is in flight', async () => {
   let resolveInsights;
   const app = runtime({ market: 'Ozon', fetchImpl: url => url.startsWith('/api/insights?') ? new Promise(resolve => { resolveInsights = resolve; }) : new Promise(() => {}) });
@@ -209,7 +219,7 @@ test('business chart uses the orders scope while an explicit economics route loa
   assert.doesNotMatch(queryEconomics.fetches[0], /scope=orders/);
   assert.match(ui, /financialMetrics\.has\(\$\('ins-chart-metric'\)\.value\)\)void load\('full'\)/);
   assert.match(ui, /else void load\('orders'\)/);
-  assert.match(ui, /!wantsFullReport\(\)&&currentHash\(\)!=='wb-economics'/);
+  assert.match(ui, /insightsRoutes\.has\(currentHash\(\)\)&&!wantsFullReport\(\)/);
   assert.doesNotMatch(ui, /wbView\.render\(report\);focusView\.render\(report\);economicsView\.render\(report\);declineView\.render\(report\)/);
 });
 

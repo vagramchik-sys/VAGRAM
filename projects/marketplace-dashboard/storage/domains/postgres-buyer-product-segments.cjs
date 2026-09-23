@@ -29,7 +29,7 @@ function totalSegment(items,buyerType){
  return {units,cancelledUnits,cancellationUnknownUnits,amountRub:amountKnown?amountRub:null,currency:amountKnown?'RUB':null};
 }
 
-function create({getStores,getSnapshot,getOrderSnapshots,getCatalog,builder=productSegments}={}){
+function create({getStores,getSnapshot,getOrderSnapshots,getCatalog,getAggregate,builder=productSegments}={}){
  if([getStores,getSnapshot,getOrderSnapshots,getCatalog].some(value=>typeof value!=='function'))throw Error('Не настроен SQL-источник товарных сегментов');
  function derivedSnapshot(documents,from,to){
   if(!Array.isArray(documents)||!documents.length)return null;
@@ -115,7 +115,7 @@ function create({getStores,getSnapshot,getOrderSnapshots,getCatalog,builder=prod
   if(storeId&&market!=='all'&&storeMarket(storeId,stores[storeId])!==market)throw Error('Магазин не относится к выбранной площадке');
   limit=Number(limit);if(!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Проверьте размер товарного рейтинга');
   const selected=Object.entries(stores).filter(([id,store])=>(!storeId||id===storeId)&&(market==='all'||storeMarket(id,store)===market));
-  const prepared=await getSnapshot({from,to}),raw=prepared||derivedSnapshot(await getOrderSnapshots({from,to}),from,to);
+  const prepared=await getSnapshot({from,to}),raw=prepared||(typeof getAggregate==='function'?derivedSnapshot((await getAggregate({from,to,market,storeId}))?.documents||[],from,to):derivedSnapshot(await getOrderSnapshots({from,to}),from,to));
   if(!raw||!Array.isArray(raw.products)||raw.period?.from!==from||raw.period?.to!==to)return unavailable(from,to,[],buyerType);
   const actualSources=(Array.isArray(raw.coverage?.sources)?raw.coverage.sources:[]).filter(source=>(market==='all'||source.market===market)&&(!storeId||source.storeId===storeId)).map(source=>({market:source.market,scheme:source.scheme,storeId:source.storeId||null,name:typeof source.name==='string'?source.name:null,available:source.available===true,complete:source.complete===true&&source.coversRequested!==false,coversRequested:source.coversRequested!==false,overlapsRequested:source.overlapsRequested!==false,limitation:typeof source.limitation==='string'?source.limitation:null}));
   for(const [id,store] of selected){const expectedMarket=storeMarket(id,store);for(const scheme of SCHEMES[expectedMarket])if(!actualSources.some(source=>source.market===expectedMarket&&source.scheme===scheme&&source.storeId===id))actualSources.push({market:expectedMarket,scheme,storeId:id,name:typeof store.name==='string'?store.name:null,available:false,complete:false,limitation:'Источник за выбранный период ещё не подготовлен.'})}

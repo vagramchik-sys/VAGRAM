@@ -27,7 +27,7 @@ function combineSnapshots(snapshots,{from,to,match=()=>true}={}){
  return{records:[...records.values()].map(item=>item.record),sources};
 }
 
-function create({getStores,getSnapshot,getSnapshots}={}){
+function create({getStores,getSnapshot,getSnapshots,getAggregate}={}){
  if(typeof getStores!=='function'||typeof getSnapshots!=='function'&&typeof getSnapshot!=='function')throw Error('Не настроен SQL-источник сегментов заказов');
  const loadSnapshots=typeof getSnapshots==='function'?getSnapshots:async options=>{const value=await getSnapshot(options);return value?[value]:[]};
  async function read({from,to,market='all',storeId}={}){
@@ -37,8 +37,9 @@ function create({getStores,getSnapshot,getSnapshots}={}){
   if(storeId&&!Object.hasOwn(stores,storeId))throw Error('Проверьте магазин');
   if(storeId&&market!=='all'&&storeMarket(storeId,stores[storeId])!==market)throw Error('Магазин не относится к выбранной площадке');
   const selected=Object.entries(stores).filter(([id,store])=>(!storeId||id===storeId)&&(market==='all'||storeMarket(id,store)===market));
-  const snapshots=await loadSnapshots({from,to}),matches=value=>(market==='all'||value.market===market)&&(!storeId||value.storeId===storeId),combined=combineSnapshots(snapshots,{from,to,match:matches});
-  const raw=buyerSegments.aggregate(combined.records,{from,to,sources:combined.sources});
+  const matches=value=>(market==='all'||value.market===market)&&(!storeId||value.storeId===storeId);
+  const snapshots=typeof getAggregate==='function'?(await getAggregate({from,to,market,storeId}))?.documents||[]:await loadSnapshots({from,to});
+  const combined=combineSnapshots(snapshots,{from,to,match:matches}),raw=buyerSegments.aggregate(combined.records,{from,to,sources:combined.sources});
   const sources=(raw.coverage?.sources||[]).map(item=>({market:item.market,scheme:item.scheme,storeId:item.storeId||null,name:typeof item.name==='string'?item.name:null,complete:item.complete===true,available:item.available===true,requested:{from:item.requested?.from||from,to:item.requested?.to||to},fetchedAt:item.fetchedAt||null,limitation:typeof item.limitation==='string'?item.limitation:null}));
   for(const [id,store] of selected){const expectedMarket=storeMarket(id,store);for(const scheme of SCHEMES[expectedMarket])if(!sources.some(item=>item.market===expectedMarket&&item.scheme===scheme&&item.storeId===id))sources.push({market:expectedMarket,scheme,storeId:id,name:typeof store.name==='string'?store.name:null,complete:false,available:false,requested:{from,to},fetchedAt:null,limitation:'Источник за выбранный период ещё не подготовлен.'})}
   const expected=selected.flatMap(([id,store])=>SCHEMES[storeMarket(id,store)].map(scheme=>({id,market:storeMarket(id,store),scheme})));

@@ -105,7 +105,7 @@ test('dashboard defers full store snapshots outside catalog, finance and store s
  assert.match(source,/document\.body\.dataset\.pultView\|\|url\.searchParams\.get\('view'\)/);
  assert.match(source,/window\.addEventListener\('pult:view-change',nav\)/);
  assert.match(source,/const need=loadSnapshots\?stores\.filter/);
- assert.match(source,/setInterval\(\(\)=>\{if\(!document\.hidden\)void refresh\(false,false\)\}/);
+ assert.match(source,/setInterval\(\(\)=>\{if\(!document\.hidden&&snapshotSection\(\)\)void refresh\(false,false\)\},30000\)/);
  assert.match(source,/Каталог загружается только при открытии этого раздела/);
  assert.match(source,/Загрузятся при открытии финансов/);
  assert.doesNotMatch(source,/setInterval\(\(\)=>\{if\(!document\.hidden\)void refresh\(\)\}/);
