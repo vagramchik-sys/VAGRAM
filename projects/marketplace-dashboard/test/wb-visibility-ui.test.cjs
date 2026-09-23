@@ -247,7 +247,9 @@ test('business chart exposes WB honestly and removes yesterday and week referenc
   const chart = fs.readFileSync(require.resolve('../dist/turnover-chart.js'), 'utf8');
   assert.match(chart, /catalog=list/);
   assert.match(chart, /\/api\/wb\/orders\?/);
-  assert.match(chart, /WB: сумма по priceWithDisc, без отменённых заказов/);
+  assert.match(chart, /priceWithDisc/);
+  assert.match(chart, /Общий · Ozon \+ WB/);
+  assert.match(chart, /Общий итог неполный/);
   assert.match(chart, /одна строка API равна одной заказанной единице/);
   assert.doesNotMatch(chart, /id="chart-compare-controls"/);
   assert.doesNotMatch(chart, /Неделю назад/);

@@ -241,13 +241,13 @@ function createLiveSourceProviders({sources} = {}) {
   }
 
   async function categoryRevision(options = {}) {
-    const {from, to} = period(options), selectedStore = options.store || options.storeId || null, selectedMarket = options.market === 'Ozon' || options.market === 'WB' ? options.market : 'all', selected = [];
+    const {from, to} = period(options), today = options.today == null ? null : validDay(options.today) ? options.today : fail('INVALID_PERIOD', 'Category current day is invalid'), includesToday = today === null || from <= today && to >= today, selectedStore = options.store || options.storeId || null, selectedMarket = options.market === 'Ozon' || options.market === 'WB' ? options.market : 'all', selected = [];
     for (const row of await names()) {
       const sourcePath = row.sourcePath, buyer = BUYER.exec(sourcePath);
       let storeId = null, market = null, relevant = false;
       if (/^order-category-catalog-(?:wb-)?[0-9]+\.json$/u.test(sourcePath)) { storeId = sourcePath.slice(23, -5); market = storeId.startsWith('wb-') ? 'WB' : 'Ozon'; relevant = true; }
-      else if (/^insights-[0-9]+\.json$/u.test(sourcePath)) { storeId = sourcePath.slice(9, -5); market = 'Ozon'; relevant = true; }
-      else if (/^wb-orders-wb-[0-9]+\.json$/u.test(sourcePath)) { storeId = sourcePath.slice(10, -5); market = 'WB'; relevant = true; }
+      else if (includesToday && /^insights-[0-9]+\.json$/u.test(sourcePath)) { storeId = sourcePath.slice(9, -5); market = 'Ozon'; relevant = true; }
+      else if (includesToday && /^wb-orders-wb-[0-9]+\.json$/u.test(sourcePath)) { storeId = sourcePath.slice(10, -5); market = 'WB'; relevant = true; }
       else if (buyer && buyer[1] === 'order-segments' && buyer[4] === undefined && buyer[2] <= to && buyer[3] >= from) relevant = true;
       if (!relevant || storeId !== null && (selectedStore && storeId !== String(selectedStore) || selectedMarket !== 'all' && market !== selectedMarket)) continue;
       const revision = String(row.head?.revision ?? '');

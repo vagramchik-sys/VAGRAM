@@ -6,12 +6,12 @@ const source=fs.readFileSync(require.resolve('../dist/turnover-chart.js'),'utf8'
 const flush=()=>new Promise(resolve=>setImmediate(()=>setImmediate(resolve)));
 function runtime(load,options={}){
  const nodes=new Map();
- const node=id=>{if(!nodes.has(id))nodes.set(id,{id,value:id==='ins-chart-metric'?'orderedRevenue':'',checked:false,hidden:false,_innerHTML:'',innerHTMLWrites:0,get innerHTML(){return this._innerHTML},set innerHTML(value){this._innerHTML=value;this.innerHTMLWrites++},textContent:'',insertAdjacentHTML(){},setAttribute(){},removeAttribute(){},closest(){return this}});return nodes.get(id)};
+ const node=id=>{if(!nodes.has(id))nodes.set(id,{id,value:id==='ins-chart-metric'?'orderedRevenue':'',checked:false,hidden:false,style:{setProperty(){}},_innerHTML:'',innerHTMLWrites:0,get innerHTML(){return this._innerHTML},set innerHTML(value){this._innerHTML=value;this.innerHTMLWrites++},textContent:'',insertAdjacentHTML(){},setAttribute(){},removeAttribute(){},querySelector(){return null},querySelectorAll(){return []},closest(){return this}});return nodes.get(id)};
  let calls=0;
  class Clock extends Date {constructor(...args){super(...(args.length?args:['2026-09-20T12:00:00Z']))}static now(){return Date.parse('2026-09-20T12:00:00Z')}}
  const context={document:{getElementById:node},window:{},PultStoreChart:require('../dist/turnover-chart-model.js'),Intl,Date:Clock,URLSearchParams,Promise,Map,Set,console};
  vm.runInNewContext(source,context);
- const chart=context.window.createPultStoreChart({api:url=>url==='/api/stores'?Promise.resolve([]):(calls++,load(url)),metricTitle:()=> 'Сумма'});
+ const chart=context.window.createPultStoreChart({api:url=>url==='/api/stores'?Promise.resolve(options.stores||[]):(calls++,load(url)),metricTitle:()=> 'Сумма'});
  if(options.from)node('ins-from').value=options.from;if(options.to)node('ins-to').value=options.to;
  if(options.categoryMode!==false)node('chart-mode-categories').onclick();
  return {chart,node,calls:()=>calls,update:date=>chart.update({days:1,current:{from:date,to:date}})};
@@ -33,12 +33,26 @@ test('store orders and forecast use the light report; financial selection cannot
  const urls=[],current={from:'2026-09-20',to:'2026-09-20'},report={scope:'orders',days:1,current,metrics:{},intraday:{orders:[]},coverage:{}};
  const app=runtime(url=>{urls.push(url);return Promise.resolve(report)},{categoryMode:false});
  app.node('chart-forecast-enabled').checked=true;app.chart.update(report);await flush();
- assert.equal(urls.length,1,'current orders reuse the supplied light response');
- assert.match(urls[0],/scope=orders/);assert.match(urls[0],/from=2026-08-30/);
+ assert.equal(urls.length,0,'combined total reuses supplied orders and does not invent an Ozon-only forecast');
  app.node('ins-chart-metric').value='net';await app.chart.render();
- assert.equal(urls.length,2);assert.match(urls[1],/scope=full/);
+ assert.equal(urls.length,1);assert.match(urls[0],/scope=full/);
  app.node('ins-chart-metric').value='orderedRevenue';await app.chart.render();
- assert.equal(urls.length,2,'switching back retains the separate light cache');
+ assert.equal(urls.length,1,'switching back retains the separate light cache');
+});
+test('default total requests WB even when its individual line is unchecked and combines it once',async()=>{
+ const urls=[],current={from:'2026-09-20',to:'2026-09-20'},ozon={scope:'orders',days:1,current,metrics:{orderedRevenue:{current:100},orderedUnits:{current:2}},intraday:{orders:[{at:'2026-09-20T09:00:00Z',orderedRevenue:100,orderedUnits:2}]},coverage:{orders:true}},wb={days:1,current,metrics:{orderedRevenue:{current:20},orderedUnits:{current:1}},intraday:{orders:[{at:'2026-09-20T09:00:00Z',orderedRevenue:20,orderedUnits:1}]},coverage:{orders:true}};
+ const app=runtime(url=>{urls.push(url);return Promise.resolve(url.startsWith('/api/wb/orders?')?wb:ozon)},{categoryMode:false,stores:[{id:'1',name:'Ozon shop'},{id:'wb-2',name:'WB · Shop'}]});
+ app.node('chart-forecast-enabled').checked=true;
+ app.chart.update(ozon);await flush();
+ assert.equal(urls.filter(url=>url.startsWith('/api/wb/orders?')).length,1,'combined total requires WB even when its checkbox is off');
+ assert.equal(urls.filter(url=>url.startsWith('/api/insights?')).length,0,'the supplied aggregate Ozon report is reused');
+ assert.match(app.node('chart-store-options').innerHTML,/Общий · Ozon \+ WB/);
+ assert.match(app.node('ins-chart-details').innerHTML,/120 ₽/,'Ozon 100 and WB 20 are summed exactly once');
+ assert.doesNotMatch(app.node('ins-chart-details').innerHTML,/WB · Shop<\/span>/,'unchecked WB is not drawn as a second individual total');
+ assert.doesNotMatch(app.node('ins-chart-details').innerHTML,/прогноз/i,'the Ozon-only forecast is not attached to the combined line');
+ assert.match(app.node('chart-store-status').textContent,/Общий итог включает Ozon и Wildberries/);
+ app.node('ins-chart-metric').value='orderedUnits';await app.chart.render();
+ assert.match(app.node('ins-chart-details').innerHTML,/3 шт\./,'units use the same Ozon plus WB total');
 });
 test('concurrent renders share a request and a failed request can be retried',async()=>{
  let resolve,reject;

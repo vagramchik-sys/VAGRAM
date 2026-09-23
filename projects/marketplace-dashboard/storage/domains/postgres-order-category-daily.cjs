@@ -10,7 +10,8 @@ module.exports = function createPostgresOrderCategoryDaily({ productTypes, getCa
   const storeRevision = stores => JSON.stringify(Object.entries(stores).sort(([left], [right]) => left.localeCompare(right)).map(([id, store]) => [id, typeof store?.name === 'string' ? store.name : null, store?.market === 'WB' ? 'WB' : 'Ozon']));
   const requestOptions = (options, effectiveNow) => ({ from: options.from, to: options.to, market: options.market || 'all', store: options.store || options.storeId || null, today: moscowDay(effectiveNow), classifiedAt: options.classifiedAt || null });
   async function buildReport(options, prepared) {
-    const loaded = await Promise.all([getCatalogs(), getSnapshots({ from: options.from, to: options.to }), getInsights(), getWbOrders(), ...(prepared ? [] : [productTypes.read(), getStores()])]);
+    const today = moscowDay(options.now || now()), includesToday = typeof options.from === 'string' && typeof options.to === 'string' && options.from <= today && options.to >= today;
+    const loaded = await Promise.all([getCatalogs(), getSnapshots({ from: options.from, to: options.to }), includesToday ? getInsights() : [], includesToday ? getWbOrders() : [], ...(prepared ? [] : [productTypes.read(), getStores()])]);
     const [catalogsRaw, snapshots, insightsRaw, wbRaw] = loaded, {registry, stores} = prepared || {registry: loaded[4], stores: loaded[5]};
     if (!Array.isArray(catalogsRaw) || !Array.isArray(snapshots) || !Array.isArray(insightsRaw) || !Array.isArray(wbRaw) || !stores || typeof stores !== 'object') throw Error('Invalid category SQL provider contract');
     const catalogs = catalogsRaw.map(item => ({ ...item, name: typeof stores[item.storeId]?.name === 'string' ? stores[item.storeId].name : item.name || null }));
@@ -19,10 +20,10 @@ module.exports = function createPostgresOrderCategoryDaily({ productTypes, getCa
   }
   async function cachedReport(options, effectiveNow) {
     if (!categoryRevision) return buildReport({...options, now: effectiveNow});
-    const [sourceRevision, registryRaw, storesRaw] = await Promise.all([categoryRevision(options), productTypes.read(), getStores()]);
+    const revisionOptions = {...options, today: moscowDay(effectiveNow)}, [sourceRevision, registryRaw, storesRaw] = await Promise.all([categoryRevision(revisionOptions), productTypes.read(), getStores()]);
     const registry = validateRegistry(registryRaw), stores = checkedStores(storesRaw), cacheKey = JSON.stringify([checkedRevision(sourceRevision), JSON.stringify(registry), storeRevision(stores), requestOptions(options, effectiveNow)]);
     if (completed.has(cacheKey)) { const value = completed.get(cacheKey); completed.delete(cacheKey); completed.set(cacheKey, value); return value; }
-    const report = await buildReport({...options, now: effectiveNow}, {registry, stores}), finalRevision = checkedRevision(await categoryRevision(options));
+    const report = await buildReport({...options, now: effectiveNow}, {registry, stores}), finalRevision = checkedRevision(await categoryRevision(revisionOptions));
     if (finalRevision === sourceRevision) { if (completed.size >= 4) completed.delete(completed.keys().next().value); completed.set(cacheKey, report); }
     return report;
   }

@@ -40,6 +40,28 @@ test('total and individual store series remain independent and are never summed 
  const total={days:1,intraday:{orders:[{at:'2026-09-16T12:00:00Z',orderedRevenue:300}]}},shop={days:1,intraday:{orders:[{at:'2026-09-16T12:00:00Z',orderedRevenue:100}]}};
  const series=[total,shop].map(r=>({points:model.points(r,'orderedRevenue')}));assert.equal(model.domain(series).max,300);assert.equal(series[0].points[0].value,300);assert.equal(series[1].points[0].value,100);
 });
+test('marketplace total combines Ozon aggregate with WB using aligned real observations only',()=>{
+ const lines=[
+  {id:'',market:'Ozon',report:{coverage:{orders:true}},points:[{time:Date.parse('2026-09-23T10:00:00Z'),label:'o1',value:100},{time:Date.parse('2026-09-23T10:30:00Z'),label:'o2',value:150}]},
+  {id:'1',market:'Ozon',points:[{time:Date.parse('2026-09-23T10:30:00Z'),value:90}]},
+  {id:'wb-1',market:'WB',report:{coverage:{orders:true}},points:[{time:Date.parse('2026-09-23T10:20:00Z'),label:'w1',value:40},{time:Date.parse('2026-09-23T11:01:00Z'),label:'w2',value:60}]}
+ ],combined=model.combineMarketplaceLines(lines,{days:1,metric:'orderedRevenue'}),actual=combined.points.filter(point=>point.value!==null);
+ assert.deepEqual(combined.includedIds,['ozon-total','wb-1']);assert.deepEqual(combined.missingIds,[]);assert.equal(combined.complete,false);
+ assert.deepEqual(actual.map(point=>point.value),[140,190]);assert.equal(actual[0].time,Date.parse('2026-09-23T10:20:00Z'));assert.equal(actual[0].sourceSkewMs,20*60000);assert.equal(actual[0].staggered,true);assert.equal(actual[0].sources.length,2);
+ assert.equal(combined.points.at(-1).value,null);assert.equal(combined.points.at(-1).partial,true);assert.equal(combined.total,null);
+});
+test('marketplace total keeps missing sources and daily coverage as gaps, never zero',()=>{
+ const missing=model.combineMarketplaceLines([{id:'',market:'Ozon',points:[{time:1,label:'x',value:10}]},{id:'wb-1',market:'WB',report:{coverage:{orders:false}},points:[]}],{days:1,metric:'orderedUnits'});
+ assert.deepEqual(missing.missingIds,['wb-1']);assert.equal(missing.points[0].value,null);assert.equal(missing.total,null);assert.equal(missing.complete,false);
+ const daily=model.combineMarketplaceLines([{id:'',market:'Ozon',points:[{time:1,label:'2026-09-21',value:3},{time:2,label:'2026-09-22',value:4}]},{id:'wb-1',market:'WB',points:[{time:1,label:'2026-09-21',value:2}]}],{days:2,metric:'orderedUnits'});
+ assert.deepEqual(daily.points.map(point=>point.value),[5,null]);assert.equal(daily.points[1].partial,true);assert.equal(daily.total,null);assert.equal(daily.complete,false);
+});
+test('marketplace total rejects finite partial inputs and deduplicates WB identities',()=>{
+ const at=Date.parse('2026-09-23T10:00:00Z'),ozon={id:'',market:'Ozon',points:[{time:at,label:'2026-09-23',value:10}]},wb={id:'wb-1',market:'WB',points:[{time:at,label:'2026-09-23',value:5,partial:true}]};
+ const intraday=model.combineMarketplaceLines([ozon,wb,{...wb,points:[{time:at,label:'2026-09-23',value:500}]}],{days:1,metric:'orderedUnits'});
+ assert.deepEqual(intraday.includedIds,['ozon-total','wb-1']);assert.equal(intraday.points[0].value,null);assert.equal(intraday.total,null);assert.equal(intraday.complete,false);
+ const daily=model.combineMarketplaceLines([ozon,wb],{days:2,metric:'orderedUnits'});assert.equal(daily.points[0].value,null);assert.equal(daily.points[0].partial,true);assert.equal(daily.total,null);
+});
 test('point inspection keeps zero and negative corrections, without comparing across a gap',()=>{
  const points=[{time:1,value:100},{time:2,value:0},{time:3,value:-10},{time:4,value:null},{time:5,value:80}];
  assert.equal(model.observation(points,0).delta,null);

@@ -7,6 +7,41 @@ const MAX_DEPTH = 5;
 const FACET_LABELS = { color: 'Цвет', material: 'Материал', coating: 'Покрытие', size: 'Размер', density: 'Плотность', pack: 'Упаковка' };
 const normalize = value => String(value || '').toLowerCase().replace(/ё/g, 'е');
 
+function mergeCottonPvcBranches(next, changes = [], nodes = []) {
+  const byId = new Map(next.types.map(type => [type.id, type]));
+  const parent = next.types.find(type => normalize(type.name).trim() === 'перчатки хлопчатобумажные с пвх');
+  if (!parent) return false;
+  const direct = name => next.types.find(type => type.parentId === parent.id && normalize(type.name).trim() === name);
+  const gray = direct('цвет: серый'), unknown = direct('цвет: не указан');
+  if (!gray || !unknown) return false;
+  const mergedId = 'attr-' + crypto.createHash('sha256').update([parent.id, 'color', 'gray-or-unknown'].join('|')).digest('hex').slice(0, 24);
+  let merged = byId.get(mergedId);
+  if (!merged) { merged = { id: mergedId, parentId: parent.id, name: 'Цвет: серый / не указан' }; next.types.push(merged); byId.set(mergedId, merged); nodes.push(merged); }
+  function absorb(sourceId, targetId) {
+    for (const [key, assignment] of Object.entries(next.assignments)) if (assignment.typeId === sourceId) {
+      next.assignments[key] = { ...assignment, typeId: targetId }; changes.push({ key, from: sourceId, to: targetId });
+    }
+    for (const rule of next.rules) if (rule.leafTypeId === sourceId) rule.leafTypeId = targetId;
+    for (const child of next.types.filter(type => type.parentId === sourceId)) {
+      const same = next.types.find(type => type.parentId === targetId && normalize(type.name).trim() === normalize(child.name).trim());
+      if (same) absorb(child.id, same.id); else child.parentId = targetId;
+    }
+    next.types = next.types.filter(type => type.id !== sourceId); byId.delete(sourceId);
+  }
+  absorb(gray.id, merged.id); absorb(unknown.id, merged.id);
+  return true;
+}
+
+function mergeCottonPvcGloveColors(input, { reviewedAt = new Date().toISOString() } = {}) {
+  const original = registryModule.validate(input), next = structuredClone(original), changes = [], addedTypes = [];
+  const changed = mergeCottonPvcBranches(next, changes, addedTypes);
+  if (changed) {
+    next.reviewedAt = reviewedAt;
+    next.revision = 'glove-colors-' + crypto.createHash('sha256').update(JSON.stringify([next.types, next.assignments, next.rules])).digest('hex').slice(0, 16);
+  }
+  return { registry: registryModule.validate(next), changed, changes, addedTypes };
+}
+
 function refine(input, products, { reviewedAt = new Date().toISOString() } = {}) {
   const original = registryModule.validate(input), next = structuredClone(original);
   const byId = new Map(next.types.map(type => [type.id, type]));
@@ -96,6 +131,7 @@ function refine(input, products, { reviewedAt = new Date().toISOString() } = {})
       }
     }
   }
+  mergeCottonPvcBranches(next, changes, nodes);
   const changed = changes.length > 0 || assignedNew.length > 0 || next.types.length !== original.types.length;
   if (changed) {
     next.reviewedAt = reviewedAt;
@@ -106,4 +142,4 @@ function refine(input, products, { reviewedAt = new Date().toISOString() } = {})
   return { registry, changes, assignedNew, addedTypes: nodes, changed };
 }
 
-module.exports = { refine, MAX_DEPTH };
+module.exports = { refine, mergeCottonPvcGloveColors, MAX_DEPTH };

@@ -1,6 +1,7 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict');
-const { refine } = require('../product-category-refinement.cjs');
+const { refine, mergeCottonPvcGloveColors } = require('../product-category-refinement.cjs');
+const { options: commandOptions } = require('../scripts/refine-product-categories.cjs');
 const { validate, classify } = require('../product-type-registry.cjs');
 const timestamp = '2026-09-23T10:00:00Z';
 function fixture() {
@@ -75,4 +76,23 @@ test('without supported characteristics an existing leaf is preserved without fi
   const result = refine(source, [], { reviewedAt: timestamp });
   assert.equal(result.changed, false);
   assert.equal(result.addedTypes.length, 0);
+});
+test('cotton PVC gloves merge gray and unspecified color only under the reviewed parent', () => {
+  const source={schemaVersion:1,revision:'gloves-1',reviewedAt:timestamp,types:[
+   {id:'ppe',parentId:null,name:'Средства защиты'},{id:'cotton-pvc',parentId:'ppe',name:'Перчатки хлопчатобумажные с ПВХ'},
+   {id:'gray',parentId:'cotton-pvc',name:'Цвет: серый'},{id:'unknown',parentId:'cotton-pvc',name:'Цвет: не указан'},
+   {id:'white',parentId:'cotton-pvc',name:'Цвет: белый'},{id:'black',parentId:'cotton-pvc',name:'Цвет: чёрный'},
+   {id:'other',parentId:'ppe',name:'Другие перчатки'},{id:'other-gray',parentId:'other',name:'Цвет: серый'},{id:'other-unknown',parentId:'other',name:'Цвет: не указан'}
+  ],assignments:{'1:gray':'gray','1:unknown':'unknown','1:white':'white','1:black':'black','1:other-gray':'other-gray','1:other-unknown':'other-unknown'},rules:[]};
+  const first=refine(source,[],{reviewedAt:timestamp}),merged=first.registry.types.find(type=>type.parentId==='cotton-pvc'&&type.name==='Цвет: серый / не указан');
+  assert.ok(merged);assert.equal(first.registry.assignments['1:gray'].typeId,merged.id);assert.equal(first.registry.assignments['1:unknown'].typeId,merged.id);
+  assert.equal(first.registry.assignments['1:white'].typeId,'white');assert.equal(first.registry.assignments['1:black'].typeId,'black');
+  assert.ok(first.registry.types.some(type=>type.id==='other-gray'));assert.ok(first.registry.types.some(type=>type.id==='other-unknown'));
+  assert.equal(first.registry.types.some(type=>type.id==='gray'||type.id==='unknown'),false);
+  const second=refine(first.registry,[],{reviewedAt:'2026-09-24T10:00:00Z'});assert.equal(second.changed,false);assert.deepEqual(second.registry,first.registry);
+ });
+test('targeted glove merge and maintenance arguments do not require full catalog refinement',()=>{
+ const source=fixture();source.types.push({id:'cotton-pvc',parentId:'ppe',name:'Перчатки хлопчатобумажные с ПВХ'},{id:'gray',parentId:'cotton-pvc',name:'Цвет: серый'},{id:'unknown',parentId:'cotton-pvc',name:'Цвет: не указан'});source.assignments['1:gray']='gray';source.assignments['1:unknown']='unknown';
+ const result=mergeCottonPvcGloveColors(source,{reviewedAt:timestamp});assert.equal(result.changed,true);assert.equal(result.changes.length,2);assert.match(result.registry.revision,/^glove-colors-/u);
+ assert.deepEqual(commandOptions(['--merge-cotton-pvc-colors']),{apply:false,mergeColors:true});assert.deepEqual(commandOptions(['--merge-cotton-pvc-colors','--apply']),{apply:true,mergeColors:true});assert.throws(()=>commandOptions(['--merge-cotton-pvc-colors','--merge-cotton-pvc-colors']));
 });

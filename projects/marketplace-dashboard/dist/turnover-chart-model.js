@@ -10,6 +10,26 @@
   const knownValues=points.filter(point=>Number.isFinite(point.value)).map(point=>point.value),known=knownValues.length?knownValues.reduce((sum,value)=>sum+value,0):null,complete=points.length===expectedDays&&points.every(point=>Number.isFinite(point.value)&&!point.partial);
   return {points,total:complete?known:null,known,complete};
  }
+ function combineMarketplaceLines(lines,{days=1,metric,maxSkewMs=30*60000}={}){
+  const empty={points:[],total:null,complete:false,includedIds:[],missingIds:[]};
+  if(!Array.isArray(lines)||!['orderedRevenue','orderedUnits'].includes(metric)||!Number.isFinite(maxSkewMs)||maxSkewMs<0)return empty;
+  const ozon=lines.find(line=>line?.market==='Ozon'&&line.id===''),seenWb=new Set(),wb=lines.filter(line=>{if(line?.market!=='WB'||seenWb.has(line.id))return false;seenWb.add(line.id);return true}),selected=[...(ozon?[ozon]:[]),...wb],id=line=>line.id||'ozon-total',includedIds=selected.map(id),covered=line=>line&&!line.error&&!line.unavailable&&line.coverage!==false&&line.report?.coverage?.orders!==false;
+  const missingIds=selected.filter(line=>!covered(line)||!Array.isArray(line.points)||!line.points.some(point=>Number.isFinite(point?.value))).map(id);
+  if(!selected.length)return empty;
+  if(days!==1){
+   const dates=[...new Set(selected.flatMap(line=>(line.points||[]).map(point=>point.label).filter(label=>/^\d{4}-\d{2}-\d{2}$/u.test(label))))].sort(),maps=selected.map(line=>new Map((line.points||[]).map(point=>[point.label,point])));
+   const combined=dates.map(date=>{const source=selected.map((line,index)=>({id:id(line),point:maps[index].get(date)})),complete=source.every(({id:sourceId,point})=>!missingIds.includes(sourceId)&&Number.isFinite(point?.value)&&point.partial!==true),value=complete?source.reduce((sum,row)=>sum+row.point.value,0):null;return{time:Date.parse(date+'T12:00:00Z'),label:date,value:metric==='orderedRevenue'&&value!==null?Math.round(value*100)/100:value,partial:!complete,sources:source.filter(row=>row.point).map(row=>({id:row.id,date}))}}),complete=missingIds.length===0&&combined.length>0&&combined.every(point=>!point.partial);
+   return{points:combined,total:complete?combined.reduce((sum,point)=>sum+point.value,0):null,complete,includedIds,missingIds};
+  }
+  const normalized=selected.map(line=>(line.points||[]).filter(point=>Number.isFinite(point?.time)).slice().sort((a,b)=>a.time-b.time)),events=[...new Set(normalized.flatMap(value=>value.map(point=>point.time)))].sort((a,b)=>a-b),indexes=normalized.map(()=>0),latest=normalized.map(()=>null),combined=[];
+  for(const time of events){
+   for(let index=0;index<normalized.length;index++)while(indexes[index]<normalized[index].length&&normalized[index][indexes[index]].time<=time)latest[index]=normalized[index][indexes[index]++];
+   const source=latest.map((point,index)=>{const from=Number.isFinite(Date.parse(point?.sourceFromAt))?Date.parse(point.sourceFromAt):point?.time,to=Number.isFinite(Date.parse(point?.sourceToAt))?Date.parse(point.sourceToAt):point?.time;return{id:id(selected[index]),point,from,to}}),known=source.every(row=>!missingIds.includes(row.id)&&Number.isFinite(row.point?.value)&&row.point.partial!==true&&Number.isFinite(row.from)&&Number.isFinite(row.to)),from=known?Math.min(...source.map(row=>row.from)):null,to=known?Math.max(...source.map(row=>row.to)):null,skew=known?to-from:null,complete=known&&skew<=maxSkewMs,value=complete?source.reduce((sum,row)=>sum+row.point.value,0):null,point={time:to??time,label:new Date(to??time).toISOString(),value:metric==='orderedRevenue'&&value!==null?Math.round(value*100)/100:value,partial:!complete,sourceFromAt:from===null?null:new Date(from).toISOString(),sourceToAt:to===null?null:new Date(to).toISOString(),sourceSkewMs:skew,staggered:complete&&skew>0,sources:source.filter(row=>row.point).map(row=>({id:row.id,at:new Date(row.point.time).toISOString(),sourceFromAt:Number.isFinite(row.from)?new Date(row.from).toISOString():null,sourceToAt:Number.isFinite(row.to)?new Date(row.to).toISOString():null}))};
+   if(combined.at(-1)?.time===point.time)combined[combined.length-1]=point;else combined.push(point);
+  }
+  const latestPoint=combined.at(-1),complete=missingIds.length===0&&Number.isFinite(latestPoint?.value);
+  return{points:combined,total:complete?latestPoint.value:null,complete,includedIds,missingIds};
+ }
  function segments(values){const out=[];let current=[];for(const p of values){if(p.value===null){if(current.length)out.push(current);current=[]}else current.push(p)}if(current.length)out.push(current);return out}
  function domain(series){const values=series.flatMap(s=>s.points.filter(p=>p.value!==null).map(p=>p.value));return {min:Math.min(0,...values),max:Math.max(1,...values)}}
  function observation(values,index){
@@ -54,5 +74,5 @@
   projected.push({time:end,label:'24:00 МСК',value:endValue,forecast:true});
   return {status:'available',reason:null,points:projected,average,endValue,basis,method:'same-weekday-three-weeks'};
  }
- const model={points,totals,categoryDailyLine,segments,domain,observation,shiftDate,alignedPoints,comparison,orderForecast};if(typeof module!=='undefined'&&module.exports)module.exports=model;else root.PultStoreChart=model;
+ const model={points,totals,categoryDailyLine,combineMarketplaceLines,segments,domain,observation,shiftDate,alignedPoints,comparison,orderForecast};if(typeof module!=='undefined'&&module.exports)module.exports=model;else root.PultStoreChart=model;
 })(typeof window==='undefined'?{}:window);
