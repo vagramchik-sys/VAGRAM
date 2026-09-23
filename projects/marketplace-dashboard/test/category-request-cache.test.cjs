@@ -38,15 +38,44 @@ test('concurrent renders share a request and a failed request can be retried',as
  resolve(empty);await retry;
  assert.match(app.node('chart-store-status').textContent,/Выберите категорию или магазин/);
 });
-test('old responses cannot replace a refreshed report',async()=>{
+test('polling shares an unfinished request instead of restarting the loading state',async()=>{
  const pending=[];
  const app=runtime(()=>new Promise(resolve=>pending.push(resolve)));
  app.update('2026-09-19');await flush();
+ app.update('2026-09-19');await flush();
+ app.update('2026-09-19');await flush();
+ assert.equal(app.calls(),1);
+ pending[0](empty);await flush();
+ assert.match(app.node('chart-store-status').textContent,/Выберите категорию или магазин/);
+ app.update('2026-09-19');await flush();assert.equal(app.calls(),2);
+ pending[1](empty);await flush();
+});
+
+test('a response for the old period cannot replace the selected period',async()=>{
+ const pending=[];
+ const app=runtime(()=>new Promise(resolve=>pending.push(resolve)));
+ app.update('2026-09-18');await flush();
  app.update('2026-09-19');await flush();
  pending[1]({categories:['Новая категория'],series:[],limitations:[]});await flush();
  pending[0]({categories:['Старая категория'],series:[],limitations:[]});await flush();
  assert.match(app.node('chart-category-options').innerHTML,/Новая категория/);
  assert.doesNotMatch(app.node('chart-category-options').innerHTML,/Старая категория/);
+});
+
+test('background refresh preserves visible categories until the replacement is ready',async()=>{
+ const pending=[];
+ const app=runtime(()=>new Promise(resolve=>pending.push(resolve)));
+ app.update('2026-09-19');await flush();pending[0](empty);await flush();
+ assert.equal(app.node('chart-category-table').hidden,false);
+ app.node('ins-chart').innerHTML='<svg>last successful graph</svg>';
+ app.update('2026-09-19');await flush();
+ assert.equal(app.node('chart-category-table').hidden,false);
+ assert.match(app.node('ins-chart').innerHTML,/last successful/);
+ assert.equal(app.node('chart-store-status').textContent,'Обновляем категории…');
+ pending[1](empty);await flush();
+ app.update('2026-09-18');await flush();
+ assert.equal(app.node('chart-category-table').hidden,true);
+ pending[2](empty);await flush();
 });
 test('choosing a child replaces its selected parent and search keeps the matching branch',async()=>{
  const hierarchy={categories:['Сетки','Сетка от грызунов','Сетка штукатурная'],types:[{id:'mesh',parentId:null,name:'Сетки'},{id:'rodent',parentId:'mesh',name:'Сетка от грызунов'},{id:'plaster',parentId:'mesh',name:'Сетка штукатурная'}],series:[],limitations:[]};

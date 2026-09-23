@@ -6,3 +6,17 @@ const registry = { schemaVersion: 1, revision: 'r1', reviewedAt: '2026-09-20T10:
 function providers(overrides = {}) { const called = [], snapshotOptions = []; return { called, snapshotOptions, options: { productTypes: { async read() { called.push('registry'); return registry; } }, async getCatalogs() { called.push('catalogs'); return [{ storeId: 's1', market: 'Ozon', products: [{ product_id: 1, sku: 101 }] }]; }, async getSnapshots(options) { called.push('snapshots'); snapshotOptions.push(options); return [{ generatedAt: '2026-09-22T12:00:00Z', productOrders: [{ market: 'Ozon', storeId: 's1', scheme: 'FBO', postingId: 'p', productId: '101', orderedAt: '2026-09-21T21:00:00Z', units: 2, amountRub: null }], records: [], report: { coverage: { sources: [{ market: 'Ozon', storeId: 's1', scheme: 'FBO', available: true, complete: true, requested: { from: '2026-09-22', to: '2026-09-22' } }, { market: 'Ozon', storeId: 's1', scheme: 'FBS', available: true, complete: true, requested: { from: '2026-09-22', to: '2026-09-22' } }] } } }]; }, async getInsights() { called.push('insights'); return []; }, async getWbOrders() { called.push('wb'); return []; }, async getStores() { called.push('stores'); return { s1: { name: 'SQL store' } }; }, now: () => Date.parse('2026-09-23T00:00:00Z'), ...overrides } }; }
 test('reader passes the requested period to snapshots and preserves Moscow day, unknown revenue and store names', async () => { const p = providers(), result = await create(p.options).read({ from: '2026-09-22', to: '2026-09-22', store: 's1' }), leaf = result.series.find(row => row.typeId === 'a'); assert.deepEqual(new Set(p.called), new Set(['registry', 'catalogs', 'snapshots', 'insights', 'wb', 'stores'])); assert.deepEqual(p.snapshotOptions,[{from:'2026-09-22',to:'2026-09-22'}]); assert.equal(leaf.points[0].orderedUnits, 2); assert.equal(leaf.points[0].orderedRevenue, null); assert.equal(result.byStore[0].storeName, 'SQL store'); });
 test('invalid provider rows fail closed rather than becoming empty history', async () => { const p = providers({ getInsights: async () => ({}) }); await assert.rejects(create(p.options).read({ from: '2026-09-22', to: '2026-09-22' }), /provider contract/u); });
+
+test('concurrent category requests share work, later reads refresh, and failures can retry', async () => {
+  let release, attempts = 0;
+  const p = providers({getSnapshots: () => { attempts++; return new Promise(resolve => {release = resolve;}); }});
+  const reader = create(p.options), options = {from: '2026-09-22', to: '2026-09-22'};
+  const first = reader.read(options), second = reader.read({...options});
+  assert.equal(attempts, 1); release([]);
+  const [a,b] = await Promise.all([first, second]); assert.deepEqual(a,b);
+  const refresh = reader.read(options); assert.equal(attempts, 2); release([]); await refresh;
+  const broken = providers({getSnapshots: async () => { if (++attempts === 3) throw Error('offline'); return []; }});
+  const retryReader = create(broken.options);
+  await assert.rejects(retryReader.read(options), /offline/);
+  await retryReader.read(options); assert.equal(attempts, 4);
+});

@@ -5,6 +5,20 @@
  const colors=['var(--chart-store-1, #158b78)','var(--chart-store-2, #9270cc)','var(--chart-store-3, #d28532)','var(--chart-store-4, #378fbd)'];
  window.createPultStoreChart=function({api,metricTitle}){
   let report=null,catalog=[],selected=new Set(['']),cache=new Map(),version=0,catalogError=null,inspected=null,mode='stores',categoryReport=null,selectedCategories=new Set(),categoryRequests=new Map(),profitRequests=new Map(),expandedCategories=new Set(),collapsedCategories=new Set();
+  const pendingCategories=new Map();
+  let visibleCategoryScope=null;
+  const categoryScope=period=>JSON.stringify([period.from,period.to,$('market')?.value||'all',$('store')?.value||'',$('ins-chart-metric').value]);
+  function categoryRequest(key,url){
+   const completed=categoryRequests;
+   if(completed.has(key))return completed.get(key);
+   let request=pendingCategories.get(key);
+   if(!request){
+    request=Promise.resolve().then(()=>api(url)).finally(()=>{if(pendingCategories.get(key)===request)pendingCategories.delete(key)});
+    pendingCategories.set(key,request);
+   }
+   const result=request.catch(error=>{if(completed.get(key)===result)completed.delete(key);throw error});
+   completed.set(key,result);return result;
+  }
   $('ins-chart').closest('.panel').id='business-chart';
   $('ins-chart').insertAdjacentHTML('afterend','<p class="chart-interaction-hint" id="chart-interaction-hint" hidden>Выберите точку мышью или касанием. С клавиатуры: Tab к графику, затем ← →.</p><div class="chart-inspector" id="chart-inspector" hidden><div id="chart-point-label" aria-live="polite"></div><div id="chart-point-value" aria-live="polite"></div><div class="chart-inspector-buttons"><button class="button secondary" id="chart-point-prev" type="button" aria-label="Предыдущая точка графика">←</button><button class="button secondary" id="chart-point-next" type="button" aria-label="Следующая точка графика">→</button></div></div><section id="chart-category-table" class="chart-category-table" hidden><div class="chart-category-table-head"><div><h3>Категории по уровням</h3><p>Группы отсортированы по сумме заказов. Выбранные строки появляются на графике.</p></div><label>Глубина <select id="chart-category-level"><option value="1" selected>1 уровень</option><option value="2">2 уровня</option><option value="3">3 уровня</option><option value="all">Все уровни</option></select></label></div><div id="chart-category-tables"></div><p class="chart-category-note">Ozon и Wildberries объединены по нашим типам. Родитель уже включает дочерние типы — строки между уровнями складывать не нужно.</p></section>');
   $('ins-chart').insertAdjacentHTML('beforebegin','<style>#chart-category-search{width:100%;margin:10px 0;padding:9px 11px;border:1px solid var(--line,#dbe3ef);border-radius:9px}#chart-category-options details{margin:4px 0}#chart-category-options summary{cursor:pointer;list-style-position:outside}#chart-category-options .category-children{padding-left:22px}#chart-category-options label{display:flex;gap:8px;align-items:center;padding:5px 0}.chart-category-table{margin-top:18px;border-top:1px solid var(--line,#dbe3ef);padding-top:16px}.chart-category-table-head{display:flex;justify-content:space-between;gap:16px;align-items:flex-start}.chart-category-table-head h3,.chart-category-market h4{margin:0 0 5px}.chart-category-table-head p,.chart-category-note{margin:0;color:var(--muted,#667085)}.chart-category-table-head select{margin-left:7px;padding:7px 9px;border:1px solid var(--line,#dbe3ef);border-radius:8px;background:var(--panel,#fff)}.chart-category-market{margin-top:16px}.chart-category-market table{width:100%;border-collapse:collapse}.chart-category-market th,.chart-category-market td{padding:10px 8px;border-bottom:1px solid var(--line,#e7edf5);text-align:left}.chart-category-market th.numeric,.chart-category-market td.numeric{text-align:right;white-space:nowrap}.chart-category-name{display:flex;align-items:center;min-width:220px}.chart-category-expand{width:28px;height:28px;padding:0;border:0;background:transparent;color:inherit;font-size:18px;cursor:pointer}.chart-category-expand.placeholder{visibility:hidden}.chart-category-visibility{margin-left:auto;width:34px;height:30px;border:0;background:transparent;color:#98a2b3;font-size:18px;cursor:pointer}.chart-category-visibility[aria-pressed="true"]{color:var(--accent,#315efb)}.chart-category-total{font-weight:700;background:var(--soft,#f7f9fc)}.chart-category-note{margin-top:12px;font-size:13px}@media(max-width:700px){.chart-category-table-head{display:block}.chart-category-table-head label{display:block;margin-top:10px}.chart-category-market{overflow-x:auto}}</style><div class="chart-mode-picker" role="group" aria-label="Разрез графика"><button id="chart-mode-stores" type="button" aria-pressed="true">По магазинам</button><button id="chart-mode-categories" type="button" aria-pressed="false">По категориям</button></div><div class="chart-store-picker" id="chart-store-picker"><div class="chart-store-picker-title"><span>Магазины на графике</span><div><button id="chart-only-total" type="button">Только общий</button><button id="chart-all-stores" type="button">Все линии</button></div></div><div id="chart-store-options" role="group" aria-label="Магазины на графике"></div><p>Общий — сумма всех подключённых магазинов Ozon. Wildberries показан отдельно.</p></div><div class="chart-store-picker" id="chart-category-picker" hidden><div class="chart-store-picker-title"><span>Категории на графике</span><div><button id="chart-all-categories" type="button">Все верхние категории</button></div></div><input id="chart-category-search" type="search" placeholder="Найти тип товара"><div id="chart-category-options" role="group" aria-label="Категории на графике"></div><p>Сначала выберите нужные категории. Родитель объединяет подтипы. Линия типа объединяет выбранные площадки; магазины можно выбрать в таблице.</p></div><div id="chart-store-status" role="status" aria-live="polite"></div>');
@@ -43,17 +57,13 @@
   const cacheKey=(id,period)=>id+':'+period.from+':'+period.to;
   function getReport(id,period=report.current){const key=cacheKey(id,period);if(cache.has(key))return Promise.resolve(cache.get(key));const wb=id.startsWith('wb-'),query=new URLSearchParams(wb?{date:period.from,store:id}:{from:period.from,to:period.to,store:id,hideInactive:String($('hide-inactive').checked)}),request=api((wb?'/api/wb/orders?':'/api/insights?')+query);cache.set(key,request);return request}
   function getCategoryReport(date){
-   const requests=categoryRequests;
-   if(requests.has(date))return requests.get(date);
-   const request=Promise.resolve().then(()=>api('/api/order-categories?'+new URLSearchParams({date}))).catch(error=>{if(requests.get(date)===request)requests.delete(date);throw error});
-   requests.set(date,request);return request;
+   return categoryRequest(date,'/api/order-categories?'+new URLSearchParams({date}));
   }
   function getCategoryDailyReport(period){
    const market=$('market')?.value||'all',store=$('store')?.value||'',key=['daily',period.from,period.to,market,store].join(':');
    if(categoryRequests.has(key))return categoryRequests.get(key);
    const query=new URLSearchParams({from:period.from,to:period.to,market:market||'all'});if(store)query.set('store',store);
-   const request=Promise.resolve().then(()=>api('/api/order-category-daily?'+query)).catch(error=>{if(categoryRequests.get(key)===request)categoryRequests.delete(key);throw error});
-   categoryRequests.set(key,request);return request;
+   return categoryRequest(key,'/api/order-category-daily?'+query);
   }
   function getProfitReport(period){
    const market=$('market')?.value||'all',store=$('store')?.value||'',key=[period.from,period.to,market,store].join(':');
@@ -70,7 +80,9 @@
    const forecastEligible=mode==='stores'&&isToday&&(key==='orderedRevenue'||key==='orderedUnits'),forecastEnabled=forecastEligible&&$('chart-forecast-enabled').checked;
    $('chart-forecast-controls').hidden=!forecastEligible;
    $('ins-chart-caption').textContent=title+' · '+(oneDay?'накопительно с начала дня · время МСК':short(current.current.from)+' — '+short(current.current.to));
-   $('chart-store-status').textContent='Загружаем выбранные линии…';$('ins-chart').setAttribute('aria-busy','true');$('ins-chart').innerHTML='';$('ins-chart-details').hidden=true;$('chart-category-table').hidden=true;$('chart-inspector').hidden=true;$('chart-interaction-hint').hidden=true;
+   const keepCategories=mode==='categories'&&visibleCategoryScope===categoryScope(current.current)&&!$('chart-category-table').hidden;
+   $('chart-store-status').textContent=keepCategories?'Обновляем категории…':'Загружаем выбранные линии…';$('ins-chart').setAttribute('aria-busy','true');
+   if(!keepCategories){$('ins-chart').innerHTML='';$('ins-chart-details').hidden=true;$('chart-category-table').hidden=true;$('chart-inspector').hidden=true;$('chart-interaction-hint').hidden=true;}
    await ready;if(seq!==version)return;
    if(catalogError){$('chart-store-status').textContent=catalogError;$('ins-chart').removeAttribute('aria-busy');return}
    if(key==='netProfit'){await renderNetProfit({current,seq,title,format,formatDelta});return}
@@ -116,6 +128,7 @@
    $('chart-forecast-controls').hidden=true;
    if(!['orderedRevenue','orderedUnits'].includes(key)){$('chart-store-status').textContent='По категориям доступны показатели «Заказано на сумму» и «Заказано товаров».';$('ins-chart').removeAttribute('aria-busy');$('ins-chart').innerHTML='<div class="empty">Для этого показателя нет сопоставимого источника заказов по категориям.</div>';return}
    let daily,intraday=null;try{const requests=[getCategoryDailyReport(current.current)];if(oneDay&&isToday)requests.push(getCategoryReport(current.current.from));const loaded=await Promise.all(requests);if(seq!==version)return;daily=loaded[0];intraday=loaded[1]||null;categoryReport=daily}catch{if(seq!==version)return;$('chart-store-status').textContent='Не удалось загрузить категории заказов.';$('ins-chart').removeAttribute('aria-busy');$('ins-chart').innerHTML='<div class="empty">Категорийный ряд за выбранный период не загружен.</div>';return}
+   visibleCategoryScope=categoryScope(current.current);
    const valid=new Set((daily.types||[]).map(type=>type.id));for(const item of daily.byStore||[])valid.add('store:'+item.storeId+':'+item.typeId);for(const id of [...selectedCategories])if(!valid.has(id))selectedCategories.delete(id);renderCategoryOptions();renderCategoryTable();
    const types=new Map((daily.types||[]).map(type=>[type.id,type])),palette=new Map([...valid].map((id,index)=>[id,colors[index%colors.length]])),expectedDays=daily.period?.days||current.days;
    const dailyLine=(items,id,name,market)=>({id,name,market,color:palette.get(id),...PultStoreChart.categoryDailyLine(items,key,current.current.from,current.current.to,expectedDays)});

@@ -69,7 +69,12 @@ function build(data, options = {}) {
   if (storeId && !stores.has(storeId)) throw Error('Магазин не найден в каталоге заказов');
   const scope = [...stores.values()].filter(store => (!storeId || store.storeId === storeId) && (market === 'all' || store.market === market));
   const days = []; for (let value = from; value <= to; value = shift(value, 1)) days.push(value);
-  const canonical = latestProductOrders(data.snapshots), today = moscowDay(options.now || Date.now());
+  const canonical = latestProductOrders(data.snapshots), canonicalRowsByStoreDay = new Map(), today = moscowDay(options.now || Date.now());
+  for (const row of canonical.rows) {
+    const date = moscowDay(row.orderedAt); if (!date) continue;
+    const key = [row.market, row.storeId, date].join('\u001f'), rows = canonicalRowsByStoreDay.get(key);
+    if (rows) rows.push(row); else canonicalRowsByStoreDay.set(key, [row]);
+  }
   const events = new Map(), coverage = [], missingProducts = new Map();
   const add = (store, date, source, raw) => {
     const key = [store.market, store.storeId, date].join('\u001f'); if (!events.has(key)) events.set(key, []);
@@ -79,7 +84,7 @@ function build(data, options = {}) {
   };
   for (const store of scope) for (const date of days) {
     const key = [store.market, store.storeId, date].join('\u001f'), schemes = expectedSchemes(store.market);
-    const rows = canonical.rows.filter(row => row.market === store.market && row.storeId === store.storeId && moscowDay(row.orderedAt) === date);
+    const rows = canonicalRowsByStoreDay.get(key) || [];
     const schemeSourceCoverage = schemes.map(scheme => canonical.coverage.some(source => source.market === store.market && source.storeId === store.storeId && source.scheme === scheme && sourceCovers(source, date)));
     const schemeCoverage = schemes.map((scheme,index) => { const evidenceKey = [store.market, store.storeId, scheme, date].join('\u001f');return schemeSourceCoverage[index]&&(!canonical.orderEvidence.has(evidenceKey)||canonical.productEvidence.has(evidenceKey)); });
     const canonicalEvidence = schemes.some(scheme => canonical.orderEvidence.has([store.market, store.storeId, scheme, date].join('\u001f')));
