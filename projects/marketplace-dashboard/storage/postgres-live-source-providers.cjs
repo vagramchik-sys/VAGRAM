@@ -181,7 +181,9 @@ function createLiveSourceProviders({sources} = {}) {
     if (!Array.isArray(value.products)) fail('CORRUPT_SOURCE', 'Order category catalog shape is invalid');
     return {...value, storeId, market: storeId.startsWith('wb-') ? 'WB' : 'Ozon'};
   });
-  const getInsights = () => listed('insights-', /^insights-[0-9]+\.json$/u, ['orders.skuDaily'], (path, value) => ({storeId: path.slice(9, -5), value}));
+  // Shared by category charts and financial reports: omitting daily rows would
+  // synthesize zero sales, and omitting types would invalidate the ledger hash.
+  const getInsights = () => listed('insights-', /^insights-[0-9]+\.json$/u, ['orders.daily', 'orders.skuDaily', 'orders.skuCoverage', 'types', 'errors'], (path, value) => ({storeId: path.slice(9, -5), value}));
   const getWbOrders = () => listed('wb-orders-', /^wb-orders-wb-[0-9]+\.json$/u, ['orders'], (path, value) => ({storeId: path.slice(10, -5), value}));
 
   async function buyerNames(kind) {

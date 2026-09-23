@@ -49,21 +49,18 @@ test('an unknown value invalidates only its series from that day onward', () => 
   for (const unknown of [null, undefined, 'not-a-number', Infinity]) {
     const rows = [point('2026-09-18', unknown, 1, 2), point('2026-09-19', 5, 1, 2)];
     const result = build({ state: 'ready', report: report(rows) }, now).cumulativeDaily;
-    assert.deepEqual(result.map(day => day.orderedRevenue), [null, null]);
-    assert.deepEqual(result.map(day => day.orderedUnits), [1, 2]);
-    assert.deepEqual(result.map(day => day.realized), [2, 4]);
+    assert.deepEqual(result.map(day => day.orderedRevenue), [null, null, null]);
+    assert.deepEqual(result.map(day => day.orderedUnits), [1, 2, null]);
+    assert.deepEqual(result.map(day => day.realized), [2, 4, null]);
   }
 });
 
-test('a missing or unordered date invalidates every later cumulative series', () => {
-  for (const dates of [
-    ['2026-09-18', '2026-09-20'],
-    ['2026-09-18', '2026-09-17', '2026-09-19']
-  ]) {
-    const cumulative = build({ state: 'ready', report: report(dates.map(date => point(date, 5, 1, -1))) }, now).cumulativeDaily;
-    assert.deepEqual(cumulative[0], point('2026-09-18', 5, 1, -1));
-    assert.ok(cumulative.slice(1).every(day => day.orderedRevenue === null && day.orderedUnits === null && day.realized === null));
-  }
+test('a missing date invalidates every later cumulative series and out-of-range rows are omitted', () => {
+  const missing = build({ state: 'ready', report: report(['2026-09-18', '2026-09-20'].map(date => point(date, 5, 1, -1))) }, now).cumulativeDaily;
+  assert.deepEqual(missing[0], point('2026-09-18', 5, 1, -1));
+  assert.ok(missing.slice(1).every(day => day.orderedRevenue === null && day.orderedUnits === null && day.realized === null));
+  const outside = build({ state: 'ready', report: report(['2026-09-18', '2026-09-17', '2026-09-19'].map(date => point(date, 5, 1, -1))) }, now).cumulativeDaily;
+  assert.deepEqual(outside, [point('2026-09-18', 5, 1, -1), point('2026-09-19', 10, 2, -2), point('2026-09-20', null, null, null)]);
 });
 
 test('the first occurrence of a duplicate date is already ambiguous', () => {
@@ -75,7 +72,7 @@ test('the first occurrence of a duplicate date is already ambiguous', () => {
   assert.deepEqual(cumulative[0], point('2026-09-18', 5, 1, 2));
   assert.deepEqual(cumulative.slice(1), [
     point('2026-09-19', null, null, null),
-    point('2026-09-19', null, null, null)
+    point('2026-09-20', null, null, null)
   ]);
 });
 

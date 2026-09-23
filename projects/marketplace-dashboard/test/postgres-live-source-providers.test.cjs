@@ -112,7 +112,7 @@ test('WB finance reads operations only and small providers request explicit coll
   assert.deepEqual(await providers.getWbFinance('wb-4'), {completedAt: 'x', products: [], stocks: [], operations: [{rrdId: 2}]});
   await providers.getInsights(); await providers.getWbOrders();
   assert.deepEqual(calls.find(call => call[1] === 'data-wb-4.json')[2], ['operations']);
-  assert.deepEqual(calls.find(call => call[1] === 'insights-3.json')[2], ['orders.skuDaily']);
+  assert.deepEqual(calls.find(call => call[1] === 'insights-3.json')[2], ['orders.daily', 'orders.skuDaily', 'orders.skuCoverage', 'types', 'errors']);
   assert.deepEqual(calls.find(call => call[1] === 'wb-orders-wb-4.json')[2], ['orders']);
 });
 

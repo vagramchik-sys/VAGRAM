@@ -9,6 +9,42 @@ const {createPostgresSourceProviders}=require('../storage/postgres-source-provid
 const DAY='2026-09-20',FROM='2026-09-20',TO='2026-09-20';
 function fixture({sourceOverrides={}}={}){const ledger={version:3,complete:true,foreignRecords:0,period:{from:'2026-09-19',to:TO},completedAt:'2026-09-20T12:00:00Z',daily:[{date:DAY,values:{realized:10000,net:8000,commission:1000,logistics:1000,ads:0,acquiring:0,storage:0,penalties:0,other:0,bonus:0,partners:0,reversal:0,unreconciled:0,unreconciledRecords:0,records:1,soldUnits:1,returnedUnits:0,unknownUnitRows:0,salesRows:1}}],skuDaily:[],fees:[]},insight={orders:{period:{from:'2026-09-19',to:TO},updatedAt:'2026-09-20T12:00:00Z',skuDailyCoverage:true,skuUpdatedAt:'2026-09-20T10:00:00Z',daily:[{date:DAY,revenue:120,units:2}],skuDaily:[{date:DAY,sku:'101',revenue:120,units:2}]},errors:[]},wb={complete:true,day:DAY,orderedRevenue:50,orderedUnits:1,points:[{at:'2026-09-20T09:00:00Z',orderedRevenue:50,orderedUnits:1}],orders:[{at:'2026-09-20T09:00:00Z',amount:50,nmId:'201',category:'Хозяйственные товары',subject:'Перчатки'}],fetchedAt:'2026-09-20T09:01:00Z',intervalMinutes:30,source:'/api/v1/supplier/orders'},raw={clientId:'1',market:'Ozon',completedAt:'2026-09-20T12:00:00Z',period:{from:'2026-09-19',to:TO},sections:{},products:[{product_id:1,sku:101,name:'Саморезы',offer_id:'A'}],stocks:[]},catalogs=[{storeId:'1',market:'Ozon',products:[{product_id:1,sku:101,description_category_id:1,type_id:2}],categoryTree:[]},{storeId:'wb-1',market:'WB',products:[{nmID:201,title:'Перчатки'}],categoryTree:[]}],sources={async getReportCatalog(id){return id==='1'?raw:null},async exact(){return null},async getOzonLedger(){return {stamp:'cache-key',data:ledger}},async getInsights(){return[{storeId:'1',value:insight}]},async getWbOrders(){return[{storeId:'wb-1',value:wb}]},async getCatalogs(){return catalogs},...sourceOverrides},storesRepository={async read(){return {'1':{clientId:'1',name:'Ozon',connectedAt:'2026-01-01T00:00:00Z'},'wb-1':{clientId:'wb-1',name:'WB',market:'WB',connectedAt:'2026-01-01T00:00:00Z'}}}},supplierPortals={async read(){return {categories:[]}}},productTypes={async read(){return {available:false}}},intraday={async series(ids,date){return {date,ids,orders:[],finance:[]}}},orderCategoryState={async read(){return {version:1,points:[{date:DAY,at:'2026-09-20T10:00:00Z',values:{Крепёж:{orderedRevenue:120,orderedUnits:2}}}]}}},trueStats={async compare(input){return {status:'ready',input}}},schedules={async schedule(id){return {orders:{nextAt:'2026-09-20T13:00:00Z'},finance:{nextAt:'2026-09-20T14:00:00Z'},id}},async status(){return[{status:'idle'}]},async job(id){return {id,status:'idle'}},async historyError(){return 'history warning'}};return create({storesRepository,sourceProviders:sources,supplierPortals,productTypes,intraday,orderCategoryState,trueStats,schedules,now:()=>Date.parse('2026-09-20T12:00:00Z')})}
 const params=value=>new URLSearchParams(value);
+
+test('live SQL insight projection preserves sales, ledger evidence and warnings in reports', async () => {
+ const codecs=require('../storage/postgres-live-codecs.cjs');
+ const {createLiveSourceProviders}=require('../storage/postgres-live-source-providers.cjs');
+ const period={from:'2026-09-19',to:TO},completedAt='2026-09-20T12:00:00Z';
+ const types=[{id:32,name:'Logistic'}],warning='Orders update unavailable';
+ const insight={orders:{period,updatedAt:completedAt,daily:[{date:'2026-09-19',revenue:60,units:1},{date:DAY,revenue:120,units:2}],skuDaily:[{date:DAY,sku:'101',revenue:120,units:2}],skuCoverage:[DAY]},types,errors:[warning]};
+ const evidence={snapshotId:'live:1:7',marketRevision:'7',marketSha256:'a'.repeat(64)};
+ const catalog={completedAt,period,products:[],stocks:[],sections:{},_source:evidence};
+ const ledger={version:3,complete:true,period,completedAt,daily:[{date:DAY,values:{realized:10000,net:8000,records:1}}],skuDaily:[],fees:[]};
+ const providers=createLiveSourceProviders({sources:{
+  identity:codecs.parseSourcePath,
+  async listSources(){return [{sourcePath:'insights-1.json'}]},
+  async record(sourcePath,options){
+   const encoded=codecs.encode(sourcePath,insight);
+   const collections=Object.fromEntries(Object.entries(encoded.collections).filter(([key])=>!options?.entities||options.entities.includes(key)));
+   return {revision:'1',value:codecs.decode(sourcePath,{metadata:encoded.metadata,collections},{partial:!!options?.entities})};
+  }
+ }});
+ const service=fixture({sourceOverrides:{getInsights:providers.getInsights,async getReportCatalog(){return catalog},async getOzonLedger(){return {source:{...evidence,typesSha256:typesHash(types)},data:ledger}}}});
+ const result=await service.insights(params({store:'1',from:FROM,to:TO}));
+ assert.equal(result.coverage.orders,true);
+ assert.equal(result.metrics.orderedRevenue.current,120);
+ assert.equal(result.metrics.orderedRevenue.previous,60);
+ assert.equal(result.metrics.orderedUnits.current,2);
+ assert.equal(result.daily[0].orderedRevenue,120);
+ assert.equal(result.coverage.finance,true);
+ assert.equal(result.metrics.net.current,80);
+ assert.deepEqual(result.sources[0].errors,[warning]);
+ assert.deepEqual((await providers.getInsights())[0].value.orders.skuCoverage,[DAY]);
+ // A fully read source with no sales must still display a real zero.
+ insight.orders.daily=[];
+ const empty=await service.insights(params({store:'1',from:FROM,to:TO}));
+ assert.equal(empty.coverage.orders,true);
+ assert.equal(empty.metrics.orderedRevenue.current,0);
+});
 test('insights preserves legacy report, intraday, schedule, jobs and history error shape',async()=>{const service=fixture(),result=await service.insights(params({store:'1',from:FROM,to:TO}));assert.equal(result.days,1);assert.equal(result.intraday.date,DAY);assert.equal(result.refresh.error,'history warning');assert.equal(result.refresh.nextAt,'2026-09-20T13:00:00Z');assert.equal(result.jobs[0].status,'idle');assert.equal(result.syncJobs[0].id,'1');assert.equal(result.metrics.orderedRevenue.current,120);});
 test('insights rejects missing or stale saved ledger without loading the raw market snapshot',async()=>{for(const saved of [null,{version:3,complete:true,period:{from:'2026-09-19',to:TO},completedAt:'2026-09-20T11:59:59Z',daily:[],skuDaily:[],fees:[]}]){let rawReads=0;const service=fixture({sourceOverrides:{async getOzonLedger(){return saved},async getMarketSnapshot(){rawReads++;throw Error('raw snapshot must stay cold')}}}),result=await service.insights(params({store:'1',from:FROM,to:TO}));assert.equal(result.coverage.finance,false);assert.equal(result.metrics.net.current,null);assert.equal(result.metrics.orderedRevenue.current,120);assert.equal(rawReads,0)}});
 test('enriched ledger evidence must match current SQL snapshot and insight types',async()=>{const digest='a'.repeat(64),source={snapshotId:'11111111-1111-4111-8111-111111111111',marketRevision:'7',marketSha256:digest},catalog={completedAt:'2026-09-20T12:00:00Z',period:{from:'2026-09-19',to:TO},sections:{stocks:{ok:true}},products:[],stocks:[],_source:source},ledger={version:3,complete:true,period:catalog.period,completedAt:catalog.completedAt,daily:[],skuDaily:[],fees:[]},saved={stamp:catalog.completedAt,source:{...source,typesSha256:typesHash([])},data:ledger},matching=await fixture({sourceOverrides:{async getReportCatalog(){return catalog},async getOzonLedger(){return saved}}}).insights(params({store:'1',from:FROM,to:TO}));assert.equal(matching.coverage.finance,true);const stale=await fixture({sourceOverrides:{async getReportCatalog(){return catalog},async getOzonLedger(){return{...saved,source:{...saved.source,marketRevision:'6'}}}}}).insights(params({store:'1',from:FROM,to:TO}));assert.equal(stale.coverage.finance,false)});

@@ -39,6 +39,37 @@
     });
   }
   const moscowDay = now => new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow', year: 'numeric', month: '2-digit', day: '2-digit' }).format(now);
+  function dates(from, to) {
+    if (nextDay(from) === null || nextDay(to) === null || from > to) return null;
+    const result = [];
+    for (let date = from; date <= to && result.length <= 366; date = nextDay(date)) result.push(date);
+    return result.length && result.at(-1) === to ? result : null;
+  }
+  function dailyEvidence(rows, period) {
+    const expected = dates(period.from, period.to);
+    if (!expected || !Array.isArray(rows)) return { daily: [], orders: false, finance: false };
+    const byDate = new Map();
+    for (const row of rows) {
+      if (!row || !expected.includes(row.date)) continue;
+      const matches = byDate.get(row.date) || [];
+      matches.push(row); byDate.set(row.date, matches);
+    }
+    let orders = true, finance = true;
+    const coveredDaily = expected.map(date => {
+      const matches = byDate.get(date) || [], row = matches.length === 1 ? matches[0] : null;
+      const point = { date, orderedRevenue: finite(row?.orderedRevenue), orderedUnits: finite(row?.orderedUnits), realized: finite(row?.realized) };
+      if (!row || point.orderedRevenue === null || point.orderedUnits === null) orders = false;
+      if (!row || point.realized === null) finance = false;
+      return point;
+    });
+    return { daily: coveredDaily, coveredDaily, orders, finance };
+  }
+  function agrees(value, daily, key) {
+    value = finite(value);
+    if (value === null || daily.some(day => finite(day[key]) === null)) return false;
+    const total = daily.reduce((sum, day) => sum + day[key], 0);
+    return Number.isFinite(total) && Math.abs(total - value) <= Math.max(1e-7, Math.abs(value) * 1e-10);
+  }
   const format = (value, units) => value === null ? '—' : number.format(value) + (units ? ' шт.' : ' ₽');
   const alertLabels = { stockout: 'Нет остатка при реализации', cost: 'Заполнить себестоимость', negative: 'Отрицательные начисления', logistics: 'Проверить логистику' };
   const alertDescriptions = { stockout: 'Есть реализация, текущий остаток нулевой', cost: 'У товаров с реализацией нет положительной себестоимости', negative: 'Начисления по SKU за период ниже нуля', logistics: 'Логистика составляет от 30% реализации' };
@@ -56,12 +87,18 @@
     const open = Boolean(period.from && period.to && period.from <= moscowDay(now) && period.to >= moscowDay(now));
     const sources = data?.sources || [];
     const coverage = data?.coverage || {};
+    const evidence = dailyEvidence(data?.daily, period);
+    const ordersComplete = coverage.orders === true && evidence.orders
+      && agrees(data?.metrics?.orderedRevenue?.current, evidence.coveredDaily, 'orderedRevenue')
+      && agrees(data?.metrics?.orderedUnits?.current, evidence.coveredDaily, 'orderedUnits');
+    const financeComplete = coverage.finance === true && evidence.finance
+      && agrees(data?.metrics?.realized?.current, evidence.coveredDaily, 'realized');
     const metrics = {};
     for (const key of ['orderedRevenue', 'orderedUnits', 'realized', 'net', 'ads', 'stocks']) {
       const metric = data?.metrics?.[key];
       const inventory = key === 'stocks';
       const orders = key.startsWith('ordered');
-      const confirmed = inventory || coverage[orders ? 'orders' : 'finance'] === true;
+      const confirmed = inventory || (orders ? ordersComplete : financeComplete);
       const previousConfirmed = coverage[orders ? 'previousOrders' : 'previousFinance'] === true;
       const value = confirmed ? finite(metric?.current) : null;
       const previous = previousConfirmed ? finite(metric?.previous) : null;
@@ -75,7 +112,7 @@
       }
       metrics[key] = { value, text: format(value, key === 'stocks' || key === 'orderedUnits'), comparison, tone };
     }
-    const focusData = data ? focus.build(data) : null;
+    const focusData = data ? focus.build({ ...data, coverage: { ...coverage, orders: ordersComplete, finance: financeComplete } }) : null;
     const alerts = focusData?.alerts || {};
     const positiveProducts = (focusData?.products || []).filter(p => finite(p.realized) !== null && p.realized > 0)
       .sort((a, b) => b.realized - a.realized || String(a.focusId).localeCompare(String(b.focusId)));
@@ -86,17 +123,24 @@
       realizedText: format(p.realized, false), share: positiveRevenue > 0 ? p.realized / positiveRevenue * 100 : 0
     }));
     const attentionCount = focusData?.complete ? new Set(focusData.products.filter(p => p.signals.length).map(p => p.focusId)).size : null;
-    const complete = coverage.finance === true && coverage.orders === true;
+    const complete = financeComplete && ordersComplete;
     const coverageState = !complete ? 'partial' : open ? 'open' : 'complete';
     const notes = [];
     if (data && !data.stores?.length) notes.push('Нет подключённых магазинов Ozon в выбранном фильтре.');
     else if (data) {
-      if (!coverage.orders) notes.push('История заказов загружена не за весь период.');
-      if (!coverage.finance) notes.push('Начисления загружены не за весь период.');
+      if (!ordersComplete) notes.push('История заказов загружена не за весь период.');
+      if (!financeComplete) notes.push('Начисления загружены не за весь период.');
       if (open) notes.push('Сегодняшние данные предварительные.');
       if (coverage.foreignRecords) notes.push('Показаны только рублёвые операции.');
     }
-    const daily = (data?.daily || []).map(day => ({ date: day.date, orderedRevenue: coverage.orders === true ? finite(day.orderedRevenue) : null, orderedUnits: coverage.orders === true ? finite(day.orderedUnits) : null, realized: coverage.finance === true ? finite(day.realized) : null }));
+    // Declared incomplete domains are not trustworthy across the selected shop scope.
+    // Within a declared covered domain, keep known points but never fill a gap with zero.
+    const daily = evidence.daily.map(day => ({
+      date: day.date,
+      orderedRevenue: coverage.orders === true ? day.orderedRevenue : null,
+      orderedUnits: coverage.orders === true ? day.orderedUnits : null,
+      realized: coverage.finance === true ? day.realized : null
+    }));
     return {
       state, range, scope: unsupported ? 'Wildberries' : store ? 'Ozon · ' + (data?.stores?.find(s => s.id === store)?.name || 'выбранный магазин') : market === 'Ozon' ? 'Ozon · все магазины' : 'Ozon · все магазины · WB отдельно',
       message: state === 'loading' ? 'Загружаем сохранённые данные…' : state === 'error' ? 'Не удалось загрузить данные. Попробуйте ещё раз.' : state === 'unsupported' ? 'Данные Wildberries доступны в отдельной сводке продаж и прибыли.' : '',
