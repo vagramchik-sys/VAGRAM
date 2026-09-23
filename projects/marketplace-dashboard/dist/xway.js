@@ -10,7 +10,8 @@
  function renderOpportunities(filters){
   const target=$('opportunities');target.replaceChildren();
   if(!globalThis.XwayOpportunities){empty(target,'Сигналы сейчас недоступны.');return;}
-  const result=globalThis.XwayOpportunities.analyze(data,filters),groups=[['Проблемные места',result.problems,'problem'],['Кандидаты на рост',result.growth,'growth'],['Нужно проверить данные',result.needsData,'needs-data']];
+  const input=globalThis.XwayAdvisorView?globalThis.XwayAdvisorView.analysisInput(data,filters):data;
+  const result=globalThis.XwayOpportunities.analyze(input,filters),groups=[['Проблемные места',result.problems,'problem'],['Кандидаты на рост',result.growth,'growth'],['Нужно проверить данные',result.needsData,'needs-data']];
   for(const [title,items,tone] of groups){
    const section=el('section',undefined,'xway-opportunity-group '+tone),heading=el('h3',title);heading.append(el('span',String(items.length),'xway-opportunity-count'));section.append(heading);
    const list=el('div',undefined,'xway-opportunity-list');
@@ -19,11 +20,12 @@
    if(items.length>3){const details=el('details',undefined,'xway-opportunity-more'),summary=el('summary','Показать ещё '+(items.length-3)),rest=el('div',undefined,'xway-opportunity-list');details.append(summary);items.slice(3).forEach(item=>appendCard(rest,item));details.append(rest);section.append(details);}
    if(!items.length)section.append(el('p','По выбранным условиям сигналов нет.','xway-empty xway-empty-compact'));target.append(section);
   }
-  $('attention-note').textContent='В выборке кампаний: '+result.meta.campaignCount+', товаров: '+result.meta.productCount+'. Покрытие может быть частичным.'+(result.meta.productFiltersIgnoreCampaignFields?' Статус и стратегия относятся к кампаниям; товарные сигналы учитывают магазин и поиск.':'');
+  $('attention-note').textContent='В выборке кампаний: '+result.meta.campaignCount+', товаров: '+result.meta.productCount+'. Покрытие может быть частичным. Периоды до переноса и с неуточнённым переносом исключены из сигналов.'+(result.meta.productFiltersIgnoreCampaignFields?' Статус и стратегия относятся к кампаниям; товарные сигналы учитывают магазин и поиск.':'');
  }
  function render(){
   const account=$('account-filter').value,status=$('status-filter').value,strategy=$('strategy-filter').value,query=$('search').value.trim().toLocaleLowerCase('ru');
   const accounts=data.accounts.filter(row=>!account||row.key===account),campaigns=data.campaigns.filter(row=>(!account||row.accountKey===account)&&(!status||row.status===status)&&(!strategy||row.strategy===strategy)&&(!query||row.name.toLocaleLowerCase('ru').includes(query)));
+  globalThis.XwayAdvisorView?.render(data,{account,status,strategy,query});
   renderOpportunities({account,status,strategy,query});
   const financialVisible={spend:data.campaigns.some(row=>(!account||row.accountKey===account)&&row.spend!==null),revenue:data.campaigns.some(row=>(!account||row.accountKey===account)&&row.revenue!==null)};
   const headers=document.querySelectorAll('.xway-table-scroll th');headers[9].hidden=!financialVisible.spend;headers[10].hidden=!financialVisible.revenue;
@@ -55,9 +57,12 @@
   $('observed').textContent=times.length?'Последняя проверка: '+time(new Date(Math.max(...times)).toISOString())+'. Сохранённые наблюдения, без автоматической синхронизации.':'Дата проверки появится после импорта подтверждённых фактов.';
  }
  for(const id of ['account-filter','status-filter','strategy-filter'])$(id).addEventListener('change',render);$('search').addEventListener('input',render);
+ document.addEventListener('xway-advisor-context',render);
+ globalThis.XwayAdvisorView?.render(data,{});
  fetch('/api/xway',{credentials:'same-origin',cache:'no-store'}).then(async response=>{if(!response.ok)throw Error('unavailable');return response.json();}).then(value=>{
   if(value.mode!=='verified-observations'||!['accounts','settings','campaigns'].every(key=>Array.isArray(value[key])))throw Error('invalid');data={...value,products:Array.isArray(value.products)?value.products:[]};
   for(const row of data.accounts){const option=el('option',row.name+' · '+row.marketplace);option.value=row.key;$('account-filter').append(option);}
+  if(data.accounts.length===1)$('account-filter').value=data.accounts[0].key;
   optionList('status-filter',data.campaigns.map(row=>row.status));optionList('strategy-filter',data.campaigns.map(row=>row.strategy));render();
  }).catch(()=>{$('notice').className='xway-error';$('notice').textContent='Не удалось загрузить проверенные данные XWAY. Попробуйте открыть страницу позже.';$('observed').textContent='Данные сейчас недоступны.';});
 })();

@@ -5,8 +5,51 @@
 <div class="xway-provenance"><span class="xway-dot"></span><div><strong>Проверено в кабинете</strong><p id="observed">Загружаем дату проверки…</p></div><span class="xway-readonly">Только просмотр</span></div>
 <div id="notice" role="status" aria-live="polite"></div>
 <section class="xway-toolbar" aria-label="Фильтры"><label>Магазин<select id="account-filter"><option value="">Все магазины</option></select></label><label>Статус<select id="status-filter"><option value="">Все статусы</option></select></label><label>Стратегия<select id="strategy-filter"><option value="">Все стратегии</option></select></label><label class="xway-search">Поиск<input id="search" type="search" placeholder="Название кампании" autocomplete="off"></label></section>
+<section class="xway-panel xway-advisor" aria-labelledby="advisor-title">
+ <div class="xway-section-title"><div><div class="xway-eyebrow">ПЛАН ДЕЙСТВИЙ</div><h2 id="advisor-title">Рекомендации по рекламе и цене</h2><p>Что проверить, где искать рост и с чем обратиться в поддержку.</p></div><span class="xway-advisor-badge">Решения за вами</span></div>
+ <p id="advisor-migration-summary" class="xway-advisor-summary" role="status">Учитываем перенос товаров между магазинами.</p>
+ <details class="xway-context"><summary>Уточнить перенос и индивидуальные условия <span id="advisor-context-scope"></span></summary>
+  <p class="xway-context-note">Периоды старого и нового магазина сравниваем отдельно. Если точная дата неизвестна, сначала проверяем данные.</p>
+  <div class="xway-context-grid">
+   <label>Перенос товаров<select id="advisor-migration-status"><option value="unknown">Пока не уточнено</option><option value="recent">Товары перенесены</option><option value="none">Переноса не было</option></select></label>
+<label>Общая дата переноса, если одна<input id="advisor-migration-date" type="date"></label>
+   <label>Предыдущий магазин<input id="advisor-old-store" maxlength="120" placeholder="Название, если известно"></label>
+   <label>Новые SKU после переноса<select id="advisor-sku-changed"><option value="unknown">Пока не уточнено</option><option value="yes">Да, новые SKU</option><option value="no">Нет, прежние SKU</option></select></label>
+   <label>Требование по рекламе, %<input id="advisor-ad-target" type="number" min="0" max="100" step="0.1" placeholder="Не уточнено"></label>
+   <label>Оплата за заказ, %<input id="advisor-cpo-rate" type="number" min="0" max="100" step="0.1" placeholder="Не уточнено"></label>
+   <label>Комиссия, %<input id="advisor-commission" type="number" min="0" max="100" step="0.1" placeholder="Не уточнено"></label>
+<label class="xway-field-wide">Даты переноса по SKU<textarea id="advisor-sku-transfer-dates" rows="4" placeholder="SKU и дата YYYY-MM-DD — по одному товару в строке"></textarea></label>
+<label class="xway-field-wide">Что подтверждено в истории переноса<textarea id="advisor-migration-notes" rows="3" placeholder="Партии, источник и что ещё требуется сверить"></textarea></label>
+<label class="xway-confirm"><input id="advisor-terms-confirmed" type="checkbox">База, период и засчитываемые рекламные услуги сверены с соглашением</label>
+  </div>
+  <p id="advisor-context-status" class="xway-context-note" role="status">Уточнения сохраняются в этом браузере для выбранного магазина. Они не меняют настройки XWAY.</p>
+ </details>
+ <div id="advisor-cards" class="xway-advice-grid"></div>
+ <details class="xway-evidence"><summary>Товары, которые стоит проверить <span id="advisor-finding-count"></span></summary><div id="advisor-findings"></div></details>
+</section>
+<section class="xway-panel xway-price-panel" aria-labelledby="price-ideas-title">
+ <div class="xway-section-title"><div><h2 id="price-ideas-title">Небольшое повышение цены</h2><p>Сначала проверяем сопоставимость и экономику, затем рассматриваем отдельный тест.</p></div><span class="xway-advisor-badge">Шаг до 2%</span></div>
+ <div id="advisor-price-ideas" class="xway-price-ideas"></div>
+ <details class="xway-price-calculator"><summary>Проверить цену для выбранного товара</summary>
+  <p class="xway-context-note">Выберите товар из рекомендаций. Укажите актуальные цены; данные не отправляются в магазины.</p>
+  <div class="xway-context-grid">
+   <label class="xway-field-wide">Товар<select id="advisor-price-product"><option value="">Выберите товар</option></select></label>
+   <label>Ваша цена продавца, ₽<input id="advisor-seller-price" type="number" min="0.01" step="0.01" placeholder="Из кабинета продавца"></label>
+   <label>Ваша цена покупателю, ₽<input id="advisor-buyer-price" type="number" min="0.01" step="0.01" placeholder="С учётом скидок"></label>
+   <label>Цена сопоставимого аналога, ₽<input id="advisor-peer-price" type="number" min="0.01" step="0.01" placeholder="При тех же условиях оплаты"></label>
+  </div>
+  <label class="xway-confirm"><input id="advisor-price-match" type="checkbox">Характеристики, фасовка, доставка и условия оплаты аналога сопоставимы</label>
+  <label class="xway-confirm"><input id="advisor-price-margin" type="checkbox">Прибыль после себестоимости, комиссии, рекламы, логистики, возвратов и налогов проверена</label>
+  <p id="advisor-price-result" class="xway-price-result" role="status">Заполните данные, чтобы проверить небольшой тест цены.</p>
+  <p class="xway-context-note">Цена покупателя после изменения и скидка Ozon могут измениться. Тестируйте цену отдельно от рекламы; заранее согласуйте допустимое снижение прибыли и конверсии. Безрисковых повышений нет.</p>
+ </details>
+</section>
+<section class="xway-panel xway-support" aria-labelledby="support-title">
+ <div class="xway-section-title"><div><h2 id="support-title">Что написать в поддержку XWAY</h2><p>Черновик учитывает выбранный магазин, перенос и доступные данные. Его можно отредактировать.</p></div><button type="button" id="advisor-copy" class="xway-primary">Скопировать сообщение</button></div>
+ <div class="xway-support-body"><p id="advisor-draft-stale" class="xway-draft-warning" hidden>Условия изменились. Обновите черновик перед копированием; ваши правки будут заменены.</p><label for="advisor-support-draft" class="xway-draft-label">Сообщение для чата поддержки</label><textarea id="advisor-support-draft" rows="12" spellcheck="true"></textarea><div class="xway-support-actions"><button type="button" id="advisor-regenerate" class="xway-secondary">Обновить черновик</button><span id="advisor-copy-status" role="status" aria-live="polite">Отправка — только вручную в чате XWAY.</span></div></div>
+</section>
 <section id="accounts" class="xway-accounts" aria-label="Состояние кабинета"></section>
 <section class="xway-panel xway-attention" aria-labelledby="attention-title"><div class="xway-section-title"><div><h2 id="attention-title">Требует внимания</h2><p id="attention-note">Ищем проблемные места и кандидатов на рост только в проверенных данных.</p></div><details class="xway-method"><summary>Как определяем</summary><p>Сравниваем свежие завершённые периоды. База сравнения: минимум 100 кликов и 30 заказов у пяти других кампаний того же кабинета, периода и типа. Кандидат на рост — ДРР минимум на 20% ниже медианы; высокий ДРР — минимум 5 заказов, в 1,5 раза и на 5 п. п. выше медианы. Малый запас — оценка до 7 дней по темпу завершённого периода. Текущие наблюдения могут потребовать обновления.</p></details></div><div id="opportunities" class="xway-opportunities"></div><p class="xway-footnote">Сигналы помогают выбрать, что проверить. Они не меняют рекламу автоматически и не заменяют проверку маржи, остатков и атрибуции в источнике.</p></section>
 <section class="xway-panel"><div class="xway-section-title"><div><h2>Проверенные кампании</h2><p id="coverage">Сведения о кампаниях пока не загружены.</p></div><span id="campaign-count" class="xway-count"></span></div><div class="xway-table-scroll"><table><thead><tr><th>Кампания / стратегия</th><th>Статус</th><th>Товары<br>активные / всего</th><th>Показы</th><th>Клики</th><th>CTR</th><th>Корзины</th><th>Заказы</th><th>Клик → заказ</th><th>Расход</th><th>Выручка</th><th>ДРР</th><th>Период / проверка</th></tr></thead><tbody id="campaign-rows"></tbody></table></div><p class="xway-footnote">«—» означает, что показатель не подтверждён. ДРР отображается как в источнике; при нуле заказов и нулевом ДРР — «—». Эти данные не определяют прибыль или убыток.</p></section>
 <div class="xway-bottom"><section class="xway-panel"><div class="xway-section-title"><h2>Настройки кабинета</h2></div><div id="settings" class="xway-settings"></div></section><section class="xway-panel xway-explainer"><div class="xway-section-title"><h2>Как работает XWAY</h2></div><p>XWAY автоматизирует рекламу на Ozon и Wildberries: ставки, расписание и распределение бюджета. Возможности зависят от площадки и тарифа.</p><p>На Ozon продвижение настраивается на уровне товара: кампании, ставки, лимиты и распределение бюджета. На Wildberries — работа со ставками, кластерами и поисковыми фразами. Это возможности сервиса, а не подтверждение включённого AI у каждой кампании.</p><p><strong>CTR</strong> — доля кликов среди показов. <strong>Клик → заказ</strong> — конверсия кликов в заказы. <strong>ДРР</strong> — отношение рекламных расходов к выручке по методике источника; это не прибыль.</p><div class="xway-doclinks"><a href="https://xway.ru/ozon" target="_blank" rel="noopener noreferrer">Возможности Ozon ↗</a><a href="https://xway.ru/wb" target="_blank" rel="noopener noreferrer">Возможности WB ↗</a><a href="https://xway-docs.teamly.ru/at/9872c3e8-78c4-4b45-a13f-96b05bafab4c" target="_blank" rel="noopener noreferrer">База знаний ↗</a></div><p class="xway-footnote">В Пульте сохранены отдельно проверенные факты с датой наблюдения. Автоматическая синхронизация с XWAY не подключена. XWAY Seller API — отдельный продукт; доступ к рекламному API этим не подтверждён.</p></section></div>
-</main><script src="/seller-workspace.js"></script><script src="/xway-opportunities.js"></script><script src="/xway.js"></script></body></html>
+</main><script src="/seller-workspace.js"></script><script src="/xway-opportunities.js"></script><script src="/xway-advisor.js"></script><script src="/xway-advisor-ui.js"></script><script src="/xway.js"></script></body></html>
