@@ -94,13 +94,17 @@ test('choosing a category redraws controls once and keeps the unchanged table DO
  assert.equal(app.node('chart-category-tables').innerHTMLWrites,tableWrites,'the report did not change, so the large table stays mounted');
 });
 
-test('four category levels expand to separate product rows without inventing taxonomy nodes',async()=>{
- const types=[{id:'a',parentId:null,name:'Category 1'},{id:'b',parentId:'a',name:'Category 2'},{id:'c',parentId:'b',name:'Category 3'},{id:'d',parentId:'c',name:'Category 4'}];
- const report={...empty,types,byProduct:[{productKey:'s1:101',typeId:'d',productId:'101',sku:'201',offerId:'offer',name:'Product <A>',storeId:'s1',storeName:'Store',points:[]}]};
+test('five category levels expand to separate product rows without inventing taxonomy nodes',async()=>{
+ const types=[{id:'a',parentId:null,name:'Category 1'},{id:'b',parentId:'a',name:'Category 2'},{id:'c',parentId:'b',name:'Category 3'},{id:'d',parentId:'c',name:'Category 4'},{id:'e',parentId:'d',name:'Category 5'}];
+ const report={...empty,types,byProduct:[{productKey:'s1:101',typeId:'e',productId:'101',sku:'201',offerId:'offer',name:'Product <A>',storeId:'s1',storeName:'Store',points:[]}]};
  const app=runtime(()=>Promise.resolve(report));app.update('2026-09-19');await flush();
  let html=app.node('chart-category-tables').innerHTML;
- assert.match(html,/data-category-depth="4"/);assert.doesNotMatch(html,/data-product-key=/);
- app.node('chart-category-tables').onclick({target:{closest:selector=>selector==='[data-expand]'?{dataset:{expand:'type:d'},getAttribute:()=> 'false'}:null}});
+ assert.match(html,/data-category-depth="5"/);assert.doesNotMatch(html,/data-product-key=/);
+ app.node('chart-category-level').value='4';app.node('chart-category-level').onchange();
+ assert.match(app.node('chart-category-tables').innerHTML,/data-category-depth="4"/);
+ assert.doesNotMatch(app.node('chart-category-tables').innerHTML,/data-category-depth="5"|data-product-key=/);
+ app.node('chart-category-level').value='5';app.node('chart-category-level').onchange();
+ app.node('chart-category-tables').onclick({target:{closest:selector=>selector==='[data-expand]'?{dataset:{expand:'type:e'},getAttribute:()=> 'false'}:null}});
  html=app.node('chart-category-tables').innerHTML;
  assert.match(html,/data-product-key="s1:101"/);assert.match(html,/Product &lt;A&gt;/);assert.match(html,/data-category="product:s1:101"/);assert.match(html,/SKU 201/);
  app.node('chart-category-level').value='1';app.node('chart-category-level').onchange();

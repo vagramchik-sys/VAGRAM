@@ -16,7 +16,7 @@ test('category mode supports daily periods, combined roots and store lines witho
  const chart=read('dist/turnover-chart.js'),server=read('server.cjs');
  assert.match(chart,/\/api\/order-category-daily\?/);
  assert.doesNotMatch(chart,/\/api\/order-categories\?/);
- assert.match(chart,/<option value="4" selected>4 уровня категорий<\/option>/);
+ assert.match(chart,/<option value="5" selected>5 уровней категорий<\/option>/);
  assert.match(chart,/<option value="products">До товаров<\/option>/);
  assert.match(chart,/все выбранные площадки/);
  assert.match(chart,/daily\.byStore/);
