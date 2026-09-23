@@ -43,7 +43,19 @@ function createPostgresSourceProviders({pool,stateSchema='pult',marketSchema='pu
  const buyerPattern=/^buyer-(order-segments|product-segments)-(\d{4}-\d{2}-\d{2})_(\d{4}-\d{2}-\d{2})(?:-retry-(\d+))?(?:\.partial)?\.json$/u;
  async function buyer(kind,{from,to}={}){if(!validDay(from)||!validDay(to)||from>to)fail('INVALID_PERIOD','Buyer source period is invalid');const names=await sourceNames(`buyer-${kind}-`),matching=names.filter(sourcePath=>{const m=buyerPattern.exec(sourcePath);return m&&m[1]===kind&&m[2]===from&&m[3]===to&&!sourcePath.endsWith('.partial.json')});matching.sort((a,b)=>Number(buyerPattern.exec(b)?.[4]||0)-Number(buyerPattern.exec(a)?.[4]||0)||b.localeCompare(a));return matching.length?exact(matching[0]):null}
  const getBuyerOrderSnapshot=options=>buyer('order-segments',options),getBuyerProductSnapshot=options=>buyer('product-segments',options);
- async function getBuyerOrderSnapshots({from,to}={}){if(!validDay(from)||!validDay(to)||from>to)fail('INVALID_PERIOD','Buyer source period is invalid');const names=await sourceNames('buyer-order-segments-'),latest=new Map();for(const sourcePath of names){const m=buyerPattern.exec(sourcePath);if(!m||m[1]!=='order-segments'||m[2]>to||m[3]<from||sourcePath.endsWith('.partial.json'))continue;const key=m[2]+'_'+m[3],retry=Number(m[4]||0),previous=latest.get(key);if(!previous||retry>previous.retry||retry===previous.retry&&sourcePath.localeCompare(previous.sourcePath)>0)latest.set(key,{retry,sourcePath})}const paths=[...latest.entries()].sort(([a],[b])=>a.localeCompare(b)).map(([,entry])=>entry.sourcePath);return selected(paths)}
+ async function getBuyerOrderSnapshots({from,to,includePartial=false}={}){
+  if(!validDay(from)||!validDay(to)||from>to)fail('INVALID_PERIOD','Buyer source period is invalid');
+  const names=await sourceNames('buyer-order-segments-'),latest=new Map(),partials=[];
+  for(const sourcePath of names){
+   const m=buyerPattern.exec(sourcePath);
+   if(!m||m[1]!=='order-segments'||m[2]>to||m[3]<from)continue;
+   if(sourcePath.endsWith('.partial.json')){if(includePartial===true)partials.push(sourcePath);continue}
+   const key=m[2]+'_'+m[3],retry=Number(m[4]||0),previous=latest.get(key);
+   if(!previous||retry>previous.retry||retry===previous.retry&&sourcePath.localeCompare(previous.sourcePath)>0)latest.set(key,{retry,sourcePath});
+  }
+  const paths=[...latest.values()].map(entry=>entry.sourcePath).concat(partials).sort((a,b)=>a.localeCompare(b));
+  return (await selected(paths)).map((value,index)=>paths[index].endsWith('.partial.json')?{...value,_partialSource:true}:value);
+ }
  async function getSnapshots(options={}){const {from,to}=options;if((from!==undefined||to!==undefined)&&(!validDay(from)||!validDay(to)||from>to))fail('INVALID_PERIOD','Buyer source period is invalid');const names=await sourceNames('buyer-order-segments-'),paths=names.filter(sourcePath=>{const m=buyerPattern.exec(sourcePath);return m&&m[1]==='order-segments'&&m[4]===undefined&&(from===undefined||m[2]<=to&&m[3]>=from)});return selected(paths)}
  return Object.freeze({exact,getMarketSnapshot,getReportCatalog,getProducts,getCatalog,getAllProducts,getOzonFunnel,getOzonLedger,getWbFinance,getCatalogs,getInsights,getWbOrders,getBuyerOrderSnapshot,getBuyerProductSnapshot,getBuyerOrderSnapshots,getSnapshots});
 }

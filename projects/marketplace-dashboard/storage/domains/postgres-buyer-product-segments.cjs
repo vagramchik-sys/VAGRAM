@@ -33,9 +33,9 @@ function create({getStores,getSnapshot,getOrderSnapshots,getCatalog,builder=prod
  if([getStores,getSnapshot,getOrderSnapshots,getCatalog].some(value=>typeof value!=='function'))throw Error('Не настроен SQL-источник товарных сегментов');
  function derivedSnapshot(documents,from,to){
   if(!Array.isArray(documents)||!documents.length)return null;
-  const records=new Map(),productOrders=new Map(),sources=[];
+  const records=new Map(),productOrders=new Map(),sources=new Map();
   for(const value of documents){
-   const documentStamp=Date.parse(value?.generatedAt||0)||0;
+   const documentStamp=Date.parse(value?.generatedAt||0)||0,partialSource=value?._partialSource===true;
    const documentRecords=Array.isArray(value?.records)?value.records:[],documentProducts=Array.isArray(value?.productOrders)?value.productOrders:[];
    const orderSchemes=new Set(documentRecords.filter(record=>record?.market&&record?.storeId&&record?.scheme).map(record=>[record.market,record.storeId,record.scheme].join('\u001f')));
    const productSchemes=new Set(documentProducts.filter(row=>row?.market&&row?.storeId&&row?.scheme).map(row=>[row.market,row.storeId,row.scheme].join('\u001f')));
@@ -50,10 +50,15 @@ function create({getStores,getSnapshot,getOrderSnapshots,getCatalog,builder=prod
    }
    for(const source of value?.report?.coverage?.sources||[]){
     const sourceKey=[source?.market,source?.storeId,source?.scheme].join('\u001f'),missingProducts=orderSchemes.has(sourceKey)&&!productSchemes.has(sourceKey);
-    sources.push(missingProducts?{...source,available:false,complete:false,limitation:'Для заказов источника не сохранены товарные строки.'}:source);
+    let prepared=missingProducts?{...source,available:false,complete:false,limitation:'Для заказов источника не сохранены товарные строки.'}:partialSource?{...source,complete:false,limitation:source?.limitation||'Сохранён частичный снимок источника.'}:source;
+    const rangeFrom=prepared?.requested?.from||prepared?.from||null,rangeTo=prepared?.requested?.to||prepared?.to||null,key=[sourceKey,rangeFrom,rangeTo].join('\u001f'),previous=sources.get(key);
+    if(previous){const newer=documentStamp>=previous.stamp?prepared:previous.source,older=documentStamp>=previous.stamp?previous.source:prepared,partial=previous.partial||partialSource,available=newer?.available===true||older?.available===true,complete=!partial&&((newer?.available===true&&newer?.complete===true)||(older?.available===true&&older?.complete===true));prepared={...newer,available,complete,limitation:partial?'Сохранён частичный снимок источника.':available?(newer?.available===true?newer.limitation:older.limitation):newer?.limitation||older?.limitation||null};}
+    sources.set(key,{source:prepared,stamp:Math.max(documentStamp,previous?.stamp||0),partial:partialSource||previous?.partial===true});
    }
   }
-  return builder.summarize([...productOrders.values()].map(item=>item.row),{records:[...records.values()].map(item=>item.row),sources,from,to});
+  const sourceRows=[...sources.values()].map(item=>item.source),summary=builder.summarize([...productOrders.values()].map(item=>item.row),{records:[...records.values()].map(item=>item.row),sources:sourceRows,from,to}),sourceByRange=new Map(sourceRows.map(source=>[[source?.market,source?.storeId,source?.scheme,source?.requested?.from||source?.from||null,source?.requested?.to||source?.to||null].join('\u001f'),source]));
+  if(Array.isArray(summary?.coverage?.sources))summary.coverage.sources=summary.coverage.sources.map(source=>{const original=sourceByRange.get([source?.market,source?.storeId,source?.scheme,source?.requested?.from||null,source?.requested?.to||null].join('\u001f')),limitation=typeof original?.limitation==='string'?original.limitation:null;return limitation&&!String(source.limitation||'').includes(limitation)?{...source,limitation:[limitation,source.limitation].filter(Boolean).join(' ')}:source});
+  return summary;
  }
  function catalogIndex(selected,catalogs){
   const index=new Map();

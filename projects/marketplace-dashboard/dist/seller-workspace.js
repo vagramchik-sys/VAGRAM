@@ -201,4 +201,6 @@
   window.addEventListener('popstate', syncActive);
   window.addEventListener('hashchange', syncActive);
   syncActive();
+  window.clearTimeout(window.__pultShellBootTimer);
+  document.documentElement.classList.remove('pult-shell-boot');
 })();

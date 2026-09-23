@@ -206,16 +206,31 @@ function createLiveSourceProviders({sources} = {}) {
   const getBuyerProductSnapshot = options => buyer('product-segments', options);
 
   async function getBuyerOrderSnapshots(options) {
-    const {from, to} = period(options), latest = new Map();
-    for (const sourcePath of await buyerNames('order-segments')) {
+    const {from, to} = period(options), latest = new Map(), partials = [];
+    const entries = await names();
+    for (const entry of entries) {
+      const sourcePath = entry.sourcePath;
       const match = BUYER.exec(sourcePath);
-      if (match[2] > to || match[3] < from || match[5]) continue;
+      if (!match || match[1] !== 'order-segments' || match[2] > to || match[3] < from) continue;
+      if (match[5]) { if (options.includePartial === true) partials.push(entry); continue; }
       const key = match[2] + '_' + match[3], retry = Number(match[4] || 0), previous = latest.get(key);
-      if (!previous || retry > previous.retry || retry === previous.retry && sourcePath.localeCompare(previous.sourcePath) > 0) latest.set(key, {retry, sourcePath});
+      if (!previous || retry > previous.retry || retry === previous.retry && sourcePath.localeCompare(previous.sourcePath) > 0) latest.set(key, {...entry, retry});
     }
-    const paths = [...latest.entries()].sort(([a], [b]) => a.localeCompare(b)).map(([, entry]) => entry.sourcePath), result = [];
-    for (const path of paths) { const row = await read(path); if (row) result.push(clone(row.value)); }
-    return result;
+    const selected = [...latest.values(), ...partials].sort((a,b) => a.sourcePath.localeCompare(b.sourcePath));
+    const values = await readMany(selected, undefined, cachedBuyerRows);
+    return values.flatMap((value,index) => value ? [BUYER.exec(selected[index].sourcePath)[5] ? Object.freeze({...value, _partialSource:true}) : value] : []);
+  }
+
+  async function cachedBuyerRows(entry) {
+    const revision = String(entry.head?.revision ?? '');
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(revision)) fail('CORRUPT_SOURCE', 'Live buyer source revision is invalid');
+    const cached = snapshotCache.get(entry.sourcePath);
+    if (cached?.revision === revision) {
+      snapshotCache.delete(entry.sourcePath); snapshotCache.set(entry.sourcePath, cached);
+      return cached.value;
+    }
+    const row = await read(entry.sourcePath, ['records', 'productOrders', 'report.coverage.sources']);
+    return row ? cacheSnapshot(entry.sourcePath, row) : null;
   }
 
   async function getSnapshots(options = {}) {
@@ -224,18 +239,7 @@ function createLiveSourceProviders({sources} = {}) {
       const match = BUYER.exec(row.sourcePath);
       return match && match[1] === 'order-segments' && match[4] === undefined && (!requested || match[2] <= requested.to && match[3] >= requested.from);
     }).sort((left, right) => left.sourcePath.localeCompare(right.sourcePath));
-    const rows = await readMany(selected, ['records', 'productOrders', 'report.coverage.sources'], async entry => {
-      const revision = String(entry.head?.revision ?? '');
-      if (!/^(?:0|[1-9][0-9]*)$/u.test(revision)) fail('CORRUPT_SOURCE', 'Live buyer source revision is invalid');
-      const cached = snapshotCache.get(entry.sourcePath);
-      if (cached?.revision === revision) {
-        snapshotCache.delete(entry.sourcePath);
-        snapshotCache.set(entry.sourcePath, cached);
-        return cached.value;
-      }
-      const row = await read(entry.sourcePath, ['records', 'productOrders', 'report.coverage.sources']);
-      return row ? cacheSnapshot(entry.sourcePath, row) : null;
-    });
+    const rows = await readMany(selected, undefined, cachedBuyerRows);
     for (const value of rows) if (value) result.push(value);
     return result;
   }

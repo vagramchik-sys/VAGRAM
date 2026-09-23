@@ -1,6 +1,9 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const model=require('../dist/updates-model.js');
+const fs=require('node:fs'),path=require('node:path');
+const uiScript=fs.readFileSync(path.join(__dirname,'..','dist','updates.js'),'utf8');
+const releaseNotes=JSON.parse(fs.readFileSync(path.join(__dirname,'..','release-notes.json'),'utf8'));
 const entry=(id,status='progress',extra={})=>({id,status,title:'Задача '+id,details:'Описание',date:'2026-09-18T12:00:00Z',...extra});
 const document=entries=>({updatedAt:'2026-09-18T12:10:00Z',entries});
 test('legacy entries gain empty sections without invented progress or deadlines',()=>{
@@ -29,4 +32,19 @@ test('provided estimates require their basis, and incomplete optional schema is 
 });
 test('new updates sort by updatedAt, preserve original timestamps and do not mutate input',()=>{
  const source=document([entry('old','ready',{date:'2026-09-16',updatedAt:'2026-09-18T12:05:01Z',completed:['Готово']}),entry('new','planned',{date:'2026-09-18T12:00:00Z'})]),before=JSON.stringify(source),result=model.normalize(source);assert.deepEqual(result.entries.map(e=>e.id),['old','new']);assert.equal(result.entries[0].date,'2026-09-16');assert.equal(result.entries[0].updatedAt,'2026-09-18T12:05:01Z');result.entries[0].completed.push('Локальное изменение');assert.equal(JSON.stringify(source),before);
+});
+
+test('returning to the tab and the existing refresh button force a journal check',()=>{
+ assert.match(uiScript,/onVisibility=\(\)=>\{if\(!document\.hidden\)void refresh\(true\);\}/);
+ assert.match(uiScript,/refreshView\?\.addEventListener\('click',onManualRefresh\)/);
+ assert.match(uiScript,/refreshView\?\.removeEventListener\('click',onManualRefresh\)/);
+ assert.match(uiScript,/Последнее изменение в журнале:/);
+ assert.match(uiScript,/Последняя проверка новых записей:/);
+});
+test('journal contains the published marketplace, cache, category and data-loading changes',()=>{
+ const value=model.normalize(releaseNotes),byId=new Map(value.entries.map(item=>[item.id,item]));
+ for(const id of ['combined-ozon-wb-order-total','today-yesterday-report-cache','gray-gloves-category-merge','data-monitor-and-on-demand-reports'])assert.equal(byId.get(id)?.status,'ready');
+ assert.match(byId.get('combined-ozon-wb-order-total').verification.join(' '),/6d7f4138/);
+ assert.match(byId.get('data-monitor-and-on-demand-reports').verification.join(' '),/275002/);
+ assert.ok(Date.parse(value.updatedAt)>Date.parse('2026-09-23T00:00:00Z'));
 });

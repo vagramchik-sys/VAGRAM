@@ -1,4 +1,7 @@
 /* Shared storefront navigation, using the existing Pult routes and controls. */
+html.pult-shell-boot body>*{visibility:hidden!important}
+html.pult-shell-boot body:before{content:'Открываем Пульт…';position:fixed;inset:0;z-index:10000;display:grid;place-items:center;padding:24px;background:#fff;color:#344054;font:500 16px/1.5 Arial,sans-serif}
+.pult-shell-fallback{margin:12px;padding:12px 16px;border:1px solid #d9a441;border-radius:8px;background:#fff8e8;color:#694b12;font:500 14px/1.45 Arial,sans-serif}
 body.pult-seller-workspace {
   --seller-blue: #216bff;
   --seller-ink: #070707;

@@ -9,9 +9,9 @@ function runtime(load,options={}){
  const node=id=>{if(!nodes.has(id))nodes.set(id,{id,value:id==='ins-chart-metric'?'orderedRevenue':'',checked:false,hidden:false,style:{setProperty(){}},_innerHTML:'',innerHTMLWrites:0,get innerHTML(){return this._innerHTML},set innerHTML(value){this._innerHTML=value;this.innerHTMLWrites++},textContent:'',insertAdjacentHTML(){},setAttribute(){},removeAttribute(){},querySelector(){return null},querySelectorAll(){return []},closest(){return this}});return nodes.get(id)};
  let calls=0;
  class Clock extends Date {constructor(...args){super(...(args.length?args:['2026-09-20T12:00:00Z']))}static now(){return Date.parse('2026-09-20T12:00:00Z')}}
- const context={document:{getElementById:node},window:{},PultStoreChart:require('../dist/turnover-chart-model.js'),Intl,Date:Clock,URLSearchParams,Promise,Map,Set,console};
+ const context={document:{getElementById:node},window:{},PultStoreChart:require('../dist/turnover-chart-model.js'),Intl,Date:Clock,URLSearchParams,Promise,Map,Set,setTimeout,clearTimeout,console};
  vm.runInNewContext(source,context);
- const chart=context.window.createPultStoreChart({api:url=>url==='/api/stores'?Promise.resolve(options.stores||[]):(calls++,load(url)),metricTitle:()=> 'Сумма'});
+ const chart=context.window.createPultStoreChart({api:url=>url==='/api/stores'?Promise.resolve(options.stores||[]):(calls++,load(url)),metricTitle:()=> 'Сумма',requestTimeoutMs:options.requestTimeoutMs||15000});
  if(options.from)node('ins-from').value=options.from;if(options.to)node('ins-to').value=options.to;
  if(options.categoryMode!==false)node('chart-mode-categories').onclick();
  return {chart,node,calls:()=>calls,update:date=>chart.update({days:1,current:{from:date,to:date}})};
@@ -54,6 +54,14 @@ test('default total requests WB even when its individual line is unchecked and c
  app.node('ins-chart-metric').value='orderedUnits';await app.chart.render();
  assert.match(app.node('ins-chart-details').innerHTML,/3 шт\./,'units use the same Ozon plus WB total');
 });
+test('a stalled WB total cannot leave yesterday loading and the failed request is retryable',async()=>{
+ const make=(date,revenue)=>({scope:'orders',days:1,current:{from:date,to:date},metrics:{orderedRevenue:{current:revenue}},intraday:{orders:[{at:date+'T09:00:00Z',orderedRevenue:revenue,orderedUnits:1}]},coverage:{orders:true}}),never=new Promise(()=>{});let wbCalls=0;
+ const app=runtime(url=>{if(!url.startsWith('/api/wb/orders?'))throw Error('unexpected '+url);wbCalls++;return wbCalls<3?never:Promise.resolve(make('2026-09-19',20))},{categoryMode:false,requestTimeoutMs:10,stores:[{id:'1',name:'Ozon shop'},{id:'wb-2',name:'WB · Shop'}]});
+ app.chart.update(make('2026-09-20',100));await flush();app.chart.update(make('2026-09-19',80));await new Promise(resolve=>setTimeout(resolve,30));await flush();
+ assert.doesNotMatch(app.node('chart-store-status').textContent,/Загружаем выбранные линии/);assert.match(app.node('chart-store-status').textContent,/WB · Shop \(Источник не ответил вовремя\.\)/);assert.equal(wbCalls,2);
+ await app.chart.render();assert.equal(wbCalls,3,'a timed out request is removed from cache');assert.match(app.node('chart-store-status').textContent,/Общий итог включает Ozon и Wildberries/);assert.match(app.node('ins-chart-details').innerHTML,/100 ₽/);
+});
+test('a fulfilled yesterday WB gap shows known Ozon without claiming a combined total',async()=>{const date='2026-09-19',ozon={scope:'orders',days:1,current:{from:date,to:date},metrics:{orderedRevenue:{current:80}},intraday:{orders:[{at:date+'T09:00:00Z',orderedRevenue:80,orderedUnits:1}]},coverage:{orders:true}},wb={days:1,current:{from:date,to:date},metrics:{orderedRevenue:{current:null}},intraday:{orders:[]},coverage:{orders:false},error:'Нет полного снимка WB за выбранный день'};const app=runtime(url=>Promise.resolve(url.startsWith('/api/wb/orders?')?wb:ozon),{categoryMode:false,stores:[{id:'1',name:'Ozon shop'},{id:'wb-2',name:'WB · Shop'}]});app.chart.update(ozon);await flush();assert.doesNotMatch(app.node('chart-store-status').textContent,/Загружаем выбранные линии/);assert.match(app.node('chart-store-status').textContent,/Нет полного снимка WB/);assert.match(app.node('chart-store-status').textContent,/только известная часть, без общего итога/);assert.match(app.node('ins-chart-details').innerHTML,/Известная часть · Ozon/);assert.match(app.node('ins-chart-details').innerHTML,/80 ₽/);assert.doesNotMatch(app.node('ins-chart-details').innerHTML,/Общий · Ozon \+ WB/)});
 test('concurrent renders share a request and a failed request can be retried',async()=>{
  let resolve,reject;
  const app=runtime(()=>new Promise((yes,no)=>{resolve=yes;reject=no}));

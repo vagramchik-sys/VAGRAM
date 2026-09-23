@@ -94,6 +94,33 @@ test('missing live rows return unavailable values without document or snapshot f
   assert.deepEqual(calls, ['data-9.json', 'data-9.json', 'data-9.json', 'list']);
 });
 
+test('buyer reports can opt into partial rows without a failed retry hiding known history', async () => {
+  const partial='buyer-order-segments-2026-09-01_2026-09-19.partial.json';
+  const failed='buyer-order-segments-2026-09-01_2026-09-19-retry-3.partial.json';
+  const daily='buyer-order-segments-2026-09-20_2026-09-20.json';
+  const entries={
+    [partial]:data(1,{records:[{id:'known'}],productOrders:[{orderId:'known'}],report:{coverage:{sources:[{complete:true}]}}}),
+    [failed]:data(1,{records:[],productOrders:[],report:{coverage:{sources:[]}}}),
+    [daily]:data(1,{records:[{id:'daily'}],report:{coverage:{sources:[]}}})
+  };
+  const {providers,calls}=fixture(entries),options={from:'2026-09-10',to:'2026-09-22'};
+  assert.deepEqual((await providers.getBuyerOrderSnapshots(options)).map(value=>value.records[0].id),['daily']);
+  const rows=await providers.getBuyerOrderSnapshots({...options,includePartial:true});
+  assert.equal(rows.length,3);
+  const known=rows.find(value=>value.records[0]?.id==='known');
+  assert.equal(known._partialSource,true);
+  assert.equal(Object.isFrozen(known.records),true);
+  assert.equal(rows.find(value=>value.records[0]?.id==='daily')._partialSource,undefined);
+  assert.equal(calls.filter(call=>call[0]==='record').length,3);
+  await providers.getBuyerOrderSnapshots({...options,includePartial:true});
+  assert.equal(calls.filter(call=>call[0]==='record').length,3);
+  assert.equal(calls.filter(call=>call[0]==='record').every(call=>JSON.stringify(call[2])===JSON.stringify(['records','productOrders','report.coverage.sources'])),true);
+  entries[partial]=data(2,{records:[{id:'updated'}],productOrders:[],report:{coverage:{sources:[]}}});
+  const refreshed=await providers.getBuyerOrderSnapshots({...options,includePartial:true});
+  assert.equal(refreshed.some(value=>value.records[0]?.id==='updated'),true);
+  assert.equal(calls.filter(call=>call[0]==='record').length,4);
+});
+
 test('known cross-market source names return null without touching the repository', async () => {
   const {providers,calls}=fixture({'data-1.json':data(1,{products:[]})});
   assert.equal(await providers.exact('costs-wb-4.json'),null);
