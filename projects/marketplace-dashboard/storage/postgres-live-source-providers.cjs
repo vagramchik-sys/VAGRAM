@@ -24,7 +24,8 @@ function createLiveSourceProviders({sources} = {}) {
   }
 
   // Share only active reads. A later request always observes a fresh SQL head.
-  const inFlight = new Map();
+  const inFlight = new Map(), bulkWaiters = [];
+  let bulkActive = 0;
   async function shared(key, read) {
     let pending = inFlight.get(key);
     if (!pending) {
@@ -54,6 +55,31 @@ function createLiveSourceProviders({sources} = {}) {
     if (row == null) return null;
     if (!row || typeof row !== 'object' || !row.value || typeof row.value !== 'object' || Array.isArray(row.value)) fail('CORRUPT_SOURCE', 'Live SQL source shape is invalid');
     return row;
+  }
+
+  async function acquireBulkRead() {
+    if (bulkActive < 4) { bulkActive++; return; }
+    await new Promise(resolve => bulkWaiters.push(resolve));
+  }
+  function releaseBulkRead() {
+    const next = bulkWaiters.shift();
+    if (next) next();
+    else bulkActive--;
+  }
+
+  async function readMany(paths, entities) {
+    const rows = new Array(paths.length);
+    let next = 0;
+    async function worker() {
+      while (next < paths.length) {
+        const index = next++;
+        await acquireBulkRead();
+        try { rows[index] = await read(paths[index], entities); }
+        finally { releaseBulkRead(); }
+      }
+    }
+    await Promise.all(Array.from({length: Math.min(4, paths.length)}, worker));
+    return rows;
   }
 
   async function exact(sourcePath) {
@@ -114,20 +140,20 @@ function createLiveSourceProviders({sources} = {}) {
 
   async function listed(prefix, pattern, entities, map) {
     const selected = (await names()).map(row => row.sourcePath).filter(path => path.startsWith(prefix) && pattern.test(path)).sort();
-    const result = [];
-    for (const sourcePath of selected) {
-      const row = await read(sourcePath, entities);
+    const result = [], rows = await readMany(selected, entities);
+    for (let index = 0; index < selected.length; index++) {
+      const sourcePath = selected[index], row = rows[index];
       if (row) result.push(map(sourcePath, clone(row.value)));
     }
     return result;
   }
-  const getCatalogs = () => listed('order-category-catalog-', /^order-category-catalog-(?:wb-)?[0-9]+\.json$/u, ['products', 'categoryTree'], (path, value) => {
+  const getCatalogs = () => listed('order-category-catalog-', /^order-category-catalog-(?:wb-)?[0-9]+\.json$/u, ['products'], (path, value) => {
     const storeId = path.slice(23, -5);
     if (!Array.isArray(value.products)) fail('CORRUPT_SOURCE', 'Order category catalog shape is invalid');
     return {...value, storeId, market: storeId.startsWith('wb-') ? 'WB' : 'Ozon'};
   });
-  const getInsights = () => listed('insights-', /^insights-[0-9]+\.json$/u, ['orders.daily', 'orders.skuDaily', 'orders.skuCoverage', 'types', 'errors'], (path, value) => ({storeId: path.slice(9, -5), value}));
-  const getWbOrders = () => listed('wb-orders-', /^wb-orders-wb-[0-9]+\.json$/u, ['points', 'orders', 'rows'], (path, value) => ({storeId: path.slice(10, -5), value}));
+  const getInsights = () => listed('insights-', /^insights-[0-9]+\.json$/u, ['orders.skuDaily'], (path, value) => ({storeId: path.slice(9, -5), value}));
+  const getWbOrders = () => listed('wb-orders-', /^wb-orders-wb-[0-9]+\.json$/u, ['orders'], (path, value) => ({storeId: path.slice(10, -5), value}));
 
   async function buyerNames(kind) {
     return (await names()).map(row => row.sourcePath).filter(path => {
@@ -166,7 +192,8 @@ function createLiveSourceProviders({sources} = {}) {
       const match = BUYER.exec(path);
       return match[4] === undefined && (!requested || match[2] <= requested.to && match[3] >= requested.from);
     }).sort();
-    for (const path of paths) { const row = await read(path); if (row) result.push(clone(row.value)); }
+    const rows = await readMany(paths, ['records', 'productOrders', 'report.coverage.sources']);
+    for (const row of rows) if (row) result.push(clone(row.value));
     return result;
   }
 

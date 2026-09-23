@@ -188,10 +188,11 @@ test('business chart exposes WB honestly and removes yesterday and week referenc
 test('business chart switches to categories without losing the store selection or inventing Ozon order times', () => {
   const chart = fs.readFileSync(require.resolve('../dist/turnover-chart.js'), 'utf8');
   assert.match(chart, /chart-mode-categories/);
-  assert.match(chart, /\/api\/order-categories\?/);
+  assert.match(chart, /\/api\/order-category-daily\?/);
+  assert.doesNotMatch(chart, /\/api\/order-categories\?/);
   assert.match(chart, /selectedCategories/);
   assert.match(chart, /Исторические дни используют текущую подтверждённую классификацию/);
-  assert.match(chart, /При выборе товара все линии переключаются на дневные итоги/);
+  assert.match(chart, /За сегодня показывается последний подтверждённый итог из API/);
   assert.match(chart, /Ozon и Wildberries объединены по нашим типам/);
   assert.match(chart, /сумма остаётся пустой, если рублёвая сумма не подтверждена/);
   assert.match(chart, /не выдаётся за полный итог/);

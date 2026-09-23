@@ -2,6 +2,8 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const {createLiveSourceProviders} = require('../storage/postgres-live-source-providers.cjs');
+const codecs = require('../storage/postgres-live-codecs.cjs');
+const {build: buildCategoryDaily} = require('../order-category-daily.cjs');
 
 function fixture(entries) {
   const calls = [];
@@ -110,8 +112,8 @@ test('WB finance reads operations only and small providers request explicit coll
   assert.deepEqual(await providers.getWbFinance('wb-4'), {completedAt: 'x', products: [], stocks: [], operations: [{rrdId: 2}]});
   await providers.getInsights(); await providers.getWbOrders();
   assert.deepEqual(calls.find(call => call[1] === 'data-wb-4.json')[2], ['operations']);
-  assert.deepEqual(calls.find(call => call[1] === 'insights-3.json')[2], ['orders.daily', 'orders.skuDaily', 'orders.skuCoverage', 'types', 'errors']);
-  assert.deepEqual(calls.find(call => call[1] === 'wb-orders-wb-4.json')[2], ['points', 'orders', 'rows']);
+  assert.deepEqual(calls.find(call => call[1] === 'insights-3.json')[2], ['orders.skuDaily']);
+  assert.deepEqual(calls.find(call => call[1] === 'wb-orders-wb-4.json')[2], ['orders']);
 });
 
 test('category revision fingerprints only relevant heads for the requested scope and period', async () => {
@@ -140,4 +142,79 @@ test('category revision rejects malformed relevant heads', async () => {
   const row=data(1,{});row.head.revision='broken';
   const {providers}=fixture({'order-category-catalog-1.json':row});
   await assert.rejects(providers.categoryRevision({from:'2026-09-05',to:'2026-09-06'}),error=>error?.code==='CORRUPT_SOURCE');
+});
+
+test('category snapshots use bounded parallel SQL reads and preserve source order', async () => {
+  const paths = Array.from({length: 7}, (_, index) => `buyer-order-segments-2026-09-${String(index + 1).padStart(2, '0')}_2026-09-${String(index + 1).padStart(2, '0')}.json`);
+  let active = 0, peak = 0;
+  const requestedEntities = [];
+  const providers = createLiveSourceProviders({sources: {
+    identity() { return {}; },
+    async listSources() { return paths.map((sourcePath, index) => ({sourcePath, head: data(index + 1, {}).head})); },
+    async record(sourcePath, options) {
+      requestedEntities.push(options?.entities);
+      active++; peak = Math.max(peak, active);
+      await new Promise(resolve => setImmediate(resolve));
+      active--;
+      return data(paths.indexOf(sourcePath) + 1, {sourcePath});
+    }
+  }});
+  const snapshots = await providers.getSnapshots({from: '2026-09-01', to: '2026-09-07'});
+  assert.deepEqual(snapshots.map(row => row.sourcePath), paths);
+  assert.equal(peak, 4);
+  assert.equal(requestedEntities.every(value => JSON.stringify(value) === JSON.stringify(['records', 'productOrders', 'report.coverage.sources'])), true);
+});
+
+test('category SQL concurrency limit is global across simultaneous source groups', async () => {
+  const entries = {};
+  for (let index = 1; index <= 4; index++) {
+    entries[`order-category-catalog-${index}.json`] = {products: []};
+    entries[`insights-${index}.json`] = {orders: {skuDaily: []}};
+    entries[`wb-orders-wb-${index}.json`] = {orders: []};
+    entries[`buyer-order-segments-2026-09-0${index}_2026-09-0${index}.json`] = {records: [], productOrders: [], report: {coverage: {sources: []}}};
+  }
+  let active = 0, peak = 0;
+  const providers = createLiveSourceProviders({sources: {
+    identity() { return {}; },
+    async listSources() { return Object.keys(entries).map(sourcePath => ({sourcePath, head: data(1, {}).head})); },
+    async record(sourcePath) {
+      active++; peak = Math.max(peak, active);
+      await new Promise(resolve => setImmediate(resolve));
+      active--;
+      return data(1, entries[sourcePath]);
+    }
+  }});
+  await Promise.all([
+    providers.getCatalogs(),
+    providers.getInsights(),
+    providers.getWbOrders(),
+    providers.getSnapshots({from: '2026-09-01', to: '2026-09-04'})
+  ]);
+  assert.equal(peak, 4);
+});
+
+test('narrow category SQL reads preserve metadata and produce the same report as full sources', async () => {
+  const catalog = {stamp: 'catalog-r1', products: [{product_id: 1, sku: 101, name: 'P'}], categoryTree: [{id: 9}]};
+  const insight = {orders: {skuDailyCoverage: true, skuUpdatedAt: '2026-09-23T08:00:00Z', skuDaily: [{date: '2026-09-23', sku: '101', units: 3, revenue: 30}], daily: [{date: '2026-09-23', units: 3, revenue: 30}]}, types: [{id: 1}], errors: []};
+  const snapshot = {generatedAt: '2026-09-22T12:00:00Z', records: [{market: 'Ozon', storeId: '1', scheme: 'FBO', id: 'p1', createdAt: '2026-09-22T08:00:00Z', units: 2}], productOrders: [{market: 'Ozon', storeId: '1', scheme: 'FBO', postingId: 'p1', productId: '101', orderedAt: '2026-09-22T08:00:00Z', updatedAt: '2026-09-22T12:00:00Z', units: 2, amountRub: 20}], report: {byStore: [{storeId: '1'}], coverage: {sources: [{market: 'Ozon', storeId: '1', scheme: 'FBO', available: true, complete: true, requested: {from: '2026-09-22', to: '2026-09-22'}}, {market: 'Ozon', storeId: '1', scheme: 'FBS', available: true, complete: true, requested: {from: '2026-09-22', to: '2026-09-22'}}]}, limitations: ['x']}, errors: []};
+  const entries = {'order-category-catalog-1.json': catalog, 'insights-1.json': insight, 'buyer-order-segments-2026-09-22_2026-09-22.json': snapshot};
+  const providers = createLiveSourceProviders({sources: {
+    identity() { return {}; },
+    async listSources() { return Object.keys(entries).map(sourcePath => ({sourcePath, head: data(1, {}).head})); },
+    async record(sourcePath, options) {
+      const encoded = codecs.encode(sourcePath, entries[sourcePath]);
+      const selected = options?.entities ? Object.fromEntries(Object.entries(encoded.collections).filter(([name]) => options.entities.includes(name))) : encoded.collections;
+      return {...data(1, codecs.decode(sourcePath, {metadata: encoded.metadata, collections: selected}, {partial: !!options?.entities}))};
+    }
+  }});
+  const [catalogs, snapshots, insights] = await Promise.all([providers.getCatalogs(), providers.getSnapshots({from: '2026-09-22', to: '2026-09-23'}), providers.getInsights()]);
+  assert.equal(catalogs[0].stamp, 'catalog-r1');
+  assert.equal(snapshots[0].generatedAt, snapshot.generatedAt);
+  assert.equal(insights[0].value.orders.skuDailyCoverage, true);
+  assert.equal(insights[0].value.orders.skuUpdatedAt, insight.orders.skuUpdatedAt);
+  const registry = {schemaVersion: 1, revision: 'r1', reviewedAt: '2026-09-23T00:00:00Z', types: [{id: 'a', parentId: null, name: 'A'}], assignments: {'1:1': {typeId: 'a', source: 'reviewed', evidence: null}}, rules: [], available: true};
+  const options = {from: '2026-09-22', to: '2026-09-23', now: Date.parse('2026-09-23T12:00:00Z'), classifiedAt: '2026-09-23T12:00:00.000Z'};
+  const full = buildCategoryDaily({registry, catalogs: [{...catalog, storeId: '1', market: 'Ozon'}], snapshots: [snapshot], insights: {'1': insight}, wbOrders: {}}, options);
+  const narrow = buildCategoryDaily({registry, catalogs, snapshots, insights: Object.fromEntries(insights.map(row => [row.storeId, row.value])), wbOrders: {}}, options);
+  assert.deepEqual(narrow, full);
 });

@@ -4,7 +4,7 @@ const fs=require('node:fs');
 const vm=require('node:vm');
 const source=fs.readFileSync(require.resolve('../dist/turnover-chart.js'),'utf8');
 const flush=()=>new Promise(resolve=>setImmediate(()=>setImmediate(resolve)));
-function runtime(load){
+function runtime(load,options={}){
  const nodes=new Map();
  const node=id=>{if(!nodes.has(id))nodes.set(id,{id,value:id==='ins-chart-metric'?'orderedRevenue':'',checked:false,hidden:false,innerHTML:'',textContent:'',insertAdjacentHTML(){},setAttribute(){},removeAttribute(){},closest(){return this}});return nodes.get(id)};
  let calls=0;
@@ -12,7 +12,8 @@ function runtime(load){
  const context={document:{getElementById:node},window:{},Intl,Date:Clock,URLSearchParams,Promise,Map,Set,console};
  vm.runInNewContext(source,context);
  const chart=context.window.createPultStoreChart({api:url=>url==='/api/stores'?Promise.resolve([]):(calls++,load(url)),metricTitle:()=> 'Сумма'});
- node('chart-mode-categories').onclick();
+ if(options.from)node('ins-from').value=options.from;if(options.to)node('ins-to').value=options.to;
+ if(options.categoryMode!==false)node('chart-mode-categories').onclick();
  return {chart,node,calls:()=>calls,update:date=>chart.update({days:1,current:{from:date,to:date}})};
 }
 const empty={categories:['Перчатки','Крепёж'],types:[{id:'Перчатки',parentId:null,name:'Перчатки'},{id:'Крепёж',parentId:null,name:'Крепёж'}],series:[],byStore:[],coverage:{complete:true},period:{days:1},limitations:[]};
@@ -114,4 +115,30 @@ test('today store filter does not request an unscoped intraday category report',
  const urls=[],app=runtime(url=>{urls.push(url);return Promise.resolve(empty)});
  app.node('store').value='s1';app.update('2026-09-20');await flush();
  assert.equal(urls.length,1);assert.match(urls[0],/order-category-daily.*store=s1/);
+});
+
+test('opening categories starts SQL daily loading before the main report is ready and reuses it',async()=>{
+ const urls=[],pending=[];
+ const app=runtime(url=>{urls.push(url);return new Promise(resolve=>pending.push(resolve))},{categoryMode:false,from:'2026-09-20',to:'2026-09-20'});
+ app.node('chart-mode-categories').onclick();await flush();
+ assert.equal(urls.length,1);assert.match(urls[0],/order-category-daily/);
+ assert.equal(app.node('chart-store-status').textContent,'Загружаем категории…');
+ app.update('2026-09-20');await flush();assert.equal(urls.length,1,'initial report must reuse the prefetched category request');
+ pending[0](empty);await flush();
+ assert.match(app.node('chart-store-status').textContent,/Выберите категорию или товар/);
+});
+
+test('today category view uses the SQL daily report for selected lines without a second snapshot request',async()=>{
+ const urls=[],app=runtime(url=>{urls.push(url);return Promise.resolve(empty)});
+ app.update('2026-09-20');await flush();
+ assert.equal(urls.length,1);assert.match(urls[0],/order-category-daily/);assert.doesNotMatch(urls[0],/order-categories\?/);
+ app.node('chart-category-options').onchange({target:{type:'checkbox',value:'Перчатки',checked:true}});await flush();
+ assert.equal(urls.length,1);assert.doesNotMatch(urls[0],/order-categories\?/);
+});
+
+test('overview polling keeps the category cache while the order source revision is unchanged',async()=>{
+ const urls=[],source={id:'s1',ordersAt:'2026-09-20T09:00:00Z',ordersHistoryAt:'2026-09-20T09:00:00Z'},app=runtime(url=>{urls.push(url);return Promise.resolve(empty)}),report={days:1,current:{from:'2026-09-20',to:'2026-09-20'},sources:[source]};
+ app.chart.update(report);await flush();assert.equal(urls.length,1);
+ app.chart.update({...report,generatedAt:'2026-09-20T09:00:30Z'});await flush();assert.equal(urls.length,1,'timer refresh must not refetch unchanged category inputs');
+ app.chart.update({...report,sources:[{...source,ordersAt:'2026-09-20T09:10:00Z'}]});await flush();assert.equal(urls.length,2,'new order data must invalidate category cache');
 });
