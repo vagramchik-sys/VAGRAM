@@ -60,7 +60,7 @@
       }
       report = data; panel.setAttribute('aria-busy','false');
       const category = $('category-sales-category'), current = category.value;
-      const options = '<option value="">Все товары</option>' + data.categories.map(c => `<option value="${esc(c.id)}">${esc(c.name)} · ${c.productCount} товаров</option>`).join('');
+      const options = '<option value="">Все товары</option>' + data.categories.map(c => `<option value="${esc(c.id)}">${esc(Array.isArray(c.path) ? c.path.join(' › ') : c.name)} · ${c.productCount} товаров</option>`).join('');
       if (category.innerHTML !== options) { category.innerHTML = options; category.value = current; }
       $('category-sales-results').hidden = !data.sources.length;
       $('category-sales-state').textContent = !data.sources.length ? 'В выбранной категории нет товаров для этой площадки или магазина. Проверьте назначения и фильтры; ручные категории настраиваются на странице поставщиков.' : `${data.period.from} — ${data.period.to} · ${data.productCount} товаров в каталоге · подтверждено ${data.coverage.coveredDays} из ${data.coverage.totalDays} дней${data.coverage.complete ? '.' : '. Итог за весь период неизвестен при пропусках.'}`;

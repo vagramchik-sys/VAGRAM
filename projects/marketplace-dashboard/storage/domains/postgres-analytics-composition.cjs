@@ -15,7 +15,7 @@ module.exports=function createPostgresAnalyticsComposition({pool,stateSchema='pu
  const buyerOrderSegments=buyerOrderModule.create({getStores,getSnapshot:sources.getBuyerOrderSnapshot});
  const buyerProductSegments=buyerProductModule.create({getStores,getSnapshot:sources.getBuyerProductSnapshot,getOrderSnapshots:sources.getBuyerOrderSnapshots,getCatalog:sources.getCatalog});
  const orderCategoryDaily=createOrderCategoryDaily({productTypes,getCatalogs:sources.getCatalogs,getSnapshots:sources.getSnapshots,getInsights:sources.getInsights,getWbOrders:sources.getWbOrders,getStores,categoryRevision:sources.categoryRevision,now});
- const categorySales=createCategorySales({getStores:getStoreRows,getProducts:sources.getAllProducts,getCategories,getOzonLedger:sources.getOzonLedger,getWbFinance:sources.getWbFinance});
+ const categorySales=createCategorySales({getStores:getStoreRows,getProducts:sources.getAllProducts,getCategories,getOzonLedger:sources.getOzonLedger,getWbFinance:sources.getWbFinance,productTypes});
  const profitSeries=createProfitSeries({getStores,getWbLink:trueStats.readLinks,daily:trueStats.daily,now});
  const wbEconomics=createWbEconomics({getStores,getSnapshot:sources.getMarketSnapshot,getWbLink:trueStats.readLinks,compare:trueStats.compare});
  const conversion=createConversion({getStores,getProducts:sources.getProducts,getOzonFunnel:sources.getOzonFunnel,getWbConversion:trueStats.getWbConversion,now});

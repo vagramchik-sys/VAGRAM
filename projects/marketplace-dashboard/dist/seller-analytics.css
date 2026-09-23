@@ -1002,7 +1002,7 @@ body.pult-seller-workspace.pult-seller-shell[data-pult-section="business-chart"]
 body.pult-seller-workspace.pult-seller-shell[data-pult-section="business-chart"] .chart-category-market tr[data-category-depth="1"] td:first-child {
   font-weight: 750;
 }
-body.pult-seller-workspace.pult-seller-shell[data-pult-section="business-chart"] .chart-category-market tr[data-category-depth="4"] td,
+body.pult-seller-workspace.pult-seller-shell[data-pult-section="business-chart"] .chart-category-market tr[data-category-depth="5"] td,
 body.pult-seller-workspace.pult-seller-shell[data-pult-section="business-chart"] .chart-category-market tr.chart-category-product td {
   background: #fbfdff;
 }
@@ -1169,7 +1169,7 @@ body.pult-seller-workspace.pult-seller-shell[data-pult-section="business-chart"]
   body.pult-seller-workspace.pult-seller-shell[data-pult-section="business-chart"] .chart-category-market tr.chart-category-total {
     background: #edf4ff;
   }
-  body.pult-seller-workspace.pult-seller-shell[data-pult-section="business-chart"] .chart-category-market tr[data-category-depth="4"],
+  body.pult-seller-workspace.pult-seller-shell[data-pult-section="business-chart"] .chart-category-market tr[data-category-depth="5"],
   body.pult-seller-workspace.pult-seller-shell[data-pult-section="business-chart"] .chart-category-market tr.chart-category-product {
     background: #f8fbff;
   }

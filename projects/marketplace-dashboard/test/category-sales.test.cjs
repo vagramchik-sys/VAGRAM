@@ -5,6 +5,18 @@ const { build, sharedCategories } = require('../category-sales.cjs');
 const options = { now: '2026-09-18T12:00:00Z', from: '2026-09-15', to: '2026-09-17' };
 const categories = [{ id: 'fasteners', name: 'Крепёж', productKeys: ['oz:10', 'wb:20'] }, { id: 'paper', name: 'Бумага', productKeys: ['oz:11', 'wb:21'] }];
 const counts = (sold = 0, returned = 0) => ({ sold, returned, net: sold - returned });
+const productTypes = () => ({ schemaVersion: 1, revision: 'types-5', reviewedAt: '2026-09-20T11:00:00Z', types: [
+  { id: 'goods', parentId: null, name: 'Товары' },
+  { id: 'fasteners', parentId: 'goods', name: 'Крепёж' },
+  { id: 'screws', parentId: 'fasteners', name: 'Саморезы' },
+  { id: 'metal', parentId: 'screws', name: 'Металлические' },
+  { id: 'black', parentId: 'metal', name: 'Чёрные' },
+  { id: 'yellow', parentId: 'metal', name: 'Жёлтые' }
+], assignments: {
+  'oz:10': { typeId: 'black', source: 'reviewed' },
+  'oz:11': { typeId: 'black', source: 'reviewed' },
+  'wb:20': { typeId: 'yellow', source: 'reviewed' }
+}, rules: [] });
 function ozon() {
   return { id: 'oz', name: 'Тест Ozon', market: 'Ozon', products: [{ key: 'oz:10', sku: '100', skus: ['100', '101'] }, { key: 'oz:11', sku: '110' }], ledger: { version: 3, complete: true, period: { from: options.from, to: options.to }, completedAt: '2026-09-18T00:00:00Z', daily: [{ date: '2026-09-15', values: { soldUnits: 985, salesRows: 4 } }, { date: '2026-09-16', values: { returnedUnits: 1, salesRows: 1 } }], skuDaily: [
     { date: '2026-09-15', sku: '100', values: { soldUnits: 2, salesRows: 1 } },
@@ -141,4 +153,29 @@ test('automatic shared type merges markets without changing manual registry', ()
   assert.deepEqual(result.totals.total, counts(9, 3));
   assert.equal(result.productCount, 2);
   assert.equal(JSON.stringify(registry), before);
+});
+test('five-level taxonomy exposes full paths, parents include descendants once, and manual groups keep priority', () => {
+  const manual = [{ id: 'manual-paper', name: 'Бумага поставщика', productKeys: ['oz:11'] }], registry = productTypes();
+  const parent = build([ozon(), wb()], manual, { ...options, category: 'type:goods', productTypes: registry });
+  assert.deepEqual(parent.totals.total, counts(9, 3));
+  assert.equal(parent.productCount, 2);
+  assert.equal(parent.categories.find(row => row.id === 'type:goods').productCount, 2);
+  assert.deepEqual(parent.categories.find(row => row.id === 'type:black').path, ['Товары', 'Крепёж', 'Саморезы', 'Металлические', 'Чёрные']);
+  assert.equal(parent.categories.find(row => row.id === 'type:black').depth, 5);
+  assert.deepEqual(parent.categories.find(row => row.id === 'manual-paper'), { id: 'manual-paper', parentId: null, name: 'Бумага поставщика', path: ['Бумага поставщика'], depth: 1, origin: 'manual', productCount: 1 });
+  assert.deepEqual(build([ozon(), wb()], manual, { ...options, category: 'type:black', productTypes: registry }).totals.total, counts(5, 1));
+  assert.deepEqual(build([ozon(), wb()], manual, { ...options, category: 'type:yellow', market: 'WB', productTypes: registry }).totals.total, counts(4, 2));
+  assert.deepEqual(build([ozon(), wb()], manual, { ...options, productTypes: registry }).totals.total, counts(1049, 3));
+  assert.equal(parent.taxonomyRevision, 'types-5');
+});
+test('missing or invalid taxonomy preserves the legacy automatic category fallback', () => {
+  const stores = [ozon()]; stores[0].products[0].name = 'Саморезы 4х20';
+  assert.ok(build(stores, [], { ...options, productTypes: { available: false } }).categories.some(row => row.id === 'auto:screws'));
+  assert.ok(build(stores, [], { ...options, productTypes: { schemaVersion: 99 } }).categories.some(row => row.id === 'auto:screws'));
+});
+test('category sales UI labels taxonomy options by their full path and styles the fifth level', () => {
+  const fs = require('node:fs'), ui = fs.readFileSync(require.resolve('../dist/category-sales.js'), 'utf8'), css = fs.readFileSync(require.resolve('../dist/seller-analytics.css'), 'utf8');
+  assert.match(ui, /c\.path\.join\(' › '\)/);
+  assert.match(css, /data-category-depth="5"/);
+  assert.doesNotMatch(css, /data-category-depth="4"/);
 });

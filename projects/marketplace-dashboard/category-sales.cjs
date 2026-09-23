@@ -1,4 +1,5 @@
 'use strict';
+const productTypeRegistry = require('./product-type-registry.cjs');
 
 // Shared categories are explicit product-key assignments from supplier-portals.
 // No names, articles or marketplace category names are used to guess membership.
@@ -25,7 +26,41 @@ const AUTO_TYPES = [
   ['studs', 'Шпильки', 'шпильк(?:а|и)'], ['gloves', 'Перчатки', 'перчатк(?:а|и)'],
   ['labels', 'Этикетки', '(?:термо)?этикетк(?:а|и)']
 ].map(([id, name, pattern]) => ({ id: 'auto:' + id, name, pattern: new RegExp('^' + pattern + '(?:\\s|$|[.,:;()\\-])', 'iu') }));
-function sharedCategories(stores, manual) {
+function taxonomyCategories(stores, manual, registry) {
+  let value;
+  try { value = registry?.available === false ? null : productTypeRegistry.validate(registry); } catch { return null; }
+  if (!value) return null;
+  const categories = manual.map(c => ({ ...c, origin: 'manual', productKeys: [...(c.productKeys || [])] }));
+  const assigned = new Set(categories.flatMap(c => c.productKeys));
+  const byId = new Map(value.types.map(type => [type.id, type]));
+  const pathOf = type => {
+    const path = [], seen = new Set(); let current = type;
+    while (current && !seen.has(current.id)) { path.unshift(current.name); seen.add(current.id); current = current.parentId === null ? null : byId.get(current.parentId); }
+    return path;
+  };
+  const hierarchy = value.types.map(type => {
+    const path = pathOf(type);
+    return { id: 'type:' + type.id, parentId: type.parentId === null ? null : 'type:' + type.parentId, name: type.name, path, depth: path.length, origin: 'taxonomy', productKeys: [] };
+  });
+  const categoryByType = new Map(value.types.map((type, index) => [type.id, hierarchy[index]]));
+  const unmatched = [];
+  for (const product of stores.flatMap(store => store.products || [])) {
+    if (!product.key || assigned.has(product.key)) continue;
+    const classification = productTypeRegistry.classify(value, product.key, product);
+    if (!classification || !categoryByType.has(classification.typeId)) { unmatched.push(product.key); continue; }
+    let current = byId.get(classification.typeId);
+    while (current) {
+      const keys = categoryByType.get(current.id).productKeys;
+      if (!keys.includes(product.key)) keys.push(product.key);
+      current = current.parentId === null ? null : byId.get(current.parentId);
+    }
+  }
+  if (unmatched.length) hierarchy.push({ id: 'type:@unmatched', parentId: null, name: 'Без категории', path: ['Без категории'], depth: 1, origin: 'taxonomy', productKeys: unmatched });
+  return categories.concat(hierarchy);
+}
+function sharedCategories(stores, manual, registry) {
+  const taxonomy = taxonomyCategories(stores, manual, registry);
+  if (taxonomy) return taxonomy;
   const categories = manual.map(c => ({ ...c, origin: 'manual', productKeys: [...(c.productKeys || [])] }));
   const assigned = new Set(categories.flatMap(c => c.productKeys));
   const automatic = new Map();
@@ -100,7 +135,8 @@ function sourceSeries(store, keys, days, allProducts = false) {
 }
 
 function build(stores, categories, options = {}) {
-  categories = sharedCategories(stores, categories);
+  const taxonomy = taxonomyCategories(stores, categories, options.productTypes);
+  categories = taxonomy || sharedCategories(stores, categories);
   const now = new Date(options.now || Date.now());
   if (!Number.isFinite(now.getTime())) throw Error('Некорректная текущая дата');
   const today = new Date(now.getTime() + 3 * 3600000).toISOString().slice(0, 10);
@@ -126,7 +162,7 @@ function build(stores, categories, options = {}) {
   });
   const totals = Object.fromEntries(['Ozon', 'WB', 'total'].map(name => [name, sum(series.map(day => day[name]))]));
   const limitations = [
-    'Автоматические группы по названию; ручные категории имеют приоритет. Неоднозначные названия остаются в группе «Без категории».',
+    taxonomy ? 'Категории соответствуют проверенному справочнику типов; родитель включает товары всех дочерних категорий. Ручные категории поставщиков показаны отдельно и имеют приоритет.' : 'Автоматические группы по названию; ручные категории имеют приоритет. Неоднозначные названия остаются в группе «Без категории».',
     '«Все товары» включает финансовую реализацию магазина, в том числе исторические SKU вне текущего каталога; категории включают только явно связанные товары.',
     'Это единицы финансовой реализации по датам начислений Ozon и отчёта WB (rrDate), а не заказы или дата покупки.',
     'Ozon: количество определено только при точном целочисленном отношении суммы реализации к цене единицы; отрицательная реализация показана как возвраты/сторно.',
@@ -134,11 +170,12 @@ function build(stores, categories, options = {}) {
     'Общий итог известен только когда подтверждены данные всех участвующих магазинов; неполные дни не суммируются.'
   ];
   return {
-    categories: categories.map(c => ({ id: c.id, name: c.name, origin: c.origin, productCount: (c.productKeys || []).length })),
+    categories: categories.map(c => ({ id: c.id, parentId: c.parentId ?? null, name: c.name, path: c.path || [c.name], depth: c.depth || 1, origin: c.origin, productCount: new Set(c.productKeys || []).size })),
+    taxonomyRevision: taxonomy ? options.productTypes.revision : null,
     category: categoryId || null, period: { from, to, days: days.length, completedDaysOnly: true }, market, store: storeId || null,
     productCount: sources.reduce((n, s) => n + s.source.productCount, 0), series, totals,
     coverage: { complete: series.every(day => day.total !== null), coveredDays: series.filter(day => day.total !== null).length, totalDays: days.length },
     sources: sources.map(s => s.source), limitations
   };
 }
-module.exports = { build, sharedCategories };
+module.exports = { build, sharedCategories, taxonomyCategories };
