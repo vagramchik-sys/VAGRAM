@@ -113,3 +113,31 @@ test('WB finance reads operations only and small providers request explicit coll
   assert.deepEqual(calls.find(call => call[1] === 'insights-3.json')[2], ['orders.daily', 'orders.skuDaily', 'orders.skuCoverage', 'types', 'errors']);
   assert.deepEqual(calls.find(call => call[1] === 'wb-orders-wb-4.json')[2], ['points', 'orders', 'rows']);
 });
+
+test('category revision fingerprints only relevant heads for the requested scope and period', async () => {
+  const make = revision => data(revision, {}), {providers, calls} = fixture({
+    'order-category-catalog-1.json': make(1),
+    'order-category-catalog-2.json': make(2),
+    'order-category-catalog-wb-3.json': make(3),
+    'insights-1.json': make(4),
+    'wb-orders-wb-3.json': make(5),
+    'buyer-order-segments-2026-09-01_2026-09-10.json': make(6),
+    'buyer-order-segments-2026-09-05_2026-09-06.partial.json': make(7),
+    'buyer-order-segments-2026-09-05_2026-09-06-retry-2.json': make(8),
+    'buyer-order-segments-2026-08-01_2026-08-02.json': make(9),
+    'ledger-1.json': make(10)
+  });
+  assert.deepEqual(JSON.parse(await providers.categoryRevision({from:'2026-09-05',to:'2026-09-06',market:'Ozon',store:'1'})),[
+    ['buyer-order-segments-2026-09-01_2026-09-10.json','6'],
+    ['buyer-order-segments-2026-09-05_2026-09-06.partial.json','7'],
+    ['insights-1.json','4'],
+    ['order-category-catalog-1.json','1']
+  ]);
+  assert.deepEqual(calls,[['list']]);
+});
+
+test('category revision rejects malformed relevant heads', async () => {
+  const row=data(1,{});row.head.revision='broken';
+  const {providers}=fixture({'order-category-catalog-1.json':row});
+  await assert.rejects(providers.categoryRevision({from:'2026-09-05',to:'2026-09-06'}),error=>error?.code==='CORRUPT_SOURCE');
+});

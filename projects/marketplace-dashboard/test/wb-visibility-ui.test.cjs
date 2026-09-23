@@ -191,7 +191,7 @@ test('business chart switches to categories without losing the store selection o
   assert.match(chart, /\/api\/order-categories\?/);
   assert.match(chart, /selectedCategories/);
   assert.match(chart, /Исторические дни используют текущую подтверждённую классификацию/);
-  assert.match(chart, /каждая точка соответствует дню/);
+  assert.match(chart, /При выборе товара все линии переключаются на дневные итоги/);
   assert.match(chart, /Ozon и Wildberries объединены по нашим типам/);
   assert.match(chart, /сумма остаётся пустой, если рублёвая сумма не подтверждена/);
   assert.match(chart, /не выдаётся за полный итог/);
@@ -209,5 +209,5 @@ test('category chart starts empty and only changes selection by explicit user ac
   assert.match(chart, /for\(const child of descendants\(id\)\)selectedCategories\.delete\(child\)/);
   assert.match(chart, /chart-category-search/);
   assert.match(chart, /Сначала выберите нужные категории/);
-  assert.match(chart, /Выберите категорию или магазин в таблице/);
+  assert.match(chart, /Выберите категорию или товар в таблице/);
 });

@@ -170,7 +170,26 @@ function createLiveSourceProviders({sources} = {}) {
     return result;
   }
 
-  return Object.freeze({exact, getMarketSnapshot, getReportCatalog, getProducts, getCatalog, getAllProducts, getOzonFunnel, getOzonLedger, getWbFinance, getCatalogs, getInsights, getWbOrders, getBuyerOrderSnapshot, getBuyerProductSnapshot, getBuyerOrderSnapshots, getSnapshots});
+  async function categoryRevision(options = {}) {
+    const {from, to} = period(options), selectedStore = options.store || options.storeId || null, selectedMarket = options.market === 'Ozon' || options.market === 'WB' ? options.market : 'all', selected = [];
+    for (const row of await names()) {
+      const sourcePath = row.sourcePath, buyer = BUYER.exec(sourcePath);
+      let storeId = null, market = null, relevant = false;
+      if (/^order-category-catalog-(?:wb-)?[0-9]+\.json$/u.test(sourcePath)) { storeId = sourcePath.slice(23, -5); market = storeId.startsWith('wb-') ? 'WB' : 'Ozon'; relevant = true; }
+      else if (/^insights-[0-9]+\.json$/u.test(sourcePath)) { storeId = sourcePath.slice(9, -5); market = 'Ozon'; relevant = true; }
+      else if (/^wb-orders-wb-[0-9]+\.json$/u.test(sourcePath)) { storeId = sourcePath.slice(10, -5); market = 'WB'; relevant = true; }
+      else if (buyer && buyer[1] === 'order-segments' && buyer[4] === undefined && buyer[2] <= to && buyer[3] >= from) relevant = true;
+      if (!relevant || storeId !== null && (selectedStore && storeId !== String(selectedStore) || selectedMarket !== 'all' && market !== selectedMarket)) continue;
+      const revision = String(row.head?.revision ?? '');
+      if (!/^(?:0|[1-9][0-9]*)$/u.test(revision)) fail('CORRUPT_SOURCE', 'Live category source revision is invalid');
+      selected.push([sourcePath, revision]);
+    }
+    selected.sort(([left], [right]) => left.localeCompare(right));
+    for (let index = 1; index < selected.length; index++) if (selected[index - 1][0] === selected[index][0]) fail('CORRUPT_SOURCE', 'Live category source revision is ambiguous');
+    return JSON.stringify(selected);
+  }
+
+  return Object.freeze({exact, getMarketSnapshot, getReportCatalog, getProducts, getCatalog, getAllProducts, getOzonFunnel, getOzonLedger, getWbFinance, getCatalogs, getInsights, getWbOrders, getBuyerOrderSnapshot, getBuyerProductSnapshot, getBuyerOrderSnapshots, getSnapshots, categoryRevision});
 }
 
 module.exports = {createLiveSourceProviders, LiveSourceProviderError};

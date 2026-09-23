@@ -8,6 +8,7 @@ const moscowDay = value => { const parsed = value instanceof Date ? value.getTim
 function validDay(value) { if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null; const parsed = Date.parse(value + 'T00:00:00Z'); return Number.isFinite(parsed) && new Date(parsed).toISOString().slice(0, 10) === value ? value : null; }
 const shift = (value, count) => new Date(Date.parse(value + 'T00:00:00Z') + count * DAY).toISOString().slice(0, 10);
 const numericId = value => value !== null && value !== undefined && String(value).trim() ? String(value) : null;
+const displayText = value => typeof value === 'string' && value.trim() ? value.trim() : null;
 const safeUnits = value => Number.isSafeInteger(value) && value > 0 ? value : null;
 function safeAmount(value) { return typeof value === 'number' && Number.isFinite(value) && value >= 0 && Number.isSafeInteger(Math.round(value * 100)) ? value : null; }
 function checkedSum(values, label) { let total = 0; for (const value of values) { total += value; if (!Number.isSafeInteger(total) && label === 'units' || !Number.isFinite(total)) throw Error('Переполнение ' + label); } return total; }
@@ -21,7 +22,7 @@ function compileCatalogs(catalogs, registry) {
       const stable = numericId(product.product_id ?? product.nmID);
       if (!stable) continue;
       const productKey = catalog.storeId + ':' + stable, classification = productTypes.classify(registry, productKey, product);
-      const entry = { productKey, typeId: classification?.typeId || null, classificationSource: classification?.source || null };
+      const entry = { productKey, productId: stable, sku: numericId(product.sku), offerId: numericId(product.offer_id ?? product.offerId ?? product.vendorCode), name: displayText(product.name) || displayText(product.title) || displayText(product.product_name), typeId: classification?.typeId || null, classificationSource: classification?.source || null };
       for (const alias of [product.sku, product.product_id, product.nmID]) if (numericId(alias)) aliases.set(String(alias), entry);
     }
     stores.set(catalog.storeId, { storeId: catalog.storeId, name: catalog.name || null, market: catalog.market, aliases, catalogStamp: catalog.stamp || null });
@@ -75,12 +76,16 @@ function build(data, options = {}) {
     const key = [row.market, row.storeId, date].join('\u001f'), rows = canonicalRowsByStoreDay.get(key);
     if (rows) rows.push(row); else canonicalRowsByStoreDay.set(key, [row]);
   }
-  const events = new Map(), coverage = [], missingProducts = new Map();
+  const events = new Map(), productEvents = new Map(), orderedProducts = new Map(), coverage = [], missingProducts = new Map();
   const add = (store, date, source, raw) => {
     const key = [store.market, store.storeId, date].join('\u001f'); if (!events.has(key)) events.set(key, []);
     const alias = store.aliases.get(String(raw.productId));
     if (!alias?.typeId) { missingProducts.set(key, checkedSum([missingProducts.get(key) || 0, raw.units], 'units')); return; }
     events.get(key).push({ typeId: alias.typeId, units: raw.units, amountRub: raw.amountRub, source, productKey: alias.productKey });
+    if (!productEvents.has(key)) productEvents.set(key, new Map());
+    const daily = productEvents.get(key), previous = daily.get(alias.productKey), amountKnown = raw.amountRub !== null;
+    daily.set(alias.productKey, { units: checkedSum([previous?.units || 0, raw.units], 'units'), amountRub: checkedSum([previous?.amountRub || 0, amountKnown ? raw.amountRub : 0], 'revenue'), amountKnown: (previous?.amountKnown ?? true) && amountKnown });
+    orderedProducts.set(alias.productKey, { store, product: alias });
   };
   for (const store of scope) for (const date of days) {
     const key = [store.market, store.storeId, date].join('\u001f'), schemes = expectedSchemes(store.market);
@@ -131,6 +136,16 @@ function build(data, options = {}) {
     });
     if (points.some(point => point.orderedUnits > 0)) storeLeafSeries.push({ storeId: store.storeId, storeName: store.name, typeId, market: store.market, aggregate: false, points });
   }
+  const coverageByStoreDay = new Map(coverage.map(item => [[item.market, item.storeId, item.date].join('\u001f'), item]));
+  const byProduct = [];
+  for (const { store, product } of orderedProducts.values()) {
+    const points = days.map(date => {
+      const key = [store.market, store.storeId, date].join('\u001f'), storeCoverage = coverageByStoreDay.get(key), observed = !!storeCoverage && storeCoverage.source !== 'unavailable' && storeCoverage.observed !== false;
+      const daily = productEvents.get(key)?.get(product.productKey), missing = !storeCoverage?.complete || (missingProducts.get(key) || 0) > 0, amountKnown = observed && (!daily || daily.amountKnown);
+      return { date, orderedUnits: observed ? daily?.units || 0 : null, orderedRevenue: amountKnown ? Math.round((daily?.amountRub || 0) * 100) / 100 : null, complete: observed && !missing, unitsKnown: observed && !missing, revenueKnown: amountKnown && !missing, observed };
+    });
+    byProduct.push({ productKey: product.productKey, typeId: product.typeId, productId: product.productId, sku: product.sku, offerId: product.offerId, name: product.name, storeId: store.storeId, storeName: store.name, market: store.market, points });
+  }
   const series = [...leafSeries];
   for (const type of registry.types.filter(type => registry.types.some(child => child.parentId === type.id))) for (const currentMarket of markets) {
     const leafSet = new Set(descendants(registry.types, type.id)), children = leafSeries.filter(item => item.market === currentMarket && leafSet.has(item.typeId)); if (!children.length) continue;
@@ -145,7 +160,7 @@ function build(data, options = {}) {
   }
   const typeIds = new Set(series.map(item => item.typeId)), selectedTypes = registry.types.filter(type => typeIds.has(type.id)).map(type => ({ ...type, leaf: !registry.types.some(child => child.parentId === type.id) }));
   const coveredDays = coverage.filter(item => item.source !== 'unavailable').map(item => item.date).sort(), coverageWithNames = coverage.map(item => ({ ...item, name: stores.get(item.storeId)?.name || null }));
-  return { period: { from, to, days: days.length, timezone: TZ }, types: selectedTypes, series, byStore, classificationRevision: registry.revision, classifiedAt, sourcePeriod: { from: coveredDays[0] || null, to: coveredDays.at(-1) || null }, coverage: { complete: coverage.length > 0 && coverage.every(item => item.complete) && missingProducts.size === 0, stores: coverageWithNames, missingProductUnits: checkedSum([...missingProducts.values()], 'units') }, limitations: ['Исторические категории пересчитаны по текущей ревизии справочника; сохранённые внутридневные точки не изменяются.', 'За день и магазин используется один источник: канонические заказы либо только сегодняшний SKU-снимок.', 'WB до текущего дня не показан без подтверждённой истории заказов.', 'Сумма равна null, если валюта RUB не подтверждена для всех включённых строк.', 'Неполные магазины и схемы дают частичную точку, а отсутствие источника — null.'] };
+  return { period: { from, to, days: days.length, timezone: TZ }, types: selectedTypes, series, byStore, byProduct, classificationRevision: registry.revision, classifiedAt, sourcePeriod: { from: coveredDays[0] || null, to: coveredDays.at(-1) || null }, coverage: { complete: coverage.length > 0 && coverage.every(item => item.complete) && missingProducts.size === 0, stores: coverageWithNames, missingProductUnits: checkedSum([...missingProducts.values()], 'units') }, limitations: ['Исторические категории пересчитаны по текущей ревизии справочника; сохранённые внутридневные точки не изменяются.', 'За день и магазин используется один источник: канонические заказы либо только сегодняшний SKU-снимок.', 'WB до текущего дня не показан без подтверждённой истории заказов.', 'Сумма равна null, если валюта RUB не подтверждена для всех включённых строк.', 'Неполные магазины и схемы дают частичную точку, а отсутствие источника — null.'] };
 }
 
 function create({ privateDir, stores: storeDirectory = {}, now = () => Date.now() }) {

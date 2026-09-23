@@ -36,7 +36,7 @@ test('concurrent renders share a request and a failed request can be retried',as
  assert.match(app.node('chart-store-status').textContent,/Не удалось/);
  const retry=app.chart.render();await flush();assert.equal(app.calls(),2);
  resolve(empty);await retry;
- assert.match(app.node('chart-store-status').textContent,/Выберите категорию или магазин/);
+ assert.match(app.node('chart-store-status').textContent,/Выберите категорию или товар/);
 });
 test('polling shares an unfinished request instead of restarting the loading state',async()=>{
  const pending=[];
@@ -46,7 +46,7 @@ test('polling shares an unfinished request instead of restarting the loading sta
  app.update('2026-09-19');await flush();
  assert.equal(app.calls(),1);
  pending[0](empty);await flush();
- assert.match(app.node('chart-store-status').textContent,/Выберите категорию или магазин/);
+ assert.match(app.node('chart-store-status').textContent,/Выберите категорию или товар/);
  app.update('2026-09-19');await flush();assert.equal(app.calls(),2);
  pending[1](empty);await flush();
 });
@@ -83,4 +83,35 @@ test('choosing a child replaces its selected parent and search keeps the matchin
  app.node('chart-category-options').onchange({target:{type:'checkbox',value:'mesh',checked:true}});await flush();assert.match(app.node('chart-category-options').innerHTML,/value="mesh" checked/);
  app.node('chart-category-options').onchange({target:{type:'checkbox',value:'rodent',checked:true}});await flush();assert.doesNotMatch(app.node('chart-category-options').innerHTML,/value="mesh" checked/);assert.match(app.node('chart-category-options').innerHTML,/value="rodent" checked/);
  app.node('chart-category-search').value='грызунов';app.node('chart-category-search').oninput();assert.match(app.node('chart-category-options').innerHTML,/Сетки/);assert.match(app.node('chart-category-options').innerHTML,/Сетка от грызунов/);assert.doesNotMatch(app.node('chart-category-options').innerHTML,/Сетка штукатурная/);
+});
+
+test('four category levels expand to separate product rows without inventing taxonomy nodes',async()=>{
+ const types=[{id:'a',parentId:null,name:'Category 1'},{id:'b',parentId:'a',name:'Category 2'},{id:'c',parentId:'b',name:'Category 3'},{id:'d',parentId:'c',name:'Category 4'}];
+ const report={...empty,types,byProduct:[{productKey:'s1:101',typeId:'d',productId:'101',sku:'201',offerId:'offer',name:'Product <A>',storeId:'s1',storeName:'Store',points:[]}]};
+ const app=runtime(()=>Promise.resolve(report));app.update('2026-09-19');await flush();
+ let html=app.node('chart-category-tables').innerHTML;
+ assert.match(html,/data-category-depth="4"/);assert.doesNotMatch(html,/data-product-key=/);
+ app.node('chart-category-tables').onclick({target:{closest:selector=>selector==='[data-expand]'?{dataset:{expand:'type:d'},getAttribute:()=> 'false'}:null}});
+ html=app.node('chart-category-tables').innerHTML;
+ assert.match(html,/data-product-key="s1:101"/);assert.match(html,/Product &lt;A&gt;/);assert.match(html,/data-category="product:s1:101"/);assert.match(html,/SKU 201/);
+ app.node('chart-category-level').value='1';app.node('chart-category-level').onchange();
+ assert.doesNotMatch(app.node('chart-category-tables').innerHTML,/data-category-depth="2"|data-product-key=/);
+ app.node('chart-category-level').value='products';app.node('chart-category-level').onchange();
+ assert.match(app.node('chart-category-tables').innerHTML,/data-product-key="s1:101"/);
+});
+
+test('confirmed zero orders on the other marketplace preserve the category amount',async()=>{
+ const point={date:'2026-09-19',orderedUnits:1,orderedRevenue:100,complete:true,observed:true};
+ const report={...empty,types:[{id:'a',parentId:null,name:'Only Ozon'}],series:[{typeId:'a',market:'Ozon',points:[point]}],coverage:{complete:true,missingProductUnits:0,stores:[{market:'Ozon',storeId:'s1',date:'2026-09-19',complete:true,observed:true,source:'canonical-orders'},{market:'WB',storeId:'wb-2',date:'2026-09-19',complete:true,observed:true,source:'canonical-orders'}]}};
+ const app=runtime(()=>Promise.resolve(report));app.update('2026-09-19');await flush();
+ const html=app.node('chart-category-tables').innerHTML;
+ assert.match(html,/100 ₽/);assert.doesNotMatch(html,/Неполно|Нет данных/);
+ report.coverage.stores[1].complete=false;report.coverage.stores[1].observed=false;
+ app.update('2026-09-19');await flush();assert.match(app.node('chart-category-tables').innerHTML,/Неполно/);
+});
+
+test('today store filter does not request an unscoped intraday category report',async()=>{
+ const urls=[],app=runtime(url=>{urls.push(url);return Promise.resolve(empty)});
+ app.node('store').value='s1';app.update('2026-09-20');await flush();
+ assert.equal(urls.length,1);assert.match(urls[0],/order-category-daily.*store=s1/);
 });

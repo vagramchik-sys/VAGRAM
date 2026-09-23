@@ -14,7 +14,7 @@ module.exports=function createPostgresAnalyticsComposition({pool,stateSchema='pu
  const getCategories=async()=>{const value=await supplierPortals.read();if(!Array.isArray(value?.categories))throw Error('Invalid supplier categories SQL contract');return structuredClone(value.categories)};
  const buyerOrderSegments=buyerOrderModule.create({getStores,getSnapshot:sources.getBuyerOrderSnapshot});
  const buyerProductSegments=buyerProductModule.create({getStores,getSnapshot:sources.getBuyerProductSnapshot,getOrderSnapshots:sources.getBuyerOrderSnapshots,getCatalog:sources.getCatalog});
- const orderCategoryDaily=createOrderCategoryDaily({productTypes,getCatalogs:sources.getCatalogs,getSnapshots:sources.getSnapshots,getInsights:sources.getInsights,getWbOrders:sources.getWbOrders,getStores,now});
+ const orderCategoryDaily=createOrderCategoryDaily({productTypes,getCatalogs:sources.getCatalogs,getSnapshots:sources.getSnapshots,getInsights:sources.getInsights,getWbOrders:sources.getWbOrders,getStores,categoryRevision:sources.categoryRevision,now});
  const categorySales=createCategorySales({getStores:getStoreRows,getProducts:sources.getAllProducts,getCategories,getOzonLedger:sources.getOzonLedger,getWbFinance:sources.getWbFinance});
  const profitSeries=createProfitSeries({getStores,getWbLink:trueStats.readLinks,daily:trueStats.daily,now});
  const wbEconomics=createWbEconomics({getStores,getSnapshot:sources.getMarketSnapshot,getWbLink:trueStats.readLinks,compare:trueStats.compare});

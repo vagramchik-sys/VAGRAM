@@ -20,3 +20,41 @@ test('concurrent category requests share work, later reads refresh, and failures
   await assert.rejects(retryReader.read(options), /offline/);
   await retryReader.read(options); assert.equal(attempts, 4);
 });
+
+test('completed reports use the cheap revision path and isolate caller mutations', async () => {
+  let snapshots=0,revisions=0;
+  const p=providers({async categoryRevision(){revisions++;return 'sources-1';},async getSnapshots(){snapshots++;return[];}}),reader=create(p.options),options={from:'2026-09-22',to:'2026-09-22'};
+  const first=await reader.read(options);first.period.from='changed';
+  const second=await reader.read(options);
+  assert.equal(second.period.from,'2026-09-22');assert.equal(snapshots,1);assert.equal(revisions,3);
+  assert.equal(p.called.filter(value=>value==='catalogs').length,1);assert.equal(p.called.filter(value=>value==='registry').length,2);assert.equal(p.called.filter(value=>value==='stores').length,2);
+});
+
+test('report cache invalidates on source, taxonomy, store metadata and Moscow day revisions', async () => {
+  let sourceRevision='sources-1',taxonomy=registry,clock=Date.parse('2026-09-23T00:00:00Z'),snapshots=0,storeName='SQL store';
+  const p=providers({async categoryRevision(){return sourceRevision;},productTypes:{async read(){return taxonomy;}},async getStores(){return{s1:{name:storeName}}},async getSnapshots(){snapshots++;return[];},now:()=>clock}),reader=create(p.options),options={from:'2026-09-22',to:'2026-09-22'};
+  await reader.read(options);await reader.read(options);assert.equal(snapshots,1);
+  sourceRevision='sources-2';await reader.read(options);assert.equal(snapshots,2);
+  taxonomy={...registry,revision:'r2'};await reader.read(options);assert.equal(snapshots,3);
+  storeName='Renamed';await reader.read(options);assert.equal(snapshots,4);
+  clock=Date.parse('2026-09-24T00:00:00Z');await reader.read(options);assert.equal(snapshots,5);
+});
+
+test('cache does not retain transient failures and recovers on retry', async () => {
+  let snapshots=0;
+  const p=providers({async categoryRevision(){return 'sources-1';},async getSnapshots(){if(++snapshots===1)throw Error('offline');return[];}}),reader=create(p.options),options={from:'2026-09-22',to:'2026-09-22'};
+  await assert.rejects(reader.read(options),/offline/);await reader.read(options);await reader.read(options);assert.equal(snapshots,2);
+});
+
+test('source changes during a build prevent that report from entering the cache', async () => {
+  let revisions=0,snapshots=0;
+  const p=providers({async categoryRevision(){revisions++;return revisions===1?'sources-1':'sources-2';},async getSnapshots(){snapshots++;return[];}}),reader=create(p.options),options={from:'2026-09-22',to:'2026-09-22'};
+  await reader.read(options);await reader.read(options);await reader.read(options);assert.equal(snapshots,2);
+});
+
+test('completed report cache is bounded to four entries', async () => {
+  let snapshots=0;
+  const p=providers({async categoryRevision(){return 'sources-1';},async getSnapshots(){snapshots++;return[];}}),reader=create(p.options);
+  for(let day=1;day<=5;day++){const date=`2026-09-0${day}`;await reader.read({from:date,to:date});}
+  await reader.read({from:'2026-09-01',to:'2026-09-01'});assert.equal(snapshots,6);
+});
