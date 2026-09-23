@@ -19,8 +19,9 @@ test('XWAY PostgreSQL stores individual observations atomically and runtime has 
  assert.match(new URL(process.env.PULT_TEST_DATABASE_URL).pathname,/^\/pult_test_/u);
  const {Pool}=require('pg'),pool=new Pool({connectionString:process.env.PULT_TEST_DATABASE_URL,max:2});t.after(()=>pool.end());
  await pool.query(SCHEMA_SQL);await pool.query(SCHEMA_SQL);
- const input=fixture();assert.deepEqual(await importObservations(pool,input),{accounts:1,settings:1,campaigns:1});
+ const input=fixture();input.products=[{accountKey:'test-account',key:'product-1',name:'Synthetic product',sku:'123',stock:0,orderedUnits:14,orders:0,drr:0,periodFrom:'2026-09-16',periodTo:'2026-09-22',...observation}];assert.deepEqual(await importObservations(pool,input),{accounts:1,settings:1,campaigns:1,products:1});
  const reader=createXwayReader({pool}),saved=await reader.read();assert.equal(saved.accounts[0].name,'Synthetic account');assert.equal(saved.campaigns[0].name,'Synthetic <campaign>');assert.equal(saved.campaigns[0].periodFrom,'2026-09-16');assert.equal(saved.campaigns[0].spend,12.5);assert.equal(saved.campaigns[0].drr,null);assert.equal(saved.campaigns[0].impressions,null);
+ assert.equal(saved.products[0].stock,0);assert.equal(saved.products[0].orderedUnits,14);assert.equal(saved.products[0].clicks,null);assert.equal(saved.products[0].drr,null);
  const changed=fixture();changed.accounts[0].name='Must roll back';changed.campaigns[0].observedAt='2026-09-21T12:00:00Z';await assert.rejects(importObservations(pool,changed),{code:'STALE_XWAY_OBSERVATION'});assert.equal((await reader.read()).accounts[0].name,'Synthetic account');
  const broken=fixture();broken.settings[0].accountKey='missing';await assert.rejects(importObservations(pool,broken));assert.equal((await reader.read()).settings.length,1);
  const columns=(await pool.query("SELECT data_type FROM information_schema.columns WHERE table_schema='pult_xway'")).rows;assert.ok(columns.every(row=>!['json','jsonb','bytea'].includes(row.data_type)));
@@ -29,5 +30,12 @@ test('XWAY PostgreSQL stores individual observations atomically and runtime has 
  await pool.query(`GRANT USAGE ON SCHEMA pult_xway TO "${role}";GRANT SELECT ON ALL TABLES IN SCHEMA pult_xway TO "${role}";`);
  const restricted=new Pool({connectionString:process.env.PULT_TEST_RESTRICTED_DATABASE_URL,max:1});t.after(()=>restricted.end());
  assert.equal((await createXwayReader({pool:restricted}).read()).campaigns.length,1);
- for(const sql of ["UPDATE pult_xway.accounts SET name='bad'","DELETE FROM pult_xway.campaigns","INSERT INTO pult_xway.settings SELECT * FROM pult_xway.settings","CREATE TABLE pult_xway.forbidden(id int)"])await assert.rejects(restricted.query(sql),{code:'42501'});
+ for(const sql of ["UPDATE pult_xway.accounts SET name='bad'","DELETE FROM pult_xway.campaigns","DELETE FROM pult_xway.products","INSERT INTO pult_xway.settings SELECT * FROM pult_xway.settings","CREATE TABLE pult_xway.forbidden(id int)"])await assert.rejects(restricted.query(sql),{code:'42501'});
+});
+
+test('XWAY optional product facts preserve zero stock and missing values',()=>{
+ const input=fixture();assert.deepEqual(normalize(input).products,[]);
+ input.products=[{accountKey:'test-account',key:'product-1',name:'Product',stock:0,orderedUnits:0,totalDrr:0,...observation}];
+ const product=normalize(input).products[0];assert.equal(product.stock,0);assert.equal(product.orders,null);assert.equal(product.totalDrr,null);
+ for(const mutate of [v=>v.products[0].stock=-1,v=>v.products[0].stock=0.5,v=>v.products[0].orderedUnits='12',v=>v.products[0].token='secret',v=>v.products.push(v.products[0]),v=>v.products=null]){const value=structuredClone(input);mutate(value);assert.throws(()=>normalize(value),{code:'INVALID_XWAY_IMPORT'});}
 });

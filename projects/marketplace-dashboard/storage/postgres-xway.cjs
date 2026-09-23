@@ -27,24 +27,34 @@ CREATE TABLE IF NOT EXISTS pult_xway.campaigns (
  PRIMARY KEY(account_key,key), CHECK(period_from IS NULL OR period_to IS NULL OR period_from<=period_to)
 );
 REVOKE ALL ON SCHEMA pult_xway FROM PUBLIC;
+CREATE TABLE IF NOT EXISTS pult_xway.products (
+ account_key text NOT NULL REFERENCES pult_xway.accounts(key), key text NOT NULL, name text NOT NULL,
+ sku text, article text, stock integer CHECK(stock>=0), ordered_units integer CHECK(ordered_units>=0), ordered_revenue numeric CHECK(ordered_revenue>=0),
+ impressions bigint CHECK(impressions>=0), clicks bigint CHECK(clicks>=0), carts bigint CHECK(carts>=0), orders integer CHECK(orders>=0),
+ revenue numeric CHECK(revenue>=0), spend numeric CHECK(spend>=0), drr numeric CHECK(drr>=0), total_drr numeric CHECK(total_drr>=0), ctr numeric CHECK(ctr>=0), click_to_order numeric CHECK(click_to_order>=0),
+ period_from date, period_to date, source_url text NOT NULL, observed_at timestamptz NOT NULL,
+ PRIMARY KEY(account_key,key), CHECK(period_from IS NULL OR period_to IS NULL OR period_from<=period_to)
+);
 REVOKE ALL ON ALL TABLES IN SCHEMA pult_xway FROM PUBLIC;
 `;
 const fields = {
  accounts:['key','marketplace','name','connectionStatus','tariff','productsCount','campaignsCount','connectedProductsCount','productLimit','sourceUrl','observedAt'],
  settings:['accountKey','key','label','value','sourceUrl','observedAt'],
- campaigns:['accountKey','key','name','status','type','strategy','schedule','productsCount','productsTotalCount','budget','spend','orders','revenue','drr','impressions','clicks','carts','ctr','clickToOrder','periodFrom','periodTo','sourceUrl','observedAt']
+ campaigns:['accountKey','key','name','status','type','strategy','schedule','productsCount','productsTotalCount','budget','spend','orders','revenue','drr','impressions','clicks','carts','ctr','clickToOrder','periodFrom','periodTo','sourceUrl','observedAt'],
+ products:['accountKey','key','name','sku','article','stock','orderedUnits','orderedRevenue','impressions','clicks','carts','orders','revenue','spend','drr','totalDrr','ctr','clickToOrder','periodFrom','periodTo','sourceUrl','observedAt']
 };
-const counts = new Set(['productsCount','campaignsCount','connectedProductsCount','productLimit','productsTotalCount','orders','impressions','clicks','carts']);
-const decimals = new Set(['budget','spend','revenue','drr','ctr','clickToOrder']);
+const counts = new Set(['productsCount','campaignsCount','connectedProductsCount','productLimit','productsTotalCount','orders','impressions','clicks','carts','stock','orderedUnits']);
+const decimals = new Set(['budget','spend','revenue','drr','ctr','clickToOrder','totalDrr','orderedRevenue']);
 const column = key => key.replace(/[A-Z]/gu, char=>'_'+char.toLowerCase());
 const fail = code => {throw Object.assign(Error(code),{code});};
 function normalize(input) {
  if(!input||input.version!==1||Object.keys(input).some(key=>!['version',...Object.keys(fields)].includes(key)))fail('INVALID_XWAY_IMPORT');
  const result={};
  for(const [table,names] of Object.entries(fields)){
-  if(!Array.isArray(input[table])||input[table].length>10000)fail('INVALID_XWAY_IMPORT');
+  const source=table==='products'&&input[table]===undefined?[]:input[table];
+  if(!Array.isArray(source)||source.length>10000)fail('INVALID_XWAY_IMPORT');
   const seen=new Set();
-  result[table]=input[table].map(row=>{
+  result[table]=source.map(row=>{
    if(!row||typeof row!=='object'||Array.isArray(row)||Object.keys(row).some(key=>!names.includes(key)))fail('INVALID_XWAY_IMPORT');
    const record={};
    for(const key of names){
@@ -63,6 +73,7 @@ function normalize(input) {
    for(const key of ['periodFrom','periodTo'])if(record[key]!=null&&(!/^\d{4}-\d{2}-\d{2}$/u.test(record[key])||!Number.isFinite(Date.parse(record[key]))||new Date(record[key]).toISOString().slice(0,10)!==record[key]))fail('INVALID_XWAY_IMPORT');
    if(record.periodFrom&&record.periodTo&&record.periodFrom>record.periodTo)fail('INVALID_XWAY_IMPORT');
    if(record.orders===0&&record.drr===0)record.drr=null;
+   if(record.orderedUnits===0&&record.totalDrr===0)record.totalDrr=null;
    const identity=JSON.stringify([record.accountKey??'',record.key]);if(seen.has(identity))fail('INVALID_XWAY_IMPORT');seen.add(identity);
    return record;
   });
@@ -88,7 +99,7 @@ function createXwayReader({pool}){
   const client=await pool.connect();
   try{
    await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-   const result={mode:'verified-observations',accounts:[],settings:[],campaigns:[]};
+   const result={mode:'verified-observations',accounts:[],settings:[],campaigns:[],products:[]};
    for(const [table,names] of Object.entries(fields)){
     const rows=await client.query(`SELECT ${names.map(name=>`${name==='periodFrom'||name==='periodTo'?column(name)+'::text':column(name)} AS "${name}"`).join(',')} FROM pult_xway.${table} ORDER BY ${table==='accounts'?'key':'account_key,key'}`);
     result[table]=rows.rows.map(row=>{for(const name of names)if(counts.has(name)||decimals.has(name))row[name]=row[name]===null?null:Number(row[name]);return row;});

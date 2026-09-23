@@ -8,7 +8,7 @@ async function main(){
  if(!['schema','import','validate'].includes(action)||action==='schema'&&filename||action!=='schema'&&!filename||process.argv.length>(action==='schema'?3:4))throw Error('USAGE');
  let input;
  if(filename){const stat=await fs.lstat(filename);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>8*1024*1024)throw Error('INVALID_XWAY_IMPORT');input=JSON.parse(await fs.readFile(filename,'utf8'));normalize(input);}
- if(action==='validate'){console.log(JSON.stringify({valid:true,...Object.fromEntries(['accounts','settings','campaigns'].map(key=>[key,input[key].length]))}));return;}
+ if(action==='validate'){console.log(JSON.stringify({valid:true,...Object.fromEntries(['accounts','settings','campaigns','products'].map(key=>[key,input[key]?.length||0]))}));return;}
  const bootstrap=path.resolve(__dirname,'../.private/postgres-setup/migrator.dpapi'),stat=await fs.lstat(bootstrap);
  if(!stat.isFile()||stat.isSymbolicLink()||stat.size>65536)throw Error('BOOTSTRAP_INVALID');
  const config=JSON.parse(await protect((await fs.readFile(bootstrap)).toString('base64'),true));
