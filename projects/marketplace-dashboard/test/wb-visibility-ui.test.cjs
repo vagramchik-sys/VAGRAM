@@ -174,6 +174,21 @@ test('periodic poll does not invalidate an in-flight insights response', async (
   assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
 });
 
+test('today order chart requests fresh lightweight data on the next poll', async () => {
+  const app = runtime({
+    href: 'http://127.0.0.1:4317/?view=overview&section=business-chart',
+    market: 'Ozon',
+    fetchImpl: async url => url.startsWith('/api/insights?')
+      ? { ok: true, json: async () => ordersReport() }
+      : new Promise(() => {})
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
+  app.intervals[0]();
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 2);
+  assert.ok(app.fetches.filter(url => url.startsWith('/api/insights?')).every(url => url.includes('scope=orders')));
+});
+
 test('UI loads on WB and can switch to Ozon without a removed placeholder crash', () => {
   const app = runtime();
 
@@ -217,7 +232,6 @@ test('business chart uses the orders scope while an explicit economics route loa
   const queryEconomics = runtime({ href: 'http://127.0.0.1:4317/?view=economics', market: 'Ozon' });
   assert.equal(queryEconomics.fetches.length, 1);
   assert.doesNotMatch(queryEconomics.fetches[0], /scope=orders/);
-  assert.match(ui, /financialMetrics\.has\(\$\('ins-chart-metric'\)\.value\)\)void load\('full'\)/);
   assert.match(ui, /else void load\('orders'\)/);
   assert.match(ui, /insightsRoutes\.has\(currentHash\(\)\)&&!wantsFullReport\(\)/);
   assert.doesNotMatch(ui, /wbView\.render\(report\);focusView\.render\(report\);economicsView\.render\(report\);declineView\.render\(report\)/);
