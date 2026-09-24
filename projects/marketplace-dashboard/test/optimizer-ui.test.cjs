@@ -55,6 +55,7 @@ test('страницы показывают реальные API данные с
   assert.match(js, /\/api\/optimizer\/sku\//);
   assert.match(js, /Performance API не подключён/);
   assert.match(js, /AUTO · недоступен/);
+  assert.match(js, /AUTO · БЕЗОПАСНОСТЬ/);
   assert.match(js, /Аварийная блокировка: ВЫКЛ/);
   assert.match(js, /document\.createTextNode/);
   assert.match(ads, /масштаб в рублях не подтверждён/);

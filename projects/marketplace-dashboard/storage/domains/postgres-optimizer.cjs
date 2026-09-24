@@ -1,5 +1,6 @@
 'use strict';
 
+const {evaluateAutoPrice, evaluateAutoBid} = require('../../optimizer/auto-policy.cjs');
 const CAPABILITIES = Object.freeze({priceWrite: false, bidWrite: false, auto: false});
 const number = value => value === null || value === undefined || value === '' || !Number.isFinite(Number(value)) ? null : Number(value);
 const ledgerSum = (rows, key, complete) => {
@@ -141,8 +142,13 @@ function createPostgresOptimizer({repository, storesRepository, sourceProviders,
     const today = new Date(now().valueOf() + 3 * 3600000).toISOString().slice(0, 10), end = new Date(Date.parse(today + 'T00:00:00Z') - 86400000), start = new Date(end.valueOf() - 13 * 86400000), period = {from: start.toISOString().slice(0, 10), to: end.toISOString().slice(0, 10)};
     const [products, adsRows, settings, stores, events] = await Promise.all([repository.readPriceInputs({storeId, productId: String(productId), limit: 1, offset: 0, ...period}), repository.readSkuAds({storeId, productId, campaignId, ...period}), repository.readSettings({storeId}), storesRepository.read(), repository.readHistory({storeId, productId: String(productId), limit: 100})]);
     const row = products.items[0]; if (!row) return null;
-    const item = productShape(row, stores[storeId]?.name), finance = financeShape(row, item.cost.unitCost, period), advertising = adsRows.map(advertisingShape), ads = aggregateAds(adsRows), history = historyState(events);
-    return {item, price: item.price, advertising, economics: economics(finance), optimizer: decide({now: now().toISOString(), ...item, finance, ads, settings, history}), history: events, settingsRevision: settings.revision, capabilities: CAPABILITIES};
+    const item = productShape(row, stores[storeId]?.name), finance = financeShape(row, item.cost.unitCost, period), advertising = adsRows.map(advertisingShape), ads = aggregateAds(adsRows), history = historyState(events), at = now().toISOString();
+    const calculatedEconomics = economics(finance), decision = decide({now: at, ...item, finance, ads, settings, history});
+    const autoInput = {autoEnabled: false, killSwitch: settings.killSwitch, now: at, decision, price: item.price, stock: item.stock,
+      finance: {...finance, contributionAfterAds: calculatedEconomics.contributionAfterAds}, history, profitFloorPerOrder: settings.targetProfitPerOrder};
+    return {item, price: item.price, advertising, economics: calculatedEconomics, optimizer: decision,
+      automation: {price: evaluateAutoPrice({...autoInput, evidence: {}}), bid: evaluateAutoBid({...autoInput, ads, spendGuard: {}})},
+      history: events, settingsRevision: settings.revision, capabilities: CAPABILITIES};
   }
   async function settings(options = {}) { const value = await repository.readSettings(options); return {settings: value, revision: value.revision, capabilities: CAPABILITIES}; }
   return Object.freeze({prices, ads, sku, settings, CAPABILITIES});

@@ -274,12 +274,15 @@
     const ads = Array.isArray(advertising) ? (advertising.find(entry => entry?.campaign?.id === item.campaign?.id) || advertising[0] || {}) : advertising;
     const economics = detail.economics || item.economics || {};
     const optimizer = detail.optimizer || item.optimizer || {};
+    const automation = detail.automation || {};
     $('optimizer-detail-title').textContent = product.name || 'Товар';
     const blocks = [
       detailSection('PRICE · ЦЕНА', [['Цена продавца', money(price.sellerPrice)], ['Цена покупателя', money(price.customerPrice)], ['Разница', money(price.sellerCustomerDifference)], ['Следующая цена', money(optimizer.recommendedPrice)], ['Источник цены покупателя', price.customerPriceSource || 'Не подтверждён']]),
       detailSection('ADVERTISING · РЕКЛАМА', [['Текущая ставка', bid(ads.currentBid, ads.currentBidRaw)], ['Конкурентная ставка', bid(ads.competitiveBid, ads.competitiveBidRaw)], ['Прибыльный потолок', money(optimizer.maxProfitableBid)], ['Рекомендация', money(optimizer.recommendedBid)], ['Показы / клики / заказы', [count(ads.impressions), count(ads.clicks), count(ads.orders)].join(' / ')], ['Расход / ДРР', `${money(ads.spend)} / ${percent(ads.drrPct)}`]], ads.connected === false ? 'Performance API не подключён.' : ads.unit !== 'RUB_PER_CLICK' ? 'Ставки в единицах API: пересчёт в рубли не подтверждён, рекомендации отключены.' : ''),
       detailSection('ECONOMICS · ЭКОНОМИКА', [['Себестоимость', money(cost.unitCost)], ['Остаток', count(stock.quantity)], ['Запас в днях', count(stock.days)], ['До рекламы', money(economics.contributionBeforeAds)], ['После рекламы', money(economics.contributionAfterAds)], ['На заказ', money(economics.contributionPerOrder)], ['Маржа', percent(economics.marginPct)]], economics.economicsStatus === 'complete' ? '' : 'Экономика неполная: отсутствующие суммы не равны нулю.'),
-      detailSection('OPTIMIZER · РЕШЕНИЕ', [['Состояние', stateNames[optimizer.state] || optimizer.state || '—'], ['Следующее действие', optimizer.action || 'NONE'], ['Уверенность', confidenceNames[optimizer.confidence] || '—'], ['Блокировки', Array.isArray(optimizer.blockers) && optimizer.blockers.length ? optimizer.blockers.join(', ') : '—']], optimizer.humanReason || 'Причина ещё не рассчитана.', true)
+      detailSection('OPTIMIZER · РЕШЕНИЕ', [['Состояние', stateNames[optimizer.state] || optimizer.state || '—'], ['Следующее действие', optimizer.action || 'NONE'], ['Уверенность', confidenceNames[optimizer.confidence] || '—'], ['Блокировки', Array.isArray(optimizer.blockers) && optimizer.blockers.length ? optimizer.blockers.join(', ') : '—']], optimizer.humanReason || 'Причина ещё не рассчитана.', true),
+      detailSection('AUTO · БЕЗОПАСНОСТЬ', [['Цена', automation.price?.state || 'HOLD'], ['Ставка', automation.bid?.state || 'HOLD']],
+        `Цена: ${automation.price?.humanReason || 'Нет подтверждённых условий.'} Ставка: ${automation.bid?.humanReason || 'Нет подтверждённых условий.'}`, true)
     ];
     const history = document.createElement('section'); history.className = 'optimizer-detail-section full';
     const heading = document.createElement('h3'); heading.textContent = 'HISTORY · ИСТОРИЯ'; history.append(heading);

@@ -41,12 +41,12 @@ function withExperiment(dimension = 'PRICE') {
 
 function bid(overrides = {}) {
   return calculateRecommendedBid({ currentBid: 10, competitiveBid: 25, minimumBid: 1,
-    maxProfitableBid: 17, competitiveBuffer: 1, bidStepPct: 0.1, bidIncrement: 0.01, ...overrides });
+    maxProfitableBid: 17, competitiveBuffer: 1, bidStepPct: 0.05, bidIncrement: 0.01, ...overrides });
 }
 
-test('bid grows at most 10%, respects the economic cap and treats competitive as a ceiling', () => {
-  assert.equal(bid(), 11);
-  assert.equal(bid({ currentBid: 16 }), 17);
+test('bid grows at most 5%, respects the economic cap and treats competitive as a ceiling', () => {
+  assert.equal(bid(), 10.5);
+  assert.equal(bid({ currentBid: 16 }), 16.8);
   assert.equal(bid({ competitiveBid: 10.5 }), 10.5);
   assert.equal(bid({ competitiveBid: 10, competitiveBuffer: 0.95 }), 9.5);
   assert.equal(bid({ minimumBid: 18 }), null);
@@ -54,10 +54,10 @@ test('bid grows at most 10%, respects the economic cap and treats competitive as
 });
 
 test('bid rounds down to documented increments, including decimal division boundaries', () => {
-  assert.equal(bid({ currentBid: 16, maxProfitableBid: 17.005 }), 17);
+  assert.equal(bid({ currentBid: 16, maxProfitableBid: 17.005 }), 16.8);
   assert.equal(bid({ currentBid: 0.29, competitiveBid: 0.29, maxProfitableBid: 0.29, minimumBid: 0.01 }), 0.29);
   assert.equal(bid({ currentBid: 16, minimumBid: 16.999, bidIncrement: 0.03 }), null);
-  assert.equal(bid({ currentBid: 16, maxProfitableBid: 17.002, bidIncrement: 0.03 }), 16.98);
+  assert.equal(bid({ currentBid: 16, maxProfitableBid: 17.002, bidIncrement: 0.03 }), 16.8);
   assert.equal(bid({ bidIncrement: null }), null);
   assert.equal(bid({ bidIncrement: 1e-30 }), null);
 });
@@ -66,7 +66,7 @@ test('invalid settings, strings and unknown bid inputs never generate money', ()
   for (const field of ['currentBid', 'competitiveBid', 'minimumBid', 'maxProfitableBid', 'competitiveBuffer', 'bidIncrement']) {
     for (const value of [null, undefined, '1', NaN, Infinity, -1]) assert.equal(bid({ [field]: value }), null, field);
   }
-  assert.equal(bid({ bidStepPct: 0.11 }), null);
+  assert.equal(bid({ bidStepPct: 0.051 }), null);
   assert.equal(bid({ bidStepPct: null }), null);
   assert.equal(calculateRecommendedBid(null), null);
 });
@@ -87,7 +87,7 @@ test('full valid inputs clear gates and produce only a PRICE recommendation', ()
   const result = optimizerDecision(input);
   assert.equal(result.state, 'PRICE_UP');
   assert.equal(result.action, 'PRICE');
-  assert.equal(result.recommendedPrice, 1050);
+  assert.equal(result.recommendedPrice, 1020);
   assert.equal(result.recommendedBid, null);
   assert.ok(Math.abs(result.maxProfitableBid - 18.4) < 1e-12);
   assert.equal(result.confidence, 'MEDIUM');
@@ -99,7 +99,7 @@ test('successful price test opens profitable reach with at most one BID recommen
   assert.equal(result.state, 'BID_UP');
   assert.equal(result.action, 'BID');
   assert.equal(result.recommendedPrice, null);
-  assert.equal(result.recommendedBid, 11);
+  assert.equal(result.recommendedBid, 10.5);
   assert.ok(result.recommendedBid <= result.maxProfitableBid);
   assert.ok(result.reasonCodes.includes('MAX_PROFITABLE_LIMIT'));
 });

@@ -93,3 +93,23 @@ test('both product lists include recent experiment state using one batched read 
   assert.equal(batchReads, 2);
   assert.equal(observed[0].activeExperiment.observeUntil, '2026-09-30T09:00:00.000Z');
 });
+
+test('SKU detail explains why an apparent bid recommendation cannot be applied automatically', async () => {
+  const repository = {
+    readPriceInputs: async () => ({items: [{store_id: '1', product: {product_id: '2', sku: '3', price: 100, archived: false}, cost: {unitCost: 25, status: 'filled'}}], total: 1}),
+    readSkuAds: async () => [{store_id: '1', product_id: '2', campaign_id: '7', sku: '3', payment_type: 'CPC', current_bid: '10', bid_unit: 'RUB_PER_CLICK'}],
+    readSettings: async () => ({mode: 'RECOMMEND', killSwitch: false, targetProfitPerOrder: 1, revision: '1'}),
+    readHistory: async () => [], readProductInputs: async () => [], readAds: async () => ({items: [], total: 0}),
+    readAdsForProducts: async () => [], readRecentExperiments: async () => [], connectionStatus: async () => ({stores: []}), campaignOptions: async () => []
+  };
+  const optimizer = createPostgresOptimizer({repository, storesRepository: {read: async () => ({'1': {name: 'Store'}})},
+    sourceProviders: {getProducts: async () => []},
+    optimizer: {optimizerDecision: () => ({state: 'BID_UP', action: 'BID', confidence: 'HIGH', recommendedBid: 10.5, maxProfitableBid: 15, reasonCodes: ['PROFIT_BUFFER_AVAILABLE'], blockers: []}), calculateContributionEconomics: () => ({contributionAfterAds: 100})},
+    now: () => new Date('2026-09-24T09:00:00Z')});
+  const detail = await optimizer.sku({storeId: '1', productId: '2'});
+  assert.equal(detail.capabilities.auto, false);
+  assert.equal(detail.automation.bid.state, 'HOLD');
+  assert.ok(detail.automation.bid.reasonCodes.includes('AUTO_NOT_ENABLED'));
+  assert.ok(detail.automation.bid.reasonCodes.includes('PREVIOUS_BID_STEP_UNEVALUATED_OR_COOLDOWN'));
+  assert.ok(detail.automation.bid.reasonCodes.includes('SKU_30D_AD_SHARE_UNVERIFIED'));
+});

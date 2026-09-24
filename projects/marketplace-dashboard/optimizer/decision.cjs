@@ -6,7 +6,7 @@ const {
 
 const DEFAULT_SETTINGS = Object.freeze({
   mode: 'OBSERVE', killSwitch: false, targetProfitPerOrder: 0,
-  priceStepPct: 0.05, bidStepPct: 0.10, competitiveBuffer: 1, safetyFactor: 0.8,
+  priceStepPct: 0.02, bidStepPct: 0.05, competitiveBuffer: 1, safetyFactor: 0.8,
   minStock: 5, minStockDays: 7, maxPriceAgeHours: 24, maxAdsAgeHours: 2,
   minImpressions: 1000, minClicks: 100, minOrders: 10, observationDays: 7,
   cooldownHours: 72,
@@ -111,7 +111,7 @@ function floorIncrement(value, increment) {
 function calculateRecommendedBid(input = {}) {
   const { currentBid, competitiveBid, minimumBid, maxProfitableBid, competitiveBuffer, bidStepPct, bidIncrement } = object(input);
   if (![currentBid, competitiveBid, minimumBid, competitiveBuffer, bidIncrement].every(positive)
-    || !nonnegative(maxProfitableBid) || !nonnegative(bidStepPct) || bidStepPct > 0.10
+    || !nonnegative(maxProfitableBid) || !nonnegative(bidStepPct) || bidStepPct > 0.05
     || minimumBid > maxProfitableBid) return null;
   const competitiveLimit = competitiveBid * competitiveBuffer;
   const stepLimit = currentBid * (1 + bidStepPct);
@@ -159,7 +159,7 @@ function settingsProblems(input, settings) {
   if (settings.killSwitch === true) blockers.push('KILL_SWITCH');
   if (!nonnegative(settings.targetProfitPerOrder)
     || !nonnegative(settings.priceStepPct) || settings.priceStepPct > 0.05
-    || !nonnegative(settings.bidStepPct) || settings.bidStepPct > 0.10
+    || !nonnegative(settings.bidStepPct) || settings.bidStepPct > 0.05
     || !positive(settings.competitiveBuffer)
     || !nonnegative(settings.safetyFactor) || settings.safetyFactor > 1
     || !count(settings.minStock) || !nonnegative(settings.minStockDays)
