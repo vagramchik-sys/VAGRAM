@@ -10,11 +10,11 @@ const REGISTERS = new Set([
   'partner-commercial-model.json', 'finance-register.json', 'management.json',
   'charity.json', 'charity-plan.json', 'company-impact.json', 'product-type-registry.json',
   'order-category-intraday.json', 'truestats-wb-link.json', 'pult-atlas-sync-state.json',
-  'runtime-schedules.json',
+  'runtime-schedules.json', 'price-ads-optimizer.json',
   'truestats-runtime-state.json',
 ]);
 const CONNECTIONS = new Set([
-  'stores.json', 'truestats.json', 'pult-atlas-credential.json', 'b2b-agent/connection.dpapi',
+  'stores.json', 'truestats.json', 'performance-api.json', 'pult-atlas-credential.json', 'b2b-agent/connection.dpapi',
 ]);
 const MARKET = /^(data|insights|intraday|wb-orders|costs|prices|ozon-funnel|ledger|order-category-catalog)-(?:wb-)?[0-9]+\.json$/;
 const BUYER = /^buyer-(?:order-segments|product-segments|segments-wb-[0-9]+)-[0-9]{4}-[0-9]{2}-[0-9]{2}_[0-9]{4}-[0-9]{2}-[0-9]{2}(?:-retry-[0-9]+)?(?:\.partial)?\.json$/;
