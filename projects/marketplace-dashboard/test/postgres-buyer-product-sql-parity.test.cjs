@@ -14,11 +14,11 @@ function document(day,units,amountRub){
   report:{coverage:{sources:[{market:'Ozon',storeId:'1',scheme:'FBO',available:true,complete:true,from:date,to:date}]}}};
 }
 
-async function compare(t,documents,kind='product'){
+async function compare(t,documents,kind='product',expectedDocuments=documents){
  // Opt-in tests execute the actual production SQL over synthetic CTE rows only.
  // A read-only transaction prevents accidental changes to the application DB.
  const {createApplicationPool}=require('../storage/postgres-connection.cjs');
- const pool=await createApplicationPool({bootstrapFile:path.resolve(__dirname,'../.private/postgres-setup/application.dpapi'),profile:'ui'});
+ const pool=await createApplicationPool({bootstrapFile:process.env.BUYER_SQL_BOOTSTRAP_FILE||path.resolve(__dirname,'../.private/postgres-setup/application.dpapi'),profile:'ui'});
  const client=await pool.connect();
  t.after(async()=>{await client.query('ROLLBACK');client.release();await pool.end()});
  await client.query('BEGIN READ ONLY');
@@ -35,11 +35,18 @@ async function compare(t,documents,kind='product'){
   const prefix=`WITH test_heads AS (SELECT * FROM jsonb_to_recordset($${offset+1}::jsonb) AS h(store_id text,domain text,metadata jsonb,source_metadata jsonb)),test_facts AS (SELECT * FROM jsonb_to_recordset($${offset+2}::jsonb) AS f(store_id text,domain text,entity_type text,source_order bigint,value jsonb)),`;
   return client.query(prefix+sql.replace(/^WITH/u,'').replaceAll('pult_live.heads','test_heads').replaceAll('pult_live.facts','test_facts'),[...values,JSON.stringify(heads),JSON.stringify(facts)]);
  }};
- const dependencies={getStores:async()=>({'1':{name:'Fixture'}}),getSnapshot:async()=>null,getSnapshots:async()=>documents,getOrderSnapshots:async()=>documents,getCatalog:async()=>({products:[]})};
+ const dependencies={getStores:async()=>({'1':{name:'Fixture'}}),getSnapshot:async()=>null,getSnapshots:async()=>expectedDocuments,getOrderSnapshots:async()=>expectedDocuments,getCatalog:async()=>({products:[]})};
  const options={from:FROM,to:TO,market:'all'};
  const builder=kind==='order'?require('../storage/domains/postgres-buyer-order-segments.cjs').create:create;
  const expected=await builder(dependencies).read(options);
- const actual=await builder({...dependencies,getAggregate:createPostgresBuyerAggregates({pool:fixturePool})[kind]}).read(options);
+ const aggregate=createPostgresBuyerAggregates({pool:fixturePool})[kind];
+ const actual=await builder({...dependencies,getAggregate:async query=>{
+  const payload=await aggregate(query);
+  // Empty sources must survive transport too: public unavailable responses alone
+  // cannot distinguish a preserved empty document from an accidentally lost one.
+  assert.deepEqual(payload.documents.map(doc=>doc._sourcePath),expectedDocuments.map(doc=>doc.sourcePath));
+  return payload;
+ }}).read(options);
  assert.deepEqual(actual,expected);
  return actual;
 }
@@ -95,4 +102,51 @@ test('actual order SQL skips only the overflowing row and preserves safe totals'
  assert.equal(result.coverage.includedRecords,2);
  assert.equal(result.totals.legal.units,Number.MAX_SAFE_INTEGER);
  assert.equal(result.totals.legal.orders,2);
+});
+
+test('actual buyer SQL preserves an empty selected document and an empty selection',{skip:!enabled},async t=>{
+ const empty=orderDocument([]);
+ empty.productOrders=[];empty.report.coverage.sources=[];
+ for(const kind of ['order','product']){
+  const result=await compare(t,[empty],kind);
+  assert.equal(result.status,'unavailable');
+  assert.equal(result.totals,null);
+  const absent=await compare(t,[],kind);
+  assert.equal(absent.status,'unavailable');
+  assert.equal(absent.totals,null);
+ }
+});
+
+function selectionDocuments(){
+ const base=orderDocument([{id:'shared',orderKey:'shared',units:99}]);
+ const make=(suffix,rows,partial=false)=>{
+  const doc=structuredClone(base);
+  doc.sourcePath=base.sourcePath.replace(/\.json$/u,suffix+'.json');
+  doc.records=rows.map(([id,units])=>({...base.records[0],id,orderKey:id,units}));
+  doc.productOrders=rows.map(([id,units])=>({...base.productOrders[0],orderId:id,units,amountRub:units*10,updatedAt:base.generatedAt}));
+  if(partial)doc._partialSource=true;
+  return doc;
+ };
+ const low=make('-retry-2',[['shared',90]]);
+ const latest=make('-retry-10',[['shared',5],['full-only',2]]);
+ const earlyPartial=make('-retry-1.partial',[['partial-only',3]],true);
+ // Identical timestamps exercise both document ordering and source_order:
+ // the final shared row must win, not the earlier row in this same source.
+ const latePartial=make('-retry-11.partial',[['shared',6],['shared',7]],true);
+ const expected=[latest,earlyPartial,latePartial].sort((a,b)=>a.sourcePath.localeCompare(b.sourcePath));
+ return {documents:[latePartial,low,base,latest,earlyPartial],expected};
+}
+
+for(const kind of ['order','product'])test(`actual ${kind} SQL selects the highest full retry, retains every partial and preserves tied row order`,{skip:!enabled},async t=>{
+ const {documents,expected}=selectionDocuments();
+ const result=await compare(t,documents,kind,expected);
+ assert.equal(result.status,'partial');
+ assert.equal(result.totals.legal.units,12);
+ if(kind==='order'){
+  assert.equal(result.coverage.includedRecords,3);
+  assert.equal(result.totals.legal.orders,3);
+ }else{
+  assert.equal(result.products.length,1);
+  assert.equal(result.totals.legal.amountRub,120);
+ }
 });

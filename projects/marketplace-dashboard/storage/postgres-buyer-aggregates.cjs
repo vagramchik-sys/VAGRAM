@@ -24,18 +24,21 @@ function selection(pattern){return `
 
 // Validation, Date.parse and sequential safe-integer overflow handling remain
 // in the original JS reducer. SQL only selects and transports original records.
+// Build transport envelopes as JSON: nested JSONB aggregates repeatedly rebuild
+// large binary documents that are immediately serialized for the pg driver.
+// Stored values remain JSONB; row order and the JS number parsing are unchanged.
 const ORDER_SQL=`WITH${selection(PATH_PATTERN)},
  document_rows AS (
   SELECT s.source_path,s.generated_at,s.partial,
-   COALESCE(jsonb_agg(f.value ORDER BY f.source_order) FILTER(WHERE f.entity_type='records'),'[]'::jsonb) AS records,
-   COALESCE(jsonb_agg(f.value ORDER BY f.source_order) FILTER(WHERE f.entity_type='report.coverage.sources'),'[]'::jsonb) AS sources
+   COALESCE(json_agg(f.value ORDER BY f.source_order) FILTER(WHERE f.entity_type='records'),'[]'::json) AS records,
+   COALESCE(json_agg(f.value ORDER BY f.source_order) FILTER(WHERE f.entity_type='report.coverage.sources'),'[]'::json) AS sources
   FROM selected s LEFT JOIN pult_live.facts f ON f.store_id=s.store_id AND f.domain=s.domain
    AND f.entity_type IN ('records','report.coverage.sources')
   GROUP BY s.source_path,s.generated_at,s.partial
  )
- SELECT jsonb_build_object('documents',COALESCE(jsonb_agg(jsonb_build_object(
+ SELECT json_build_object('documents',COALESCE(json_agg(json_build_object(
   '_sourcePath',source_path,'generatedAt',generated_at,'_partialSource',partial,'records',records,
-  'report',jsonb_build_object('coverage',jsonb_build_object('sources',sources))) ORDER BY source_path),'[]'::jsonb)) AS payload
+  'report',json_build_object('coverage',json_build_object('sources',sources))) ORDER BY source_path),'[]'::json)) AS payload
  FROM document_rows`;
 
 // Keep original product rows and their source order. The existing JS reducer rounds
@@ -44,16 +47,16 @@ const ORDER_SQL=`WITH${selection(PATH_PATTERN)},
 const PRODUCT_SQL=`WITH${selection(PRODUCT_PATH_PATTERN)},
  document_rows AS (
   SELECT s.source_path,s.generated_at,s.partial,
-   COALESCE(jsonb_agg(f.value ORDER BY f.source_order) FILTER(WHERE f.entity_type='records'),'[]'::jsonb) AS records,
-   COALESCE(jsonb_agg(f.value ORDER BY f.source_order) FILTER(WHERE f.entity_type='productOrders'),'[]'::jsonb) AS products,
-   COALESCE(jsonb_agg(f.value ORDER BY f.source_order) FILTER(WHERE f.entity_type='report.coverage.sources'),'[]'::jsonb) AS sources
+   COALESCE(json_agg(f.value ORDER BY f.source_order) FILTER(WHERE f.entity_type='records'),'[]'::json) AS records,
+   COALESCE(json_agg(f.value ORDER BY f.source_order) FILTER(WHERE f.entity_type='productOrders'),'[]'::json) AS products,
+   COALESCE(json_agg(f.value ORDER BY f.source_order) FILTER(WHERE f.entity_type='report.coverage.sources'),'[]'::json) AS sources
   FROM selected s LEFT JOIN pult_live.facts f ON f.store_id=s.store_id AND f.domain=s.domain
    AND f.entity_type IN ('records','productOrders','report.coverage.sources')
   GROUP BY s.source_path,s.generated_at,s.partial
  )
- SELECT jsonb_build_object('documents',COALESCE(jsonb_agg(jsonb_build_object(
+ SELECT json_build_object('documents',COALESCE(json_agg(json_build_object(
   '_sourcePath',source_path,'generatedAt',generated_at,'_partialSource',partial,'records',records,'productOrders',products,
-  'report',jsonb_build_object('coverage',jsonb_build_object('sources',sources))) ORDER BY source_path),'[]'::jsonb)) AS payload
+  'report',json_build_object('coverage',json_build_object('sources',sources))) ORDER BY source_path),'[]'::json)) AS payload
  FROM document_rows`;
 
 function createPostgresBuyerAggregates({pool}={}){
