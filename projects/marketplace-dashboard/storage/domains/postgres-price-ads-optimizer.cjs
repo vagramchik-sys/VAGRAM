@@ -8,7 +8,7 @@ const {isInactive}=require('../../dist/dashboard-model.js');
 const PERF='api-performance.ozon.ru',SELLER='api-seller.ozon.ru',STORE=/^[0-9]{1,32}$/u;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const MODES=new Set(['observe','recommend','auto']),HTTP_TIMEOUT=45000,MAX_ROWS=15000,MAX_ACTIONS=5000;
-const object=v=>!!v&&typeof v==='object'&&!Array.isArray(v),finite=v=>Number.isFinite(Number(v))?Number(v):null,iso=v=>typeof v==='string'&&Number.isFinite(Date.parse(v));
+const object=v=>!!v&&typeof v==='object'&&!Array.isArray(v),finite=v=>v===null||v===undefined||v===''||!Number.isFinite(Number(v))?null:Number(v),iso=v=>typeof v==='string'&&Number.isFinite(Date.parse(v));
 class PriceAdsError extends Error{constructor(code,message,status=400){super(message);this.name='PriceAdsError';this.code=code;this.status=status;this.public=true}}
 const fail=(code,message,status)=>{throw new PriceAdsError(code,message,status)};
 const emptyConn=()=>({version:1,stores:{}}),emptyState=()=>({version:1,stores:{},snapshots:{},actions:[]});
@@ -52,7 +52,7 @@ function createPriceAdsOptimizer({stateStore,storesRepository,getProducts,getLed
  const tokens=new Map(),busy=new Set();let timer=null;
  async function load(repo,empty){const record=await repo.read();return{record,value:record&&!record.deleted?record.value:empty()}}
  async function mutate(repo,empty,commandId,fn){
-  for(let i=0;i<3;i++){const old=await load(repo,empty),next=fn(structuredClone(old.value));try{await repo.compareAndSet(next,{expectedRevision:old.record?.revision||'0',commandId:i?crypto.randomUUID():commandId});return next}catch(e){if(e?.code!=='REVISION_CONFLICT'||i===2)throw e}}
+  for(let i=0;i<3;i++){const old=await load(repo,empty),next=fn(structuredClone(old.value));try{await repo.compareAndSet(next,{expectedRevision:old.record?.revision||'0',commandId});return next}catch(e){if(e?.code!=='REVISION_CONFLICT'||i===2)throw e}}
  }
  async function replay(repo,id){const r=await repo.readCommand(id);return r?.after?.value||null}
  async function request(host,method,path,{headers={},body,query}={}){
@@ -139,7 +139,7 @@ function createPriceAdsOptimizer({stateStore,storesRepository,getProducts,getLed
    await mutate(stateRepo,emptyState,crypto.randomUUID(),next=>{next.snapshots[storeId]=snapshot;if(!next.stores[storeId])next.stores[storeId]=normalizeConfig();return next});return data(storeId);
   }finally{busy.delete(lock)}
  }
- function lastAction(actions,row){return actions.find(a=>a.storeId===row.storeId&&a.key===row.key&&String(a.campaignId||'')===String(row.campaignId||'')&&a.status==='applied')||null}
+ function lastAction(actions,row){return actions.find(a=>a.storeId===row.storeId&&a.key===row.key&&a.status==='applied'&&(a.type.startsWith('price_')||String(a.campaignId||'')===String(row.campaignId||'')))||null}
  function decorate(snapshot,state,storeId){
   const cfg=normalizeConfig(state.stores[storeId]||{}),actions=state.actions.filter(a=>a.storeId===storeId),make=row=>{const last=lastAction(actions,row),decision=recommend(row,{mode:cfg.mode,settings:cfg.settings,lastAction:last,actions:actions.filter(a=>a.key===row.key),now:new Date(now()).toISOString()});if(cfg.killSwitch&&cfg.mode==='auto')decision.warnings=[...(decision.warnings||[]),'Kill switch включён'];return{...row,decision,lastAction:last&&{type:last.type,at:last.at,status:last.status}}};
   return{storeId,updatedAt:snapshot?.updatedAt||null,period:snapshot?.period||null,customerPriceSource:snapshot?.customerPriceSource||null,performanceConnected:Boolean(snapshot?.performanceConnected),config:cfg,rows:(snapshot?.rows||[]).map(make),adRows:(snapshot?.adRows||[]).map(make),actions:actions.slice(0,200)};
