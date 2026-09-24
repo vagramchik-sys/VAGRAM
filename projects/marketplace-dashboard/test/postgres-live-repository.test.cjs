@@ -47,6 +47,7 @@ test('invalid or lossy command values fail before connecting', async () => {
   await assert.rejects(repo.importComplete({ ...base, expectedRevision: 1 }), code('INVALID_MIGRATION'));
   await assert.rejects(repo.importComplete({ ...base, partitions: [days([], '2026-01-01')] }), code('INVALID_ARGUMENT'));
   for (const options of [{includeTotal:'false'},{after:{}},{after:{sourceOrder:0,entityType:'operations',entityKey:'a',occurrence:-1}},{offset:1,after:{sourceOrder:0,entityType:'operations',entityKey:'a',occurrence:0}},{entityType:'products',after:{sourceOrder:0,entityType:'operations',entityKey:'a',occurrence:0}}]) await assert.rejects(repo.listRows({...id(),...options}),code('INVALID_ARGUMENT'));
+  for (const entityTypes of [null, 'operations', ['operations', 'operations'], ['bad type']]) await assert.rejects(repo.readCurrentCollections({...id(),entityTypes}),code('INVALID_ARGUMENT'));
   assert.equal(connects, 0);
 });
 

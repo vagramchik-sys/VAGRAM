@@ -30,24 +30,29 @@ function compileCatalogs(catalogs, registry) {
   return stores;
 }
 
-function latestProductOrders(snapshots) {
+function latestProductOrders(snapshots, { from, to } = {}) {
+  const scoped = !!validDay(from) && !!validDay(to) && from <= to;
   const latest = new Map(), coverage = [], orderEvidence = new Set(), productEvidence = new Set();
   for (const snapshot of Array.isArray(snapshots) ? snapshots : []) {
     for (const source of snapshot?.report?.coverage?.sources || []) coverage.push(source);
     for (const record of snapshot?.records || []) {
       const date = moscowDay(record.createdAt);
+      if (scoped && (!date || date < from || date > to)) continue;
       if (date && record.market && record.storeId && record.scheme) orderEvidence.add([record.market, record.storeId, record.scheme, date].join('\u001f'));
     }
     for (const row of snapshot?.productOrders || []) {
       const posting = numericId(row.postingId) || numericId(row.orderId), productId = numericId(row.productId);
       if (!row.market || !row.storeId || !row.scheme || !posting || !productId) continue;
-      const date = moscowDay(row.orderedAt); if (date) productEvidence.add([row.market, row.storeId, row.scheme, date].join('\u001f'));
+      const date = moscowDay(row.orderedAt), inRange = !scoped || !!date && date >= from && date <= to;
+      if (inRange && date) productEvidence.add([row.market, row.storeId, row.scheme, date].join('\u001f'));
       const key = [row.market, row.storeId, row.scheme, posting, productId].join('\u001f'), previous = latest.get(key);
       const rawStamp = Date.parse(row.updatedAt || snapshot.generatedAt || 0), stamp = Number.isFinite(rawStamp) ? rawStamp : -Infinity;
-      if (!previous || stamp >= previous.stamp) latest.set(key, { row, stamp });
+      // Keep an out-of-range winner as a tombstone: an updated order can move
+      // outside the requested period and must still supersede an older row.
+      if (!previous || stamp >= previous.stamp) latest.set(key, { row: inRange ? row : null, stamp });
     }
   }
-  return { rows: [...latest.values()].map(item => item.row), coverage, orderEvidence, productEvidence };
+  return { rows: [...latest.values()].flatMap(item => item.row ? [item.row] : []), coverage, orderEvidence, productEvidence };
 }
 
 function sourceCovers(source, date) {
@@ -70,7 +75,7 @@ function build(data, options = {}) {
   if (storeId && !stores.has(storeId)) throw Error('Магазин не найден в каталоге заказов');
   const scope = [...stores.values()].filter(store => (!storeId || store.storeId === storeId) && (market === 'all' || store.market === market));
   const days = []; for (let value = from; value <= to; value = shift(value, 1)) days.push(value);
-  const canonical = latestProductOrders(data.snapshots), canonicalRowsByStoreDay = new Map(), sourcesByScheme = new Map(), today = moscowDay(options.now || Date.now());
+  const canonical = latestProductOrders(data.snapshots, { from, to }), canonicalRowsByStoreDay = new Map(), sourcesByScheme = new Map(), today = moscowDay(options.now || Date.now());
   for (const row of canonical.rows) {
     const date = moscowDay(row.orderedAt); if (!date) continue;
     const key = [row.market, row.storeId, date].join('\u001f'), rows = canonicalRowsByStoreDay.get(key);

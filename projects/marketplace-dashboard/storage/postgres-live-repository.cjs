@@ -207,6 +207,43 @@ function createPostgresLiveRepository({ pool, maxMetadataBytes = 64 * 1024, writ
       return freeze({ head, rows: result.rows.map(row => rowValue(id, row)), total: count ? safeNumber(count.rows[0].count) : null, limit, offset });
     });
   }
+  async function readCurrentCollections(input) {
+    const id = identity(input);
+    if (!Array.isArray(input.entityTypes) || input.entityTypes.length > 256) fail('INVALID_ARGUMENT');
+    const types = input.entityTypes.map(entityType);
+    if (new Set(types).size !== types.length) fail('INVALID_ARGUMENT');
+    return transaction(true, async client => {
+      const head = await current(client, id), collections = {};
+      if (!head) return freeze({ head: null, collections });
+      for (const type of types) {
+        const expectedCount = head.entityCounts[type];
+        // A projection may request a collection that this source schema does
+        // not contain. The decoder decides presence from metadata.
+        if (expectedCount === undefined) { collections[type] = []; continue; }
+        const rows = [], values = [id.storeId, id.domain, type];
+        let after;
+        for (;;) {
+          const pageValues = [...values], where = ['store_id=$1', 'domain=$2', 'entity_type=$3'];
+          if (after) {
+            const cursor = [after.sourceOrder, after.entityKey, after.occurrence];
+            const placeholders = cursor.map(value => { pageValues.push(value); return '$' + pageValues.length; });
+            where.push('(source_order,entity_key,occurrence)>(' + placeholders.join(',') + ')');
+          }
+          const result = await client.query('SELECT ' + ROW_COLUMNS + ' FROM pult_live.facts WHERE ' + where.join(' AND ') +
+            ' ORDER BY source_order,entity_key,occurrence LIMIT $' + (pageValues.length + 1), [...pageValues, 10000]);
+          const page = result.rows.map(row => rowValue(id, row));
+          rows.push(...page);
+          if (page.length < 10000) {
+            break;
+          }
+          const last = page[page.length - 1];
+          after = { sourceOrder: last.sourceOrder, entityKey: last.entityKey, occurrence: last.occurrence };
+        }
+        collections[type] = rows;
+      }
+      return freeze({ head, collections });
+    });
+  }
   async function listJournal(input) {
     const id = identity(input), values = [id.storeId, id.domain], where = ['store_id=$1', 'domain=$2'];
     const limit = integer(input.limit ?? 100, 10000);
@@ -325,7 +362,7 @@ function createPostgresLiveRepository({ pool, maxMetadataBytes = 64 * 1024, writ
       return withStatus ? { receipt, replayed: false } : receipt;
     });
   }
-  return Object.freeze({ getHead, listHeads, listRows, listJournal, readAtRevision, readCommand, publish: input => write(input, false), publishWithStatus: input => write(input, false, true), importComplete: input => write(input, true) });
+  return Object.freeze({ getHead, listHeads, listRows, readCurrentCollections, listJournal, readAtRevision, readCommand, publish: input => write(input, false), publishWithStatus: input => write(input, false, true), importComplete: input => write(input, true) });
 }
 
 module.exports = { createPostgresLiveRepository, LiveRepositoryError, DOMAINS };

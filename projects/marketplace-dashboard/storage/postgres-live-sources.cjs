@@ -47,12 +47,20 @@ function createLiveSources({ repository } = {}) {
   async function record(sourcePath, { revision, entities, validate, maxBytes = MAX_BYTES } = {}) {
     const scope = identity(sourcePath), requestedRevision = revision === undefined ? undefined : nativeRevision(revision);
     if (entities !== undefined && (!Array.isArray(entities) || entities.some(type => typeof type !== 'string'))) fail('INVALID_ARGUMENT');
-    const head = requestedRevision === undefined ? await repository.getHead(scope) : (await repository.readAtRevision({ ...scope, revision: requestedRevision, limit: 1 })).head;
+    const current = requestedRevision === undefined && entities !== undefined && typeof repository.readCurrentCollections === 'function'
+      ? await repository.readCurrentCollections({ ...scope, entityTypes: entities }) : null;
+    const head = current ? current.head : requestedRevision === undefined ? await repository.getHead(scope) : (await repository.readAtRevision({ ...scope, revision: requestedRevision, limit: 1 })).head;
     if (!head) return null;
     verifySource(head, sourcePath);
     const present = collectionPaths(sourcePath, head.metadata), selected = entities === undefined ? present : present.filter(type => entities.includes(type)), collections = {};
     for (const entityType of selected) {
       collections[entityType] = [];
+      if (current) {
+        const rows = current.collections[entityType];
+        if (!Array.isArray(rows) || !Number.isSafeInteger(head.entityCounts[entityType]) || head.entityCounts[entityType] < 0 || rows.length !== head.entityCounts[entityType]) fail('CORRUPT_DOCUMENT');
+        for (const row of rows) collections[entityType].push({ key: row.entityKey, day: row.businessDay, ordinal: row.sourceOrder, value: row.value });
+        continue;
+      }
       let after;
       for (let offset = 0; ; offset += 10000) {
         const options = { ...scope, entityType, limit: 10000, offset };

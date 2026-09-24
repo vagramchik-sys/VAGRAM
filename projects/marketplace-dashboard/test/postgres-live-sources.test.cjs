@@ -31,6 +31,24 @@ test('bridge validates and detaches requested JSON before database work', async 
   assert.equal(calls, 0);
 });
 
+test('current projected collections share one repository read and preserve decoding', async () => {
+  const sourcePath = 'buyer-order-segments-2026-09-22_2026-09-22.json';
+  const value = {
+    version: 2, period: {from: '2026-09-22', to: '2026-09-22'}, scope: 'all-ozon-stores', status: 'collected', generatedAt: '2026-09-22T12:00:00.000Z',
+    records: [{id: 'one'}], productOrders: [{postingId: 'p', productId: '1'}], report: {coverage: {sources: [{storeId: '1'}]}}, errors: []
+  };
+  const encoded = codecs.encode(sourcePath, value), calls = [];
+  const head = {revision: 4, metadata: encoded.metadata, sourceMetadata: {sourcePath, logicalKey: sourceKey(sourcePath)}, entityCounts: Object.fromEntries(Object.entries(encoded.collections).map(([type, rows]) => [type, rows.length]))};
+  const methods = Object.fromEntries(['publishWithStatus', 'listRows', 'readAtRevision', 'readCommand', 'getHead', 'listHeads'].map(name => [name, async () => { calls.push(name); throw Error('unexpected'); }]));
+  methods.readCurrentCollections = async input => {
+    calls.push(['current', input.entityTypes]);
+    return {head, collections: Object.fromEntries(input.entityTypes.map(type => [type, (encoded.collections[type] || []).map(row => ({entityType:type,entityKey:row.key,occurrence:0,businessDay:row.day,sourceOrder:row.ordinal,value:row.value,revision:4}))]))};
+  };
+  const loaded = await createLiveSources({repository: methods}).record(sourcePath, {entities: ['records', 'productOrders', 'report.coverage.sources']});
+  assert.deepEqual(loaded.value, value);
+  assert.deepEqual(calls, [['current', ['records', 'productOrders', 'report.coverage.sources']]]);
+});
+
 test('live source bridge PostgreSQL CAS and journal compatibility', { skip: !process.env.PULT_TEST_DATABASE_URL }, async t => {
   const { Pool } = require('pg'), pool = new Pool({ connectionString: process.env.PULT_TEST_DATABASE_URL, max: 5 });
   t.after(() => pool.end()); await ensurePostgresLiveSchema(pool);
