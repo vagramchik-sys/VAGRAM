@@ -34,7 +34,7 @@ function render(){
  if(!report)return;
  const c=report.config||{};$('pa-mode').value=c.mode||'observe';$('pa-kill').checked=c.killSwitch!==false;
  for(const id of ['priceWriteEnabled','bidWriteEnabled']){const el=$('pa-'+id);if(el)el.checked=c[id]===true}
- const s=c.settings||{};for(const key of ['priceStepPct','bidStepPct','targetProfitRub','targetProfitPct','safetyFactor','minObservationMinutes','minStockUnits','maxDailyAdSpendRub','cycleMinutes','maxActionsPerCycle']){const el=$('pa-'+key);if(el)el.value=s[key]??''}
+ const s=c.settings||{};for(const key of ['priceStepPct','bidStepPct','targetProfitRub','targetProfitPct','externalReservePct','safetyFactor','minObservationMinutes','minStockUnits','maxDailyAdSpendRub','cycleMinutes','maxActionsPerCycle']){const el=$('pa-'+key);if(el)el.value=s[key]??''}
  if($('pa-performance'))$('pa-performance').innerHTML=status?.performance?.connected?'<span class="pa-connected">Performance API подключён · '+esc(status.performance.clientId)+'</span>':'<span class="pa-disconnected">Performance API не подключён</span>';
  view==='ads'?renderAds():renderPrices();
 }
@@ -45,7 +45,7 @@ async function init(){
  try{stores=(await api('/api/stores')).filter(s=>!String(s.id).startsWith('wb-'));const sel=$('pa-store');sel.innerHTML=stores.map(s=>'<option value="'+esc(s.id)+'">'+esc(s.name)+'</option>').join('');const saved=localStorage.getItem('pult-price-ads-store');storeId=stores.some(s=>s.id===saved)?saved:stores[0]?.id||'';sel.value=storeId;sel.onchange=()=>{storeId=sel.value;localStorage.setItem('pult-price-ads-store',storeId);load()};await load()}catch(e){notice(e.message,'error')}
 }
 function configFromForm(){
- const current=report?.config||{},settings={...(current.settings||{})};for(const key of ['priceStepPct','bidStepPct','targetProfitRub','targetProfitPct','safetyFactor','minObservationMinutes','minStockUnits','maxDailyAdSpendRub','cycleMinutes','maxActionsPerCycle']){const el=$('pa-'+key);if(el)settings[key]=el.value===''?null:Number(el.value)}
+ const current=report?.config||{},settings={...(current.settings||{})};for(const key of ['priceStepPct','bidStepPct','targetProfitRub','targetProfitPct','externalReservePct','safetyFactor','minObservationMinutes','minStockUnits','maxDailyAdSpendRub','cycleMinutes','maxActionsPerCycle']){const el=$('pa-'+key);if(el)settings[key]=el.value===''?null:Number(el.value)}
  return{...current,mode:$('pa-mode').value,killSwitch:$('pa-kill').checked,priceWriteEnabled:$('pa-priceWriteEnabled')?.checked===true,bidWriteEnabled:$('pa-bidWriteEnabled')?.checked===true,settings};
 }
 document.addEventListener('click',async e=>{
