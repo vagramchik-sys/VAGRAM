@@ -1,6 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync(require.resolve('../dist/buyer-order-segments-ui.js'),'utf8'),html=fs.readFileSync(require.resolve('../dist/index.html'),'utf8'),css=fs.readFileSync(require.resolve('../dist/buyer-order-segments.css'),'utf8'),flush=()=>new Promise(resolve=>setImmediate(resolve));
+const layoutSource=fs.readFileSync(require.resolve('../dist/page-layout.js'),'utf8');
 function runtime(api,{from='2026-09-01',to='2026-09-07',sharedFrom=from,sharedTo=to,search='?view=buyers',hash='',autoLoad=true}={}){
  const nodes=new Map(),listeners=new Map(),windowListeners=new Map(),documentListeners=new Map(),intervals=new Map();let enabled=false,hidden=false,nextInterval=1;
  const typeButtons=['legal','individual','unknown'].map(type=>({dataset:{buyerType:type},classList:{toggle(){}},setAttribute(){}}));
@@ -16,6 +17,19 @@ const report=complete=>({status:complete?'ready':'partial',period:{from:'2026-09
 const productReport=(buyerType='legal',complete=false,extra={})=>({status:complete?'ready':'partial',buyerType,period:{from:'2026-09-01',to:'2026-09-07'},totals:totals(),products:[{productId:'101',name:'Крепёж <тест>',sku:'101',market:'Ozon',storeName:'Ozon 1',orderedUnits:7,buyerShare:.7,amountRub:1789.5,currency:'RUB',cancelledUnits:2,cancellationUnknownUnits:0}],coverage:{complete,sources:[{market:'Ozon',scheme:'FBO',complete,available:true}]},...extra});
 const paired=data=>async url=>url.includes('/api/buyer-product-segments')?productReport(new URL('http://x'+url).searchParams.get('buyerType')):data;
 test('panel names order-based buyer sales, exposes an explicit report button, all switches and six product columns',()=>{assert.match(html,/rel="icon"[^>]+\/favicons\/index\.svg/);assert.match(html,/Продажи по типам покупателей/);assert.match(html,/Выкуп и выручка не подтверждены этими данными/);assert.match(html,/id="buyer-segment-load"[^>]*>Показать отчёт</);for(const type of ['legal','individual','unknown'])assert.match(html,new RegExp('data-buyer-type="'+type+'"'));assert.match(html,/colspan="6"/);assert.match(css,/buyer-product-types button\.active/)});
+test('buyer assets are lazy-loaded once by the page route',async()=>{
+ assert.doesNotMatch(html,/<script[^>]+buyer-order-segments-ui\.js/);
+ assert.doesNotMatch(html,/<link[^>]+buyer-order-segments\.css/);
+ assert.match(layoutSource,/document\.body\.dataset\.pultView=view;document\.body\.dataset\.pultSection=section;void loadRouteAssets\(view\)/);
+ const block=layoutSource.match(/ const ROUTE_ASSETS=[\s\S]+?(?= const main=)/)?.[0];assert.ok(block);
+ const head=[],body=[],context={Map,Promise,Error,document:{createElement:tag=>({tag}),head:{append:node=>head.push(node)},body:{append:node=>body.push(node)}}};
+ vm.runInNewContext(block+';globalThis.loadRouteAssets=loadRouteAssets',context);
+ await context.loadRouteAssets('overview');assert.equal(head.length,0);assert.equal(body.length,0);
+ const first=context.loadRouteAssets('buyers'),second=context.loadRouteAssets('buyers');await flush();
+ assert.equal(head.length,1);assert.equal(head[0].href,'/buyer-order-segments.css');assert.equal(body.length,1);assert.equal(body[0].src,'/buyer-order-segments-ui.js');
+ body[0].onload();await Promise.all([first,second]);
+ await context.loadRouteAssets('buyers');assert.equal(head.length,1);assert.equal(body.length,1);
+});
 test('buyer requests run only after an explicit click and never poll',async()=>{let calls=0;const view=runtime(async url=>{calls++;return url.includes('/api/buyer-product-segments')?productReport():report(true)},{search:'',autoLoad:false});await flush();assert.equal(calls,0);assert.equal(view.node('buyer-segment-load').textContent,'Показать отчёт');view.tick();view.view('buyers');view.tick();await flush();assert.equal(calls,0);view.clickReport();await flush();assert.equal(calls,2);assert.equal(view.node('buyer-segment-load').textContent,'Обновить отчёт');view.tick();view.view('overview');view.view('buyers');view.hide(true);view.hide(false);await flush();assert.equal(calls,2);view.app.destroy()});
 test('a response arriving after the buyer view was left is ignored',async()=>{const pending=[];const view=runtime(url=>new Promise(resolve=>pending.push({url,resolve})),{search:''});view.view('buyers');await flush();assert.equal(pending.length,2);view.view('overview');pending.find(item=>!item.url.includes('/api/buyer-product-segments')).resolve({...report(true),totals:{...totals(),legal:total(99)}});pending.find(item=>item.url.includes('/api/buyer-product-segments')).resolve(productReport('legal',true,{products:[{name:'Устаревший товар',orderedUnits:99,buyerShare:1}]}));await flush();assert.doesNotMatch(view.node('buyer-segment-cards').innerHTML,/<strong>99<\/strong>/);assert.doesNotMatch(view.node('buyer-product-rows').innerHTML,/Устаревший товар/);view.app.destroy()});
 test('an explicit refresh starts one parallel pair and does not overlap',async()=>{const pending=[];const view=runtime(url=>new Promise((resolve,reject)=>pending.push({url,resolve,reject})),{autoLoad:false});view.clickReport();await flush();assert.equal(pending.length,2);view.clickReport();await flush();assert.equal(pending.length,2);for(const request of pending)request.reject(Error('temporary'));await flush();assert.match(view.node('buyer-segment-state').textContent,/temporary/);assert.equal(view.node('buyer-segment-load').textContent,'Показать отчёт');view.app.destroy()});

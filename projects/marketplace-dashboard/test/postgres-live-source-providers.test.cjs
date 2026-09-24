@@ -183,6 +183,22 @@ test('order chart projection requests daily totals only, leaving SKU detail and 
  assert.equal(calls.filter(call=>call[0]==='record').length,1);
 });
 
+test('category chart projection requests SKU orders only, leaving daily totals and finance cold',async()=>{
+ const insight={orders:{skuDailyCoverage:true,skuUpdatedAt:'2026-09-20T10:00:00Z',skuDaily:[{date:'2026-09-20',sku:'1',revenue:20,units:2}]}};
+ const {providers,calls}=fixture({'insights-3.json':data(1,insight)});
+ const result=await providers.getCategoryInsights();
+ assert.deepEqual(calls.find(call=>call[1]==='insights-3.json')[2],['orders.skuDaily','orders.skuCoverage']);
+ assert.deepEqual(result[0].value.orders,insight.orders);
+ assert.equal(calls.filter(call=>call[0]==='record').length,1);
+});
+
+test('category state reader loads only rows for the requested day at one revision',async()=>{
+ const sourcePath='order-category-intraday.json',value={version:2,points:[{date:'2026-09-20',at:'2026-09-20T08:00:00Z',values:{a:{orderedRevenue:1,orderedUnits:1}}},{date:'2026-09-21',at:'2026-09-21T08:00:00Z',values:{b:{orderedRevenue:2,orderedUnits:1}}}],commandResults:[]},encoded=codecs.encode(sourcePath,value),calls=[];
+ const head={revision:7,metadata:encoded.metadata,sourceMetadata:{sourcePath}},sources={identity(){return{storeId:'all',domain:'category-intraday'}},async listSources(){return[{sourcePath,head}]},async record(){throw Error('full state must stay cold')},repository:{async listRows(options){calls.push(options);const rows=encoded.collections.points.filter(row=>row.day===options.fromDay).map(row=>({entityType:'points',entityKey:row.key,businessDay:row.day,sourceOrder:row.ordinal,value:row.value}));return{rows,total:rows.length}}}};
+ const result=await createLiveSourceProviders({sources}).getOrderCategoryState('2026-09-20');
+ assert.deepEqual(result,{version:2,points:[value.points[0]]});assert.equal(calls.length,1);assert.equal(calls[0].expectedRevision,7);assert.equal(calls[0].fromDay,'2026-09-20');assert.equal(calls[0].toDay,'2026-09-20');
+});
+
 test('category revision rejects malformed relevant heads', async () => {
   const row=data(1,{});row.head.revision='broken';
   const {providers}=fixture({'order-category-catalog-1.json':row});

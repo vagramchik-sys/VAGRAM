@@ -107,6 +107,33 @@ test('data and insights use an independent lane with at most two active reads', 
   assert.deepEqual((await Promise.all([second, data, heavy])).map(value => value.status), [200, 200, 200]);
 });
 
+test('historical report queue does not block a small interactive GET', async t => {
+  const dir = await assets(); t.after(() => fs.rm(dir, { recursive: true, force: true }));
+  const gates = []; let entered = 0;
+  const handler = { handle: response(async (req, res, url) => {
+    if (url.pathname === '/api/category-sales') {
+      const index = entered++;
+      await new Promise(resolve => { gates[index] = resolve; });
+      res.writeHead(200).end('report'); return true;
+    }
+    if (url.pathname === '/api/changes') { res.writeHead(200).end('interactive'); return true; }
+    return false;
+  }) };
+  const core = { async ready() { return { ready: true, missingAdapters: [] }; }, async publicStores() { return []; }, async publicSnapshot() {}, async hasStore() { return true; } };
+  const runtime = await start({ pool: fakePool(), core, staticDir: dir, staticFiles: STATIC_FILES, port: 0, otherHandlers: [handler], readiness: async () => ({ ready: true, missingAdapters: [] }), ownerRoutesFactory: async () => ({ handle: async () => false }) });
+  t.after(async () => { for (const release of gates) release?.(); await runtime.close(); });
+  const page = await request(runtime.origin, '/'), cookie = page.headers.get('set-cookie').split(';', 1)[0];
+  const first = request(runtime.origin, '/api/category-sales', { cookie });
+  while (entered < 1) await new Promise(resolve => setImmediate(resolve));
+  const second = request(runtime.origin, '/api/category-sales?from=another-day', { cookie });
+  const quick = await Promise.race([request(runtime.origin, '/api/changes', { cookie }), new Promise((_, reject) => setTimeout(() => reject(Error('interactive GET blocked by report')), 250))]);
+  assert.equal(quick.status, 200);
+  assert.equal(entered, 1);
+  gates[0](); assert.equal((await first).status, 200);
+  while (entered < 2) await new Promise(resolve => setImmediate(resolve));
+  gates[1](); assert.equal((await second).status, 200);
+});
+
 test('readiness gate runs before lease and rejects incomplete wiring', async t => {
   const dir = await assets(); t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const events = [];

@@ -9,10 +9,15 @@ module.exports = function createPostgresOrderCategoryDaily({ productTypes, getCa
   const checkedStores = stores => stores && typeof stores === 'object' && !Array.isArray(stores) ? stores : (() => { throw Error('Invalid category SQL provider contract'); })();
   const storeRevision = stores => JSON.stringify(Object.entries(stores).sort(([left], [right]) => left.localeCompare(right)).map(([id, store]) => [id, typeof store?.name === 'string' ? store.name : null, store?.market === 'WB' ? 'WB' : 'Ozon']));
   const requestOptions = (options, effectiveNow) => ({ from: options.from, to: options.to, market: options.market || 'all', store: options.store || options.storeId || null, today: moscowDay(effectiveNow), classifiedAt: options.classifiedAt || null });
-  async function buildReport(options, prepared) {
+  function loadSources(options) {
     const today = moscowDay(options.now || now()), includesToday = typeof options.from === 'string' && typeof options.to === 'string' && options.from <= today && options.to >= today;
-    const loaded = await Promise.all([getCatalogs(), getSnapshots({ from: options.from, to: options.to }), includesToday ? getInsights() : [], includesToday ? getWbOrders() : [], ...(prepared ? [] : [productTypes.read(), getStores()])]);
-    const [catalogsRaw, snapshots, insightsRaw, wbRaw] = loaded, {registry, stores} = prepared || {registry: loaded[4], stores: loaded[5]};
+    return Promise.all([getCatalogs(), getSnapshots({ from: options.from, to: options.to }), includesToday ? getInsights() : [], includesToday ? getWbOrders() : []]);
+  }
+  async function buildReport(options, prepared, sourceRows) {
+    let loaded, registry, stores;
+    if (prepared) { loaded = sourceRows || await loadSources(options); ({registry, stores} = prepared); }
+    else [loaded, registry, stores] = await Promise.all([sourceRows || loadSources(options), productTypes.read(), getStores()]);
+    const [catalogsRaw, snapshots, insightsRaw, wbRaw] = loaded;
     if (!Array.isArray(catalogsRaw) || !Array.isArray(snapshots) || !Array.isArray(insightsRaw) || !Array.isArray(wbRaw) || !stores || typeof stores !== 'object') throw Error('Invalid category SQL provider contract');
     const catalogs = catalogsRaw.map(item => ({ ...item, name: typeof stores[item.storeId]?.name === 'string' ? stores[item.storeId].name : item.name || null }));
     const entries = (rows, label) => Object.fromEntries(rows.map(row => { if (!row || typeof row.storeId !== 'string' || !Object.hasOwn(row, 'value')) throw Error(`Invalid ${label} provider row`); return [row.storeId, row.value]; }));
@@ -20,10 +25,14 @@ module.exports = function createPostgresOrderCategoryDaily({ productTypes, getCa
   }
   async function cachedReport(options, effectiveNow) {
     if (!categoryRevision) return buildReport({...options, now: effectiveNow});
-    const revisionOptions = {...options, today: moscowDay(effectiveNow)}, [sourceRevision, registryRaw, storesRaw] = await Promise.all([categoryRevision(revisionOptions), productTypes.read(), getStores()]);
+    const revisionOptions = {...options, today: moscowDay(effectiveNow)}, sourceOptions = {...options, now: effectiveNow};
+    // Establish the source revision before loading rows. Starting the snapshot
+    // read first can cache old rows under a revision committed during that read.
+    const [sourceRevision, registryRaw, storesRaw] = await Promise.all([categoryRevision(revisionOptions), productTypes.read(), getStores()]);
     const registry = validateRegistry(registryRaw), stores = checkedStores(storesRaw), cacheKey = JSON.stringify([checkedRevision(sourceRevision), JSON.stringify(registry), storeRevision(stores), requestOptions(options, effectiveNow)]);
     if (completed.has(cacheKey)) { const value = completed.get(cacheKey); completed.delete(cacheKey); completed.set(cacheKey, value); return value; }
-    const report = await buildReport({...options, now: effectiveNow}, {registry, stores}), finalRevision = checkedRevision(await categoryRevision(revisionOptions));
+    const sourceRows = await loadSources(sourceOptions);
+    const report = await buildReport(sourceOptions, {registry, stores}, sourceRows), finalRevision = checkedRevision(await categoryRevision(revisionOptions));
     if (finalRevision === sourceRevision) { if (completed.size >= 4) completed.delete(completed.keys().next().value); completed.set(cacheKey, report); }
     return report;
   }

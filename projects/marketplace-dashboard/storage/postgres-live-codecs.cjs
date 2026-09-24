@@ -181,7 +181,10 @@ function decode(sourcePath, encoded, {partial=false}={}) {
     expected.add(definition.path);
     if (!Object.hasOwn(encoded.collections,definition.path)) { if(partial){target.parent[target.name]=[];continue} fail('INVALID_ENCODED','Encoded live collection rows are missing'); }
     if(!Array.isArray(encoded.collections[definition.path]))fail('INVALID_ENCODED','Encoded live collection rows are invalid');
-    const rows = encoded.collections[definition.path].map(row => cloneJson(row)).sort((a,b)=>a.ordinal-b.ordinal);
+    // Repository rows are detached again through row.value below. Cloning the
+    // whole envelope here cloned every large JSON value twice before checksum
+    // verification, while key/day/ordinal are immutable JSON scalars.
+    const rows = [...encoded.collections[definition.path]].sort((a,b)=>Number.isSafeInteger(a?.ordinal)&&Number.isSafeInteger(b?.ordinal)?a.ordinal-b.ordinal:0);
     const restored = rows.map((row, ordinal) => {
       if (!object(row) || typeof row.key !== 'string' || !row.key || Buffer.byteLength(row.key,'utf8') > 1024 || /[\u0000-\u001f\u007f]/u.test(row.key) || row.day !== null && !validDay(row.day) || row.ordinal !== ordinal || !object(row.value)) fail('INVALID_ENCODED', 'Encoded live row is invalid');
       let restoredValue;

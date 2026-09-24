@@ -1,4 +1,4 @@
-const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs');
+const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const {summarize}=require('../summary.cjs');
 const model=require('../dist/dashboard-model.js');
 test('financial groups and days preserve amounts, currencies and counts',()=>{
@@ -109,4 +109,23 @@ test('dashboard defers full store snapshots outside catalog, finance and store s
  assert.match(source,/Каталог загружается только при открытии этого раздела/);
  assert.match(source,/Загрузятся при открытии финансов/);
  assert.doesNotMatch(source,/setInterval\(\(\)=>\{if\(!document\.hidden\)void refresh\(\)\}/);
+});
+
+test('dashboard coalesces duplicate navigation refreshes',async()=>{
+ const source=fs.readFileSync(require.resolve('../dist/dashboard.js'),'utf8').split("try{$('hide-inactive')")[0];
+ const nodes=new Map(),element=id=>{if(!nodes.has(id))nodes.set(id,{value:'',checked:false,disabled:false,className:'',textContent:'',innerHTML:'',options:[]});return nodes.get(id)};
+ let resolveStores,calls=0;
+ const context={
+  console,URL,Intl,Date,Map,Set,Promise,
+  location:{href:'http://pult.local/#products',hash:'#products'},
+  document:{body:{dataset:{}},getElementById:element,querySelectorAll:()=>[]},
+  PultModel:{rowsFor:()=>[],isInactive:()=>false,filterRows:()=>[]},
+  fetch:()=>{calls++;return new Promise(resolve=>{resolveStores=()=>resolve({ok:true,json:async()=>[]})})}
+ };
+ vm.runInNewContext(source+';globalThis.testRefresh=refresh',context);
+ const first=context.testRefresh(false,true),duplicate=context.testRefresh(false,true);
+ assert.equal(calls,1,'the duplicate view event reuses the active refresh');
+ resolveStores();await Promise.all([first,duplicate]);
+ await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(calls,1,'no trailing duplicate /api/stores request is queued');
 });

@@ -4,7 +4,7 @@ const number=new Intl.NumberFormat('ru-RU',{maximumFractionDigits:0}), decimal=n
 const n=v=>number.format(v), money=(v,currency='RUB')=>decimal.format(Number(v))+' '+(currency==='RUB'?'₽':currency);
 const date=v=>v?new Date(v).toLocaleString('ru-RU',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'}):'ещё нет';
 const shortDate=v=>new Date(v+'T12:00:00Z').toLocaleDateString('ru-RU',{day:'numeric',month:'short'});
-let stores=[],snapshots=new Map(),versions=new Map(),failures=new Map(),rows=[],filtered=[],page=1,busy=false,pendingRefresh=false,pendingSnapshots=false,pendingForce=false,snapshotsRequested=false;
+let stores=[],snapshots=new Map(),versions=new Map(),failures=new Map(),rows=[],filtered=[],page=1,busy=false,activeSnapshots=false,activeForce=false,pendingRefresh=false,pendingSnapshots=false,pendingForce=false,snapshotsRequested=false;
 const size=50;
 async function api(url,body){const response=await fetch(url,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});const value=await response.json();if(!response.ok)throw Error(value.error||'Не удалось загрузить данные');return value}
 function selectedStores(){return stores.filter(s=>(!$('store').value||s.id===$('store').value)&&(!$('market').value||(s.id.startsWith('wb-')?'WB':'Ozon')===$('market').value))}
@@ -13,14 +13,20 @@ function buildStoreSelect(){const old=$('store').value,market=$('market').value;
 const snapshotSections=new Set(['products','finance','stores']);
 function snapshotSection(){const url=new URL(location.href),route=location.hash.slice(1)||document.body.dataset.pultView||url.searchParams.get('view')||'overview';return snapshotSections.has(route)}
 async function refresh(force=false,loadSnapshots=force||snapshotSection()){
- if(busy){pendingRefresh=true;pendingSnapshots||=loadSnapshots;pendingForce||=force;return}busy=true;if(loadSnapshots)snapshotsRequested=true;$('refresh-view').disabled=true;
+ if(busy){
+  // Hash and layout navigation can announce the same view change together. Only
+  // queue another request when it asks for work the active refresh does not cover.
+  if((force&&!activeForce)||(loadSnapshots&&!activeSnapshots)){pendingRefresh=true;pendingSnapshots||=loadSnapshots;pendingForce||=force}
+  return
+ }
+ busy=true;activeSnapshots=loadSnapshots;activeForce=force;if(loadSnapshots)snapshotsRequested=true;$('refresh-view').disabled=true;
  try{stores=await api('/api/stores');buildStoreSelect();const need=loadSnapshots?stores.filter(s=>force||!snapshots.has(s.id)||versions.get(s.id)!==(s.revision||s.updatedAt)):[];
   const results=await Promise.allSettled(need.map(async s=>{const d=await api('/api/data?id='+encodeURIComponent(s.id));snapshots.set(s.id,d);versions.set(s.id,s.revision||s.updatedAt);failures.delete(s.id)}));
   results.forEach((r,i)=>{if(r.status==='rejected')failures.set(need[i].id,r.reason.message)});
   const failed=stores.filter(s=>failures.has(s.id));$('notice').className=failed.length?'error':'';$('notice').textContent=failed.length?'Не удалось обновить: '+failed.map(s=>s.name).join(', ')+'. Показаны последние доступные снимки.':'';
   rows=PultModel.rowsFor(stores,snapshots);render();
  }catch(e){$('notice').className='error';$('notice').textContent=e.message+' · Обновите страницу, если сервер перезапускался.'}
- finally{busy=false;$('refresh-view').disabled=false;if(pendingRefresh){const nextSnapshots=pendingSnapshots,nextForce=pendingForce;pendingRefresh=pendingSnapshots=pendingForce=false;void refresh(nextForce,nextSnapshots)}}
+ finally{busy=false;activeSnapshots=activeForce=false;$('refresh-view').disabled=false;if(pendingRefresh){const nextSnapshots=pendingSnapshots,nextForce=pendingForce;pendingRefresh=pendingSnapshots=pendingForce=false;void refresh(nextForce,nextSnapshots)}}
 }
 function scopeRows(){const ids=new Set(selectedStores().map(s=>s.id));return rows.filter(p=>ids.has(p.storeId)&&(!$('hide-inactive').checked||!PultModel.isInactive(p)))}
 function render(){

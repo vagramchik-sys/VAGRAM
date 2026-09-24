@@ -42,13 +42,25 @@ test('duplicate across pages and excessive pagination cannot publish partial sna
   const file = path.join(f.dir, 'ozon-funnel-1.json'), state = JSON.parse(fs.readFileSync(file)); state.pending.offset = (MAX_PAGES - 1) * PAGE_SIZE; fs.writeFileSync(file, JSON.stringify(state));
   assert.throws(() => f.client.accept('1', response(Array.from({ length: PAGE_SIZE }, (_, i) => row(i + 1001))))); assert.equal(f.client.read('1').snapshot, null);
 });
-test('errors preserve prior successful snapshot, discard partial state and avoid saving raw errors', t => {
+test('unsupported requests preserve the prior snapshot, discard partial state and avoid saving raw errors', t => {
   const f = fixture(t); complete(f); const snapshot = f.client.read('1').snapshot; f.advance(30 * 60000);
   f.client.request('1'); f.client.accept('1', response([row(99)]));
   f.client.fail('1', { status: 403, message: 'fixture-secret-do-not-save' });
   assert.equal(f.client.read('1').status, 'unavailable'); assert.deepEqual(f.client.read('1').snapshot, snapshot); assert.equal(f.client.due('1'), false);
   assert.equal(fs.readFileSync(path.join(f.dir, 'ozon-funnel-1.json'), 'utf8').includes('fixture-secret-do-not-save'), false);
   f.advance(6 * 3600000); assert.equal(f.client.due('1'), true); assert.equal(f.client.request('1').date_from, '2026-09-04');
+});
+test('transient failure resumes from the durable page cursor without duplicate API pages', t => {
+  const f = fixture(t), firstPage = Array.from({ length: PAGE_SIZE }, (_, i) => row(i + 1));
+  f.client.request('1'); f.client.accept('1', response(firstPage));
+  assert.equal(f.client.request('1').offset, PAGE_SIZE);
+  f.client.fail('1', { status: 429, retryAfterMs: 30 * 60000 });
+  f.client = create(f.options); f.advance(30 * 60000);
+  const resumed = f.client.request('1'); assert.equal(resumed.offset, PAGE_SIZE);
+  f.client.accept('1', response([]));
+  assert.equal(f.client.request('1').offset, 0);
+  f.client.accept('1', response([]));
+  assert.equal(f.client.read('1').snapshot.previousRows.length, PAGE_SIZE);
 });
 test('429 retains retry-after durably and failed probes have a cooldown', t => {
   const f = fixture(t); f.client.request('1'); f.client.fail('1', { status: 429, retryAfterMs: 60 * 60000 });

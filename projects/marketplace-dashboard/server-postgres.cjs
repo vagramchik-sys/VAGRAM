@@ -4,13 +4,17 @@ const http = require('node:http');
 const crypto = require('node:crypto');
 const path = require('node:path');
 const fs = require('node:fs/promises');
+const { requestMetrics: defaultRequestMetrics } = require('./storage/postgres-request-metrics.cjs');
 
 const MIME = { '.html': 'text/html; charset=utf-8', '.css': 'text/css; charset=utf-8', '.js': 'application/javascript; charset=utf-8', '.svg': 'image/svg+xml', '.png': 'image/png' };
 const STATIC_EXTENSIONS = new Set(Object.keys(MIME));
 const FINANCE_UPLOAD_MEDIA = new Set(['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/png', 'image/jpeg']);
+// These reports read large historical sources. Keep their HTTP admission queue
+// separate so one report cannot hold the slot needed by a small interactive GET.
+const HEAVY_READ_ROUTES = new Set(['/api/buyer-order-segments', '/api/buyer-product-segments', '/api/category-sales', '/api/order-category-daily', '/api/order-categories']);
 const json = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(value)); };
 
-async function start({ pool, core, ownerRoutesFactory, otherHandlers = [], handlerFactories = [], background = [], staticDir, staticFiles, port = 0, readiness, apiGetWaitTimeoutMs = 30000 } = {}) {
+async function start({ pool, core, ownerRoutesFactory, otherHandlers = [], handlerFactories = [], background = [], staticDir, staticFiles, port = 0, readiness, apiGetWaitTimeoutMs = 30000, requestMetrics = defaultRequestMetrics } = {}) {
   if (!pool?.connect || !core || !['ready', 'publicStores', 'publicSnapshot', 'hasStore'].every(name => typeof core[name] === 'function')) throw new TypeError('SQL pool and core are required');
   if (typeof ownerRoutesFactory !== 'function' || !Array.isArray(otherHandlers) || !Array.isArray(handlerFactories) || !handlerFactories.every(value => typeof value === 'function') || !Array.isArray(background) || typeof readiness !== 'function') throw new TypeError('Explicit complete handler readiness is required');
   if (typeof staticDir !== 'string' || !path.isAbsolute(staticDir) || !Array.isArray(staticFiles) || !staticFiles.length || !Number.isSafeInteger(port) || port < 0 || port > 65535 || !Number.isSafeInteger(apiGetWaitTimeoutMs) || apiGetWaitTimeoutMs < 1 || apiGetWaitTimeoutMs > 300000) throw new TypeError('staticDir, staticFiles, port and API queue timeout are invalid');
@@ -26,7 +30,7 @@ async function start({ pool, core, ownerRoutesFactory, otherHandlers = [], handl
   if (state?.ready !== true || !Array.isArray(state.missingAdapters) || state.missingAdapters.length) throw Object.assign(Error('PostgreSQL runtime wiring is incomplete'), { code: 'RUNTIME_NOT_READY', missingAdapters: state?.missingAdapters || ['readiness'] });
 
   let lease, server, healthy = true, closing = false, active = 0, settleDrain, closePromise;
-  const apiGetLanes = { regular: { limit: 1, active: 0, queue: [] }, light: { limit: 2, active: 0, queue: [] } };
+  const apiGetLanes = { regular: { limit: 1, active: 0, queue: [] }, light: { limit: 2, active: 0, queue: [] }, heavy: { limit: 1, active: 0, queue: [] } };
   const unavailable = res => { if (!res.headersSent && !res.destroyed && !res.writableEnded) json(res, 503, { error: 'SQL runtime временно недоступен.' }); };
   const nextApiGet = lane => {
     if (lane.active >= lane.limit || closing || !healthy) return;
@@ -71,7 +75,7 @@ async function start({ pool, core, ownerRoutesFactory, otherHandlers = [], handl
     const boundHandlers = await Promise.all(handlerFactories.map(factory => factory({ authorize, core })));
     const handlers = [ownerRoutes, ...otherHandlers, ...boundHandlers].map(item => typeof item === 'function' ? { handle: item } : item);
     if (handlers.some(item => typeof item?.handle !== 'function')) throw new TypeError('Every handler must provide handle');
-    server = http.createServer(async (req, res) => {
+    server = http.createServer((req, res) => requestMetrics.run(req, res, async () => {
       let releaseApiGet = null;
       active++; res.setHeader('X-Content-Type-Options', 'nosniff'); res.setHeader('Referrer-Policy', 'no-referrer'); res.setHeader('X-Frame-Options', 'DENY');
       try {
@@ -79,9 +83,10 @@ async function start({ pool, core, ownerRoutesFactory, otherHandlers = [], handl
         const url = new URL(req.url, origin);
         if (url.pathname.startsWith('/api/')) {
           if (!await authorize(req, url)) { json(res, 403, { error: 'Откройте страницу подключения' }); return; }
+          if (url.pathname === '/api/runtime-metrics' && req.method === 'GET') { json(res, 200, requestMetrics.snapshot()); return; }
           if (url.pathname === '/api/stores' && req.method === 'GET') { if (typeof core.registryRevision === 'function') res.setHeader('X-Pult-Registry-Revision', await core.registryRevision()); json(res, 200, await core.publicStores()); return; }
           if (req.method === 'GET') {
-            const lane = url.pathname === '/api/data' || url.pathname === '/api/insights' ? apiGetLanes.light : apiGetLanes.regular;
+            const lane = url.pathname === '/api/data' || url.pathname === '/api/insights' ? apiGetLanes.light : HEAVY_READ_ROUTES.has(url.pathname) ? apiGetLanes.heavy : apiGetLanes.regular;
             const slot = await apiGetSlot(lane, req, res);
             if (typeof slot !== 'function') { if (slot === 'timeout' || slot === 'busy') res.setHeader('Retry-After', '1'); unavailable(res); return; }
             releaseApiGet = slot;
@@ -110,7 +115,7 @@ async function start({ pool, core, ownerRoutesFactory, otherHandlers = [], handl
         res.setHeader('Content-Type', MIME[extension]); res.setHeader('Cache-Control', 'no-store'); res.end(bytes);
       } catch { if (!res.headersSent) json(res, 503, { error: 'SQL runtime временно недоступен.' }); else res.destroy(); }
       finally { releaseApiGet?.(); active--; drained(); }
-    });
+    }));
     let closeRuntime = async () => {};
     const invalidate = () => { healthy = false; void closeRuntime(true); };
     if (typeof lease.on === 'function') { lease.on('error', invalidate); lease.on('end', invalidate); }

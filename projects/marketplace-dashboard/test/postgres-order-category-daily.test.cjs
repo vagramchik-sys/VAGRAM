@@ -30,6 +30,43 @@ test('completed reports use the cheap revision path and isolate caller mutations
   assert.equal(p.called.filter(value=>value==='catalogs').length,1);assert.equal(p.called.filter(value=>value==='registry').length,2);assert.equal(p.called.filter(value=>value==='stores').length,2);
 });
 
+test('cold source reads wait for the initial revision gate', async () => {
+  let releaseRevision, revisionCalls=0, snapshotsStarted=false;
+  const p=providers({
+    categoryRevision(){revisionCalls++;if(revisionCalls===1)return new Promise(resolve=>{releaseRevision=()=>resolve('sources-1')});return Promise.resolve('sources-1');},
+    async getSnapshots(){snapshotsStarted=true;return[];}
+  }),reader=create(p.options),request=reader.read({from:'2026-09-22',to:'2026-09-22'});
+  await Promise.resolve();
+  assert.equal(snapshotsStarted,false,'snapshot rows must not precede the revision that identifies them');
+  releaseRevision();await request;
+  assert.equal(snapshotsStarted,true);
+  assert.equal(revisionCalls,2,'the post-build revision check still protects cache correctness');
+});
+
+test('a source update before the initial revision cannot cache stale category totals', async () => {
+  let sourceRevision='sources-1',snapshots=0;
+  const p=providers(),original=p.options.getSnapshots;
+  p.options.categoryRevision=async()=>sourceRevision;
+  p.options.getSnapshots=options=>{snapshots++;if(snapshots===1)sourceRevision='sources-2';return original(options).then(rows=>{rows[0].productOrders[0].units=snapshots===1?2:9;return rows;});};
+  const reader=create(p.options),options={from:'2026-09-22',to:'2026-09-22'};
+  const units=report=>report.series.find(row=>row.typeId==='a').points[0].orderedUnits;
+  assert.equal(units(await reader.read(options)),2);
+  assert.equal(units(await reader.read(options)),9);
+  assert.equal(units(await reader.read(options)),9);
+  assert.equal(snapshots,2);
+});
+
+test('reader without a revision provider also starts independent cold reads together', async () => {
+  let releaseRegistry,snapshotsStarted=false;
+  const p=providers({
+    productTypes:{read:()=>new Promise(resolve=>{releaseRegistry=()=>resolve(registry)})},
+    async getSnapshots(){snapshotsStarted=true;return[];}
+  }),request=create(p.options).read({from:'2026-09-22',to:'2026-09-22'});
+  await Promise.resolve();
+  assert.equal(snapshotsStarted,true);
+  releaseRegistry();await request;
+});
+
 test('report cache invalidates on source, taxonomy, store metadata and Moscow day revisions', async () => {
   let sourceRevision='sources-1',taxonomy=registry,clock=Date.parse('2026-09-23T00:00:00Z'),snapshots=0,storeName='SQL store';
   const p=providers({async categoryRevision(){return sourceRevision;},productTypes:{async read(){return taxonomy;}},async getStores(){return{s1:{name:storeName}}},async getSnapshots(){snapshots++;return[];},now:()=>clock}),reader=create(p.options),options={from:'2026-09-22',to:'2026-09-22'};

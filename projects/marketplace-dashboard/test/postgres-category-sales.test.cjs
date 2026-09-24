@@ -21,3 +21,17 @@ test('reader unwraps a version 3 ledger document and rejects malformed wrapper d
   const rejected=await createService(malformed).read(options);assert.equal(rejected.coverage.coveredDays,0);assert.equal(rejected.totals.Ozon,null);
  }
 });
+test('financial reads overlap the slow product catalog after stores are validated', async () => {
+ let releaseProducts,financeStarted=false;
+ const products=new Promise(resolve=>{releaseProducts=()=>resolve([{key:'oz:1',storeId:'oz',sku:'1'}])});
+ const service=create({async getStores(){return[{id:'oz',name:'O',market:'Ozon'}]},getProducts(){return products},async getCategories(){return[{id:'c',name:'C',productKeys:['oz:1']}]},async getOzonLedger(){financeStarted=true;return{version:3,complete:true,period:{from:options.from,to:options.to},daily:[],skuDaily:[]}},async getWbFinance(){throw Error('unused')}});
+ const pending=service.read(options);await new Promise(resolve=>setImmediate(resolve));
+ assert.equal(financeStarted,true,'finance must not wait for the all-store product catalog');
+ releaseProducts();assert.equal((await pending).productCount,1);
+});
+test('selected store and market skip unrelated finance sources without changing totals or coverage', async () => {
+ const calls=[];
+ const service=create({async getStores(){return[{id:'oz-1',name:'O1',market:'Ozon'},{id:'oz-2',name:'O2',market:'Ozon'},{id:'wb-1',name:'W',market:'WB'}]},async getProducts(){return[{key:'oz-1:1',storeId:'oz-1',sku:'1'},{key:'oz-2:2',storeId:'oz-2',sku:'2'},{key:'wb-1:3',storeId:'wb-1',nmID:'3'}]},async getCategories(){return[]},async getOzonLedger(id){calls.push(id);return{version:3,complete:true,period:{from:options.from,to:options.to},daily:[{date:'2026-09-15',values:{soldUnits:id==='oz-2'?7:3,salesRows:1}}],skuDaily:[]}},async getWbFinance(id){calls.push(id);return null}});
+ const result=await service.read({...options,category:'',store:'oz-2',market:'Ozon'});
+ assert.deepEqual(calls,['oz-2']);assert.deepEqual(result.totals.Ozon,{sold:7,returned:0,net:7});assert.deepEqual(result.totals.total,result.totals.Ozon);assert.equal(result.coverage.complete,true);assert.equal(result.sources.length,1);assert.equal(result.sources[0].id,'oz-2');
+});

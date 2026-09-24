@@ -54,6 +54,7 @@ const {createPostgresWbOrders}=require('./acquisition/postgres-wb-orders.cjs');
 const {createPostgresServerComposition}=require('./postgres-server-composition.cjs');
 const {buildForecasts}=require('../supplier-forecast.cjs');
 const {buildPartnerSales}=require('../partner-data.cjs');
+const {requestMetrics}=require('./postgres-request-metrics.cjs');
 
 function extractor(script=path.resolve(__dirname,'..','loan-contract-extract.py')){return(kind,target)=>new Promise((resolve,reject)=>{const bundled=process.env.USERPROFILE&&path.join(process.env.USERPROFILE,'.cache','codex-runtimes','codex-primary-runtime','dependencies','python','python.exe'),python=process.env.PULT_PYTHON||bundled||'python';execFile(python,[script,kind,target],{windowsHide:true,timeout:35000,maxBuffer:3*1024*1024},(error,stdout)=>{let value;try{value=JSON.parse(String(stdout).trim())}catch{}if(error||!value?.ok)return reject(Object.assign(Error('Local document extraction failed'),{code:'EXTRACTION_FAILED'}));resolve(value)})})}
 function createReleaseNotesLoader(file=path.resolve(__dirname,'..','release-notes.json')){let modified=-1,value=null;return async()=>{const stat=await fs.promises.stat(file);if(value&&stat.mtimeMs===modified)return value;const next=JSON.parse(await fs.promises.readFile(file,'utf8'));if(!next||typeof next!=='object'||Array.isArray(next)||!Array.isArray(next.entries))throw Error('INVALID_RELEASE_NOTES');value=next;modified=stat.mtimeMs;return value}}
@@ -61,6 +62,7 @@ function schedules(scheduler,runner,cadence){async function all(){return schedul
 
 async function createPostgresApplication({pool,readPool=pool,ozonHttpPool=pool,ozonApiFactory=createPostgresOzonApi,staticDir,staticFiles,stateSchema='pult',marketSchema='pult_market',historySchema='pult_history',partnerPort=4319,protect=windowsProtect,fetchFn=globalThis.fetch,now=()=>Date.now(),releaseNotes,loadReleaseNotes,extractFile=extractor(),verifyProviders}={}){
  if(!pool?.query||!pool?.connect||!readPool?.query||!readPool?.connect||typeof protect!=='function'||typeof fetchFn!=='function')throw new TypeError('runtime/read pools, DPAPI and fetch transport are required');
+ fetchFn=requestMetrics.instrumentExternal(fetchFn);
  const live=await createLiveComposition({pool,stateSchema,marketSchema}),readLive=readPool===pool?live:await createLiveComposition({pool:readPool,stateSchema,marketSchema});
  const {stateStore,marketRepository,scheduler,marketWriter}=live,sourceProviders=readLive.sourceProviders,storesRepository=createStores({stateStore}),productTypes=createProductTypes({stateStore}),intraday=createIntraday({stateStore}),categoryCapture=createCategoryCapture({stateStore});
  const core=createCore({storesRepository,marketRepository,stateStore,jobsProvider:()=>scheduler.jobsProvider()});

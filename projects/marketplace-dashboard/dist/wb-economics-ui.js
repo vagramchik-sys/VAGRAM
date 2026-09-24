@@ -28,7 +28,9 @@
   </section>`);
 
   const panel=$('wb-economics');
-  let controller=null,generation=0,lastReport=null,timer=null,intervalMinutes=30;
+  let controller=null,generation=0,lastReport=null,timer=null,retryTimer=null,intervalMinutes=30;const retryDelays=[500,1000,2000];
+  const refreshing=value=>value?.status==='pending'&&value?.code==='refreshing';
+  const waitRetry=(delay,signal)=>new Promise(resolve=>{let settled=false;const finish=ready=>{if(settled)return;settled=true;clearTimeout(retryTimer);retryTimer=null;signal?.removeEventListener?.('abort',cancel);resolve(ready)},cancel=()=>finish(false);retryTimer=setTimeout(()=>finish(true),delay);if(signal?.aborted)cancel();else signal?.addEventListener?.('abort',cancel,{once:true})});
   const metric=(label,value,note,tone='')=>'<article class="wb-eco-kpi '+tone+'"><span>'+label+'</span><strong>'+value+'</strong><small>'+note+'</small></article>';
   const selectedScope=()=>({market:$('market')?.value||'',store:$('store')?.value||''});
   const visibleFor=scope=>scope.market!=='Ozon'&&(!scope.store||scope.store.startsWith('wb-'));
@@ -48,7 +50,7 @@
    if(!sectionActive())return;
    timer=setTimeout(()=>{if(sectionActive()&&lastReport&&visibleFor(selectedScope()))void load(lastReport);},Math.max(1,intervalMinutes)*60000);
   };
-  const deactivate=()=>{clearTimeout(timer);timer=null;controller?.abort()};
+  const deactivate=()=>{clearTimeout(timer);clearTimeout(retryTimer);timer=null;retryTimer=null;controller?.abort();++generation};
   const setSevenDays=()=>{
    const select=$('ins-range');
    if(!select)return;
@@ -112,7 +114,7 @@
    if(!sectionActive()){deactivate();return}
    const from=report?.current?.from,to=report?.current?.to;
    if(!from||!to){resetValues();$('wb-eco-status').textContent='Нет периода';$('wb-eco-message').textContent='Выберите период управленческой сводки.';return}
-   controller?.abort();controller=new AbortController();
+   controller?.abort();const activeController=controller=new AbortController();
    const seq=++generation,request={from,to,store:scope.store,market:scope.market};
    $('wb-eco-scope').textContent=date(from)+' — '+date(to)+' · Wildberries';
    $('wb-eco-status').className='wb-eco-status is-loading';$('wb-eco-status').textContent='Загрузка';
@@ -120,10 +122,7 @@
    resetValues();
    try{
     const query=new URLSearchParams({from,to});if(scope.store)query.set('store',scope.store);
-    const response=await fetch('/api/wb/economics?'+query,{signal:controller.signal});
-    const data=await response.json();
-    if(!response.ok)throw Error(data.error||'Не удалось загрузить экономику WB');
-    if(seq!==generation)return;
+    let data;for(let attempt=0;;attempt++){const response=await fetch('/api/wb/economics?'+query,{signal:activeController.signal});data=await response.json();if(!response.ok)throw Error(data.error||'Не удалось загрузить экономику WB');if(seq!==generation||!sectionActive())return;if(!refreshing(data?.truestats)||attempt>=retryDelays.length)break;if(!await waitRetry(retryDelays[attempt],activeController.signal))return}
     paint(data,request);
    }catch(error){
     if(error.name==='AbortError'||seq!==generation)return;

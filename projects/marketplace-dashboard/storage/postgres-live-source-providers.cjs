@@ -1,5 +1,7 @@
 'use strict';
 
+const codecs = require('./postgres-live-codecs.cjs');
+
 class LiveSourceProviderError extends Error {
   constructor(code, message) { super(message); this.name = 'LiveSourceProviderError'; this.code = code; }
 }
@@ -185,7 +187,37 @@ function createLiveSourceProviders({sources} = {}) {
   // synthesize zero sales, and omitting types would invalidate the ledger hash.
   const getInsights = () => listed('insights-', /^insights-[0-9]+\.json$/u, ['orders.daily', 'orders.skuDaily', 'orders.skuCoverage', 'types', 'errors'], (path, value) => ({storeId: path.slice(9, -5), value}));
   const getOrderInsights = () => listed('insights-', /^insights-[0-9]+\.json$/u, ['orders.daily', 'errors'], (path, value) => ({storeId: path.slice(9, -5), value}));
+  const getCategoryInsights = () => listed('insights-', /^insights-[0-9]+\.json$/u, ['orders.skuDaily', 'orders.skuCoverage'], (path, value) => ({storeId: path.slice(9, -5), value}));
   const getWbOrders = () => listed('wb-orders-', /^wb-orders-wb-[0-9]+\.json$/u, ['points', 'orders'], (path, value) => ({storeId: path.slice(10, -5), value}));
+  async function getOrderCategoryState(targetDay) {
+    if (!validDay(targetDay)) fail('INVALID_PERIOD', 'Category state day is invalid');
+    const sourcePath = 'order-category-intraday.json', entry = (await names()).find(row => row.sourcePath === sourcePath);
+    if (!entry) return {version: 1, points: []};
+    const revision = String(entry.head?.revision ?? '');
+    if (!/^(?:0|[1-9][0-9]*)$/u.test(revision)) fail('CORRUPT_SOURCE', 'Live category state revision is invalid');
+    if (typeof sources.repository?.listRows !== 'function') {
+      const row = await read(sourcePath, ['points']), value = row?.value;
+      if (!value || ![1, 2].includes(value.version) || !Array.isArray(value.points)) fail('CORRUPT_SOURCE', 'Live category state is invalid');
+      return {version: value.version, points: clone(value.points.filter(point => point?.date === targetDay))};
+    }
+    let metadata;
+    try { metadata = codecs.decodeMetadata(sourcePath, entry.head.metadata); } catch { fail('CORRUPT_SOURCE', 'Live category state metadata is invalid'); }
+    if (![1, 2].includes(metadata?.version)) fail('CORRUPT_SOURCE', 'Live category state metadata is invalid');
+    const identity = sources.identity(sourcePath), points = [];
+    for (let offset = 0; ; offset += 10000) {
+      let page;
+      try { page = await sources.repository.listRows({...identity, entityType: 'points', fromDay: targetDay, toDay: targetDay, expectedRevision: Number(revision), limit: 10000, offset, includeTotal: true}); }
+      catch { fail('DATABASE_ERROR', 'Live category state is unavailable'); }
+      if (!page || !Array.isArray(page.rows) || !Number.isSafeInteger(page.total) || page.total < 0) fail('CORRUPT_SOURCE', 'Live category state rows are invalid');
+      for (const row of page.rows) {
+        if (row.entityType !== 'points' || row.businessDay !== targetDay || !row.value || typeof row.value !== 'object' || Array.isArray(row.value)) fail('CORRUPT_SOURCE', 'Live category state rows are invalid');
+        points.push(clone(row.value));
+      }
+      if (points.length >= page.total) break;
+      if (!page.rows.length || points.length > page.total) fail('CORRUPT_SOURCE', 'Live category state rows are incomplete');
+    }
+    return {version: metadata.version, points};
+  }
 
   async function buyerNames(kind) {
     return (await names()).map(row => row.sourcePath).filter(path => {
@@ -263,7 +295,7 @@ function createLiveSourceProviders({sources} = {}) {
     return JSON.stringify(selected);
   }
 
-  return Object.freeze({exact, getMarketSnapshot, getReportCatalog, getProducts, getCatalog, getAllProducts, getOzonFunnel, getOzonLedger, getWbFinance, getCatalogs, getInsights, getOrderInsights, getWbOrders, getBuyerOrderSnapshot, getBuyerProductSnapshot, getBuyerOrderSnapshots, getSnapshots, categoryRevision});
+  return Object.freeze({exact, getMarketSnapshot, getReportCatalog, getProducts, getCatalog, getAllProducts, getOzonFunnel, getOzonLedger, getWbFinance, getCatalogs, getInsights, getOrderInsights, getCategoryInsights, getWbOrders, getOrderCategoryState, getBuyerOrderSnapshot, getBuyerProductSnapshot, getBuyerOrderSnapshots, getSnapshots, categoryRevision});
 }
 
 module.exports = {createLiveSourceProviders, LiveSourceProviderError};

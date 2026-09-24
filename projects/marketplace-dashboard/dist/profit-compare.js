@@ -32,7 +32,10 @@
    <details class="profit-method"><summary>Почему результаты могут отличаться</summary><p>Наш вариант вычитает текущую себестоимость из начислений Ozon после удержаний. TrueStats возвращает свой готовый результат управленческого отчёта с исторической себестоимостью, налогами и внесёнными операционными расходами. Нулевые расходы в TrueStats означают значение в отчёте, а не подтверждение отсутствия расходов бизнеса.</p><p>Сравниваются только выбранные магазины Ozon и одинаковые даты. Разница не означает рост или падение бизнеса. Задержки отчётов, даты признания доходов, возвраты и корректировки могут давать дополнительные расхождения. Текущий день предварительный в обеих версиях. WB в сравнение не входит.</p><p><a href="https://truestats.usedocs.com/article/80130" target="_blank" rel="noreferrer">Формулы TrueStats ↗</a> · <a href="https://truestats.usedocs.com/article/74713" target="_blank" rel="noreferrer">Правила себестоимости ↗</a></p></details>
    <details class="profit-connection" id="profit-connection"><summary>Подключение TrueStats</summary><p>Ключ вводится один раз и хранится на этом компьютере в защищённом хранилище Windows. Приложение только читает отчёты TrueStats.</p><form id="profit-connect-form"><label for="profit-api-key">API-токен TrueStats</label><div class="profit-key-row"><input id="profit-api-key" type="password" autocomplete="off" spellcheck="false" required minlength="20" maxlength="500" placeholder="Вставьте токен из настроек TrueStats"><button type="submit" class="button" id="profit-connect-button">Подключить</button></div><p id="profit-connect-result" role="status"></p></form></details>
   </div>`);
-  let report=null,result=null,version=0,abort=null,mode='both',busy=false;
+  let report=null,result=null,version=0,abort=null,retryTimer=null,mode='both',busy=false;const retryDelays=[500,1000,2000];
+  const sectionActive=()=>!document.hidden&&(document.body?.dataset.pultView==='economics'||new URL(location.href).searchParams.get('view')==='economics'||location.hash==='#economics');
+  const refreshing=value=>value?.status==='pending'&&value?.code==='refreshing';
+  const waitRetry=(delay,signal)=>new Promise(resolve=>{let settled=false;const finish=ready=>{if(settled)return;settled=true;clearTimeout(retryTimer);retryTimer=null;signal?.removeEventListener?.('abort',cancel);resolve(ready)},cancel=()=>finish(false);retryTimer=setTimeout(()=>finish(true),delay);if(signal?.aborted)cancel();else signal?.addEventListener?.('abort',cancel,{once:true})});
   try{const saved=localStorage.getItem('pult-profit-mode-v1');if(['both','ours','truestats'].includes(saved))mode=saved}catch{}
   const modeButtons=[...panel.querySelectorAll('[data-profit-mode]')];
   function setMode(value){mode=value;panel.dataset.profitMode=mode;local.hidden=mode==='truestats';modeButtons.forEach(b=>b.setAttribute('aria-pressed',String(b.dataset.profitMode===mode)));try{localStorage.setItem('pult-profit-mode-v1',mode)}catch{}}
@@ -78,15 +81,16 @@
    $('profit-reload').disabled=busy||!e.stores.length;
   }
   async function load(){
-   if(!report?.economics)return;const request=++version;abort?.abort();abort=new AbortController();result=null;busy=true;paint();
+   if(!report?.economics)return;const request=++version;abort?.abort();const activeAbort=abort=new AbortController();result=null;busy=true;paint();
    const query=new URLSearchParams({from:report.current.from,to:report.current.to});
    if(report.economics.stores.length===1)query.set('store',report.economics.stores[0].id);
    if(!report.economics.stores.length){result={status:'unavailable',reason:'Выберите магазины Ozon для сравнения.'};busy=false;paint();return}
-   try{const response=await fetch('/api/economics/compare?'+query,{signal:abort.signal});const data=await response.json();if(request!==version)return;if(!response.ok)throw Error(data.error||'Не удалось загрузить сравнение');result=data;}
+   try{let data;for(let attempt=0;;attempt++){const response=await fetch('/api/economics/compare?'+query,{signal:activeAbort.signal});data=await response.json();if(request!==version||!sectionActive())return;if(!response.ok)throw Error(data.error||'Не удалось загрузить сравнение');if(!refreshing(data)||attempt>=retryDelays.length)break;if(!await waitRetry(retryDelays[attempt],activeAbort.signal))return}result=data;}
    catch(error){if(request!==version)return;result={status:'unavailable',reason:error.name==='AbortError'?'Загрузка прервана':error.message};}
    finally{if(request===version){busy=false;paint()}}
   }
   $('profit-reload').onclick=load;
+  const cancelHidden=()=>{if(sectionActive())return;++version;clearTimeout(retryTimer);retryTimer=null;abort?.abort();busy=false};window.addEventListener('hashchange',cancelHidden);window.addEventListener('pult:view-change',cancelHidden);document.addEventListener('visibilitychange',cancelHidden);
   $('profit-connect-form').onsubmit=async event=>{
    event.preventDefault();const button=$('profit-connect-button'),input=$('profit-api-key');button.disabled=true;$('profit-connect-result').textContent='Проверяем доступ к TrueStats…';
    try{const response=await fetch('/api/truestats/connect',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:input.value.trim()})});input.value='';const data=await response.json();if(!response.ok)throw Error(data.error||'Не удалось подключить TrueStats');$('profit-connect-result').textContent='Подключено. Ключ сохранён в защищённом хранилище Windows.';await load();}

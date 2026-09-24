@@ -6,6 +6,14 @@
  const OVERVIEW_SECTION=new Set(['management-summary','executive','business-chart']);
  const TITLES={overview:['ОБЗОР БИЗНЕСА','Обзор бизнеса'],priorities:['ТОЧКИ КОНТРОЛЯ','Приоритеты'],analytics:['ТОВАРНАЯ АНАЛИТИКА','Аналитика товаров'],buyers:['АНАЛИТИКА','Продажи по покупателям'],products:['КАТАЛОГ','Товары и себестоимость'],finance:['ФИНАНСЫ','Финансы по магазинам'],stores:['КАБИНЕТЫ','Подключённые магазины'],'sales-decline':['ДИНАМИКА ТОВАРОВ','Падение продаж'],economics:['ЭКОНОМИКА','Прибыль и экономика'],'wb-economics':['WILDBERRIES','Продажи и прибыль WB'],attention:['ОБЗОР БИЗНЕСА','Требует внимания'],funnel:['ОБЗОР БИЗНЕСА','Воронка по товарам']};
  const IDS={overview:['seller-home'],priorities:['focus-priorities'],analytics:['ins-products-panel'],buyers:['buyer-order-segments'],products:['products'],finance:['finance'],stores:['stores'],'sales-decline':['sales-decline'],economics:['economics'],'wb-economics':['wb-economics'],attention:['attention'],funnel:['conversion-panel']};
+ const ROUTE_ASSETS={buyers:{styles:['/buyer-order-segments.css'],scripts:['/buyer-order-segments-ui.js']}};
+ const assetRequests=new Map();
+ function loadAsset(kind,url){
+  const key=kind+':'+url;if(assetRequests.has(key))return assetRequests.get(key);
+  if(kind==='style'){const link=document.createElement('link');link.rel='stylesheet';link.href=url;document.head.append(link);const ready=Promise.resolve(link);assetRequests.set(key,ready);return ready}
+  const ready=new Promise((resolve,reject)=>{const script=document.createElement('script');script.src=url;script.async=true;script.onload=()=>resolve(script);script.onerror=()=>{assetRequests.delete(key);reject(Error('Не удалось загрузить '+url))};document.body.append(script)});assetRequests.set(key,ready);return ready
+ }
+ function loadRouteAssets(view){const assets=ROUTE_ASSETS[view];if(!assets)return Promise.resolve();for(const href of assets.styles)loadAsset('style',href);return assets.scripts.reduce((ready,src)=>ready.then(()=>loadAsset('script',src)),Promise.resolve())}
  const main=document.querySelector('main'),overview=document.getElementById('overview'),executive=document.getElementById('executive');if(!main||!overview)return null;
 
  // Keep the existing controls and their handlers in one Seller-style toolbar.
@@ -60,7 +68,7 @@
  function registerLateNodes(){for(const id of ['seller-analytics-toolbar','ins-today-note','ins-state']){const node=document.getElementById(id);if(node)managed.add(node)}for(const route of Object.keys(IDS)){const nodes=collectRoute(route);routeNodes.set(route,nodes);for(const node of nodes)managed.add(node)}if(executive)for(const child of [...executive.children]){managed.add(child);executiveNodes.add(child)}for(const node of main.querySelectorAll(':scope > section:not(#overview)'))managed.add(node);for(const node of managed)node.classList.add('pult-route-managed')}
  function overviewSelection(section){if(!section)return routeNodes.get('overview')||[];if(section==='business-chart'){const nodes=['seller-analytics-toolbar','ins-today-note','ins-state','ins-metrics','business-chart'].map(id=>document.getElementById(id)).map(shell).filter(Boolean);return [...new Set(nodes)]}if(section==='executive')return [...executiveNodes].filter(node=>!node.matches('#ins-products-panel,#focus-priorities,#conversion-panel,.ins-expense-details')&&!node.querySelector?.('#ins-products-panel,#focus-priorities,#conversion-panel,.ins-expense-details'));const node=shell(document.getElementById(section));return node?[node]:[]}
  function render(view,{focus=false,section=''}={}){
-  view=ROUTES.has(view)?view:'overview';document.body.dataset.pultView=view;document.body.dataset.pultSection=section;registerBusinessChart();registerLateNodes();
+  view=ROUTES.has(view)?view:'overview';document.body.dataset.pultView=view;document.body.dataset.pultSection=section;void loadRouteAssets(view).catch(()=>{});registerBusinessChart();registerLateNodes();
   const productAnalytics=['analytics','buyers','sales-decline'].includes(view);
   viewTabs.hidden=(view==='overview'&&!section)||!['overview','attention','funnel','analytics','buyers','sales-decline'].includes(view);
   const tabFamily=productAnalytics?'products':'overview';

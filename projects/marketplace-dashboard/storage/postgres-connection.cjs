@@ -1,6 +1,7 @@
 'use strict';
 const fs = require('node:fs/promises');
 const { spawn } = require('node:child_process');
+const { requestMetrics } = require('./postgres-request-metrics.cjs');
 
 const bootstrapError = () => Object.assign(new Error('Protected PostgreSQL bootstrap is unavailable or invalid'), { code: 'POSTGRES_BOOTSTRAP_INVALID' });
 
@@ -61,7 +62,7 @@ async function createApplicationPool({ bootstrapFile, unprotect, Pool, onUnavail
     const result = await pool.query('SELECT current_user AS role, rolsuper, rolcreatedb, rolcreaterole FROM pg_roles WHERE rolname=current_user');
     const role = result.rows?.[0];
     if (!role || role.role !== 'pult_app' || role.rolsuper || role.rolcreatedb || role.rolcreaterole) throw bootstrapError();
-    return pool;
+    return requestMetrics.instrumentPool(pool);
   } catch {
     await pool.end().catch(() => {});
     throw Object.assign(new Error('PostgreSQL application connection is unavailable or has excessive privileges'), { code: 'POSTGRES_UNAVAILABLE' });

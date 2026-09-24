@@ -14,6 +14,7 @@ function runtime({ href = 'http://127.0.0.1:4317/', market = 'WB', fetchImpl } =
   const fetches = [];
   const homeUpdates = [];
   const intervals = [];
+  const timeouts = [];
   const windowListeners = new Map();
 
   class FakeElement {
@@ -70,6 +71,7 @@ function runtime({ href = 'http://127.0.0.1:4317/', market = 'WB', fetchImpl } =
   const document = {
     body: new FakeElement('body'),
     hidden: false,
+    addEventListener() {},
     getElementById: id => nodes.get(id) || null,
     createElement: () => new FakeElement(),
     querySelector(selector) {
@@ -92,9 +94,10 @@ function runtime({ href = 'http://127.0.0.1:4317/', market = 'WB', fetchImpl } =
     Intl,
     Date,
     console,
-    setTimeout: () => 1,
-    clearTimeout() {},
+    setTimeout(callback, delay) { const entry = { callback, delay, cleared: false }; timeouts.push(entry); return entry; },
+    clearTimeout(entry) { if (entry && typeof entry === 'object') entry.cleared = true; },
     setInterval(callback) { intervals.push(callback); return intervals.length; },
+    AbortController,
     fetch(url, options) {
       fetches.push(String(url));
       return fetchImpl ? fetchImpl(String(url), options) : new Promise(() => {});
@@ -108,7 +111,7 @@ function runtime({ href = 'http://127.0.0.1:4317/', market = 'WB', fetchImpl } =
   });
 
   vm.runInContext(ui, context, { filename: 'insights-ui.js' });
-  return { nodes, wbReports, fetches, homeUpdates, intervals, context, dispatch(type) { context.window.dispatchEvent({ type }); } };
+  return { nodes, wbReports, fetches, homeUpdates, intervals, timeouts, context, dispatch(type) { context.window.dispatchEvent({ type }); }, runTimeout(delay) { const entry = timeouts.find(item => !item.cleared && (delay === undefined || item.delay === delay)); if (!entry) return false; entry.cleared = true; entry.callback(); return true; } };
 }
 
 function ordersReport() {
@@ -250,6 +253,82 @@ test('TrueStats management summary stays deferred until its section is explicitl
   assert.doesNotMatch(ui, /Финансы, товары и себестоимость: каждые 30 минут/);
 });
 
+test('management summary briefly retries a cold TrueStats report and renders the ready response', async () => {
+  let profitCalls = 0;
+  const app = runtime({
+    href: 'http://127.0.0.1:4317/#management-summary',
+    market: 'Ozon',
+    fetchImpl: async url => url.startsWith('/api/insights?')
+      ? { ok: true, json: async () => ordersReport() }
+      : url.startsWith('/api/profit-series?')
+        ? { ok: true, json: async () => ++profitCalls === 1 ? { status: 'pending', code: 'refreshing' } : { status: 'ready', complete: true, totalProfit: 42, period: { from: '2026-08-26', to: '2026-09-22' }, stores: [] } }
+        : new Promise(() => {})
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(profitCalls, 1);
+  assert.equal(app.runTimeout(500), true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(profitCalls, 2);
+  assert.equal(app.nodes.get('management-summary-status').textContent, 'Период подтверждён');
+});
+
+test('management summary cancels its cold-report retry after navigation', async () => {
+  let profitCalls = 0;
+  const app = runtime({
+    href: 'http://127.0.0.1:4317/#management-summary',
+    market: 'Ozon',
+    fetchImpl: async url => url.startsWith('/api/insights?')
+      ? { ok: true, json: async () => ordersReport() }
+      : url.startsWith('/api/profit-series?')
+        ? { ok: true, json: async () => { profitCalls++; return { status: 'pending', code: 'refreshing' }; } }
+        : new Promise(() => {})
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(profitCalls, 1);
+  app.context.location.hash = '#overview';
+  app.dispatch('pult:view-change');
+  assert.equal(app.runTimeout(500), false);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(profitCalls, 1);
+});
+
+test('management summary caps refreshing retries at three', async () => {
+  let profitCalls = 0;
+  const app = runtime({
+    href: 'http://127.0.0.1:4317/#management-summary',
+    market: 'Ozon',
+    fetchImpl: async url => url.startsWith('/api/insights?')
+      ? { ok: true, json: async () => ordersReport() }
+      : url.startsWith('/api/profit-series?')
+        ? { ok: true, json: async () => { profitCalls++; return { status: 'pending', code: 'refreshing', period: { from: '2026-08-26', to: '2026-09-22' }, stores: [] }; } }
+        : new Promise(() => {})
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  for (const delay of [500, 1000, 2000]) {
+    assert.equal(app.runTimeout(delay), true);
+    await new Promise(resolve => setImmediate(resolve));
+  }
+  assert.equal(profitCalls, 4);
+  assert.equal(app.runTimeout(), false);
+
+});
+
+test('management summary does not retry a different pending code', async () => {
+  let profitCalls = 0;
+  const app = runtime({
+    href: 'http://127.0.0.1:4317/#management-summary',
+    market: 'Ozon',
+    fetchImpl: async url => url.startsWith('/api/insights?')
+      ? { ok: true, json: async () => ordersReport() }
+      : url.startsWith('/api/profit-series?')
+        ? { ok: true, json: async () => { profitCalls++; return { status: 'pending', code: 'queued', period: { from: '2026-08-26', to: '2026-09-22' }, stores: [] }; } }
+        : new Promise(() => {})
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(profitCalls, 1);
+  assert.equal(app.runTimeout(), false);
+});
+
 test('WB keeps its canonical selector value and dedicated report labels', () => {
   assert.match(index, /<option value="WB">Wildberries<\/option>/);
   assert.doesNotMatch(ui, /ins-wb/);
@@ -265,6 +344,21 @@ test('WB economics polls only while its own section is open and the document is 
   assert.match(wbUi, /window\.addEventListener\('pult:view-change'/);
   assert.match(wbUi, /document\.addEventListener\('visibilitychange'/);
   assert.match(wbUi, /else if\(lastReport\)void load\(lastReport\)/);
+});
+
+test('TrueStats screen retries are bounded, exact, and guarded against stale navigation', () => {
+  const conversion = fs.readFileSync(require.resolve('../dist/conversion-ui.js'), 'utf8');
+  const comparison = fs.readFileSync(require.resolve('../dist/profit-compare.js'), 'utf8');
+  for (const source of [ui, wbUi, conversion, comparison]) {
+    assert.match(source, /\[500,1000,2000\]/);
+    assert.match(source, /status==='pending'&&value\?\.code==='refreshing'/);
+  }
+  assert.match(conversion, /generation!==version\|\|!sectionActive\(\)/);
+  assert.match(conversion, /controller\?\.abort\(\)/);
+  assert.match(wbUi, /seq!==generation\|\|!sectionActive\(\)/);
+  assert.match(comparison, /request!==version\|\|!sectionActive\(\)/);
+  assert.match(ui, /seq!==managementGeneration\|\|!managementActive\(\)/);
+  assert.match(ui, /if\(hash!==\'management-summary\'\)cancelManagement\(\)/);
 });
 
 test('business chart exposes WB honestly and removes yesterday and week reference controls', () => {

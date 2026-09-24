@@ -18,8 +18,9 @@ module.exports=function createPostgresAnalyticsComposition({pool,stateSchema='pu
  const buyerProductSegments=buyerProductModule.create({getStores,getSnapshot:sources.getBuyerProductSnapshot,getOrderSnapshots,getCatalog:sources.getCatalog,getAggregate:buyerAggregates?.product});
  const orderCategoryDaily=createOrderCategoryDaily({productTypes,getCatalogs:sources.getCatalogs,getSnapshots:sources.getSnapshots,getInsights:sources.getInsights,getWbOrders:sources.getWbOrders,getStores,categoryRevision:sources.categoryRevision,now});
  const categorySales=createCategorySales({getStores:getStoreRows,getProducts:sources.getAllProducts,getCategories,getOzonLedger:sources.getOzonLedger,getWbFinance:sources.getWbFinance,productTypes});
- const profitSeries=createProfitSeries({getStores,getWbLink:trueStats.readLinks,daily:trueStats.daily,now});
- const wbEconomics=createWbEconomics({getStores,getSnapshot:sources.getMarketSnapshot,getWbLink:trueStats.readLinks,compare:trueStats.compare});
- const conversion=createConversion({getStores,getProducts:sources.getProducts,getOzonFunnel:sources.getOzonFunnel,getWbConversion:trueStats.getWbConversion,now});
+ const backgroundRead=(read,refresh)=>(...args)=>Promise.resolve(read(...args)).then(result=>{if(result?.status==='pending')refresh?.(...args);return result});
+ const profitSeries=createProfitSeries({getStores,getWbLink:trueStats.readLinks,daily:backgroundRead(trueStats.readDaily||trueStats.daily,trueStats.refreshDaily),now});
+ const wbEconomics=createWbEconomics({getStores,getSnapshot:sources.getMarketSnapshot,getWbLink:trueStats.readLinks,compare:backgroundRead(trueStats.readCompare||trueStats.compare,trueStats.refreshCompare)});
+ const conversion=createConversion({getStores,getProducts:sources.getProducts,getOzonFunnel:sources.getOzonFunnel,getWbConversion:backgroundRead(trueStats.readWbConversion||trueStats.getWbConversion,trueStats.refreshWbConversion),now});
  return Object.freeze({sourceProviders:sources,buyerOrderSegments,buyerProductSegments,orderCategoryDaily,categorySales,profitSeries,wbEconomics,conversion});
 };

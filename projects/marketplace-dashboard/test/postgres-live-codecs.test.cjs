@@ -28,6 +28,12 @@ test('duplicate records never collapse and exact source order is restored',()=>{
  assert.equal(rows.length,2);assert.equal(rows[0].key,rows[1].key);assert.deepEqual(rows.map(row=>row.ordinal),[0,1]);assert.deepEqual(decode(`buyer-order-segments-${DAY}_${DAY}.json`,encoded),value);
 });
 
+test('decode detaches restored values without cloning or mutating row envelopes',()=>{
+ const sourcePath=`buyer-order-segments-${DAY}_${DAY}.json`,value={records:[{id:'r1',market:'Ozon',storeId:'1',scheme:'FBO',nested:{count:1}}],productOrders:[],report:{coverage:{sources:[]}}},encoded=encode(sourcePath,value),before=structuredClone(encoded);
+ const decoded=decode(sourcePath,encoded);decoded.records[0].nested.count=9;
+ assert.deepEqual(encoded,before);assert.equal(encoded.collections.records[0].value.nested.count,1);
+});
+
 test('unknown arrays and oversized metadata fail closed with stable codes',()=>{
  assert.throws(()=>encode('costs-1.json',{importedAt:TIME,items:[],unknown:[]}),error=>error.code==='UNSUPPORTED_ARRAY_PATH');
  assert.throws(()=>encode('costs-1.json',{importedAt:'x'.repeat(MAX_METADATA_BYTES),items:[]}),error=>error.code==='METADATA_TOO_LARGE');

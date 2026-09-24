@@ -72,7 +72,12 @@ function create({ privateDir, now = Date.now }) {
     value.error = unavailable ? 'Метрики воронки недоступны для этого кабинета или запроса.' : reason.status === 429 ? 'Ozon ограничил частоту аналитики. Повтор после паузы.' : 'Не удалось получить полную воронку Ozon.';
     value.lastAttemptAt = new Date(now()).toISOString();
     value.retryAt = new Date(Math.max(now() + wait, now() + (Number(reason.retryAfterMs) || 0), Date.parse(reason.retryAt) || 0)).toISOString();
-    delete value.pending; save(id, value);
+    // A completed page and its next offset were already saved by accept(). Keep
+    // that durable cursor across transient failures so a retry does not fetch
+    // accepted pages again. Unsupported requests must restart if they are ever
+    // retried because their stored cursor belongs to a rejected query.
+    if (unavailable) delete value.pending;
+    save(id, value);
   }
   function read(id) {
     const value = state(id);
