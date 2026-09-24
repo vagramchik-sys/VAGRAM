@@ -8,7 +8,7 @@ const DEFAULT_SETTINGS=Object.freeze({
  minObservationOrders:3,minCoinvestPct:3,minStockUnits:5,staleMinutes:180,
  maxDailyAdSpendRub:null,maxPriceStepsPerDay:3,maxBidStepsPerDay:8
 });
-const finite=v=>Number.isFinite(Number(v))?Number(v):null;
+const finite=v=>v===null||v===undefined||v===''||!Number.isFinite(Number(v))?null:Number(v);
 const positive=v=>{const n=finite(v);return n!==null&&n>0?n:null};
 const round2=v=>Math.round((v+Number.EPSILON)*100)/100;
 const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
@@ -75,7 +75,7 @@ function recommend(row,{settings:raw={},now=new Date().toISOString(),mode='obser
   maxProfitableBidRub:finance.maxCpcRub===null?null:round2(finance.maxCpcRub),contributionBeforeAdsPerOrder:finance.beforeAds,
   profitAfterAdsPerOrder:finance.currentProfit,targetProfitPerOrder:finance.desiredProfit,cvr:finance.cvr,recommendedPrice:null,recommendedBidMicros:null,recommendedBidRub:null};
  if(blocks.length)return out;
- if(lastAction&&['price_up','bid_up'].includes(lastAction.type)&&!enough(lastAction,row,now,s)){out.status='observe';reasons.push('Ждём достаточный объём данных после предыдущего шага');return out}
+ if(lastAction&&['price_up','bid_up','price_rollback','bid_rollback'].includes(lastAction.type)&&!enough(lastAction,row,now,s)){out.status='observe';reasons.push('Ждём достаточный объём данных после предыдущего шага');return out}
  if(lastAction?.type==='price_up'){
   const oldBuyer=positive(lastAction.before?.customerPrice),rise=oldBuyer&&buyer?pct(buyer,oldBuyer):null,d=delta(lastAction,row);
   const drop=d?.cvrBefore&&d?.cvrNow!==null?(1-d.cvrNow/d.cvrBefore)*100:null;
@@ -99,7 +99,7 @@ function recommend(row,{settings:raw={},now=new Date().toISOString(),mode='obser
   const price=round2(seller*(1+s.priceStepPct/100));out.status='price_up';out.action={type:'price_up',value:price};out.recommendedPrice=price;
   reasons.push('Есть запас скидки/соинвеста Ozon '+round2(coinvest)+'%; проверяем следующий шаг цены');return out;
  }
- const direct=!row.autopilot||row.autopilot==='NO_AUTO_STRATEGY';
+ const direct=(!row.autopilot||row.autopilot==='NO_AUTO_STRATEGY')&&(!row.campaignState||row.campaignState==='CAMPAIGN_STATE_RUNNING');
  if(direct&&current!==null&&competitive!==null&&finance.maxCpcRub!==null&&counts.bid<s.maxBidStepsPerDay){
   const start=Math.max(current,minBid||0),ceiling=Math.min(finance.maxCpcRub,competitive*s.competitiveBuffer);
   if(ceiling>start+.009&&current<competitive){
@@ -107,7 +107,8 @@ function recommend(row,{settings:raw={},now=new Date().toISOString(),mode='obser
    if(bid>current+.009){const micros=toMicros(round2(bid));out.status='bid_up';out.action={type:'bid_up',value:micros};out.recommendedBidMicros=micros;out.recommendedBidRub=fromMicros(micros);reasons.push('Ставка ниже конкурентной и запас прибыли позволяет увеличить CPC');return out}
   }
  }
- if(current!==null&&competitive!==null&&current>=competitive)reasons.push('Ставка уже не ниже конкурентной');
+ if(row.campaignState&&row.campaignState!=='CAMPAIGN_STATE_RUNNING')reasons.push('Кампания не активна — ставку не меняем');
+ else if(current!==null&&competitive!==null&&current>=competitive)reasons.push('Ставка уже не ниже конкурентной');
  else if(finance.maxCpcRub!==null&&current!==null&&current>=finance.maxCpcRub)reasons.push('Достигнут потолок прибыльной ставки');
  else if(!buyer||coinvest<s.minCoinvestPct)reasons.push('Нет подтверждённого запаса соинвеста для повышения цены');
  else reasons.push('Нет безопасного следующего шага');
