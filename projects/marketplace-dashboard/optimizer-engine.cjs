@@ -3,7 +3,7 @@
 const MICRO=1_000_000;
 const DEFAULT_SETTINGS=Object.freeze({
  priceStepPct:5.1,bidStepPct:7,competitiveBuffer:1.02,safetyFactor:0.85,
- targetProfitRub:30,targetProfitPct:3,customerPriceTolerancePct:2,
+ targetProfitRub:30,targetProfitPct:3,externalReservePct:null,customerPriceTolerancePct:2,
  rollbackConversionDropPct:20,minObservationMinutes:60,minObservationClicks:20,
  minObservationOrders:3,minCoinvestPct:3,minStockUnits:5,staleMinutes:180,
  maxDailyAdSpendRub:null,maxPriceStepsPerDay:3,maxBidStepsPerDay:8
@@ -24,6 +24,7 @@ function mergeSettings(value={}){
  next.priceStepPct=Math.max(5.1,next.priceStepPct);
  next.competitiveBuffer=clamp(next.competitiveBuffer,1,1.25);
  next.safetyFactor=clamp(next.safetyFactor,.1,1);
+ if(next.externalReservePct!==null&&next.externalReservePct!==''){const n=Number(next.externalReservePct);next.externalReservePct=Number.isFinite(n)&&n>=0&&n<=60?n:null}else next.externalReservePct=null;
  if(next.maxDailyAdSpendRub!==null&&next.maxDailyAdSpendRub!==''){
   const n=Number(next.maxDailyAdSpendRub);next.maxDailyAdSpendRub=Number.isFinite(n)&&n>0?n:null;
  }else next.maxDailyAdSpendRub=null;
@@ -34,9 +35,10 @@ function targetProfit(price,s){return Math.max(s.targetProfitRub,(positive(price
 function financeModel(row,s){
  const stats=row.stats||{},e=row.economics||{},orders=finite(stats.orders)||0,clicks=finite(stats.clicks)||0;
  const price=positive(row.customerPrice)||positive(stats.price)||positive(row.sellerPrice);
- const before=finite(e.contributionBeforeAdsPerOrder),profit=finite(e.profitAfterAdsPerOrder),target=price?targetProfit(price,s):null;
+ const rawBefore=finite(e.contributionBeforeAdsPerOrder),rawProfit=finite(e.profitAfterAdsPerOrder),target=price?targetProfit(price,s):null;
+ const reserve=price&&s.externalReservePct!==null?price*s.externalReservePct/100:0,before=rawBefore===null?null:rawBefore-reserve,profit=rawProfit===null?null:rawProfit-reserve;
  const maxPerOrder=before!==null&&target!==null?Math.max(0,before-target):null,cvr=clicks>0?orders/clicks:null;
- return{customerPrice:price,beforeAds:before,currentProfit:profit,desiredProfit:target,maxAdSpendPerOrder:maxPerOrder,cvr,maxCpcRub:maxPerOrder!==null&&cvr!==null?Math.max(0,maxPerOrder*cvr*s.safetyFactor):null};
+ return{customerPrice:price,beforeAds:before,currentProfit:profit,desiredProfit:target,externalReservePerOrder:reserve,maxAdSpendPerOrder:maxPerOrder,cvr,maxCpcRub:maxPerOrder!==null&&cvr!==null?Math.max(0,maxPerOrder*cvr*s.safetyFactor):null};
 }
 function delta(last,row){
  if(!last?.before?.stats)return null;const a=row.stats||{},b=last.before.stats,out={};
@@ -67,13 +69,14 @@ function recommend(row,{settings:raw={},now=new Date().toISOString(),mode='obser
  if(row.inactive)blocks.push('Товар не продаётся или архивный');
  if(mode==='auto'&&!buyer)blocks.push('Для автоцены нужна подтверждённая цена покупателя');
  if(mode==='auto'&&finance.beforeAds===null)blocks.push('Для авто-режима не хватает фактической экономики Ozon');
+ if(mode==='auto'&&s.externalReservePct===null)blocks.push('Для авто-режима задайте резерв налогов и внешних расходов');
  if(s.maxDailyAdSpendRub!==null&&(finite(stats.expenseToday)||finite(stats.expense)||0)>=s.maxDailyAdSpendRub)blocks.push('Достигнут дневной лимит рекламы');
  if(finance.currentProfit!==null&&finance.desiredProfit!==null&&finance.currentProfit<finance.desiredProfit)warnings.push('Текущая прибыль ниже заданного floor');
  if(row.autopilot&&row.autopilot!=='NO_AUTO_STRATEGY')warnings.push('У кампании включена автостратегия Ozon');
  if(row.campaignState&&row.campaignState!=='CAMPAIGN_STATE_RUNNING')warnings.push('Рекламная кампания не активна');
  const out={status:blocks.length?'blocked':'hold',action:null,reasons,blocks,warnings,currentBidRub:current,competitiveBidRub:competitive,minBidRub:minBid,
   maxProfitableBidRub:finance.maxCpcRub===null?null:round2(finance.maxCpcRub),contributionBeforeAdsPerOrder:finance.beforeAds,
-  profitAfterAdsPerOrder:finance.currentProfit,targetProfitPerOrder:finance.desiredProfit,cvr:finance.cvr,recommendedPrice:null,recommendedBidMicros:null,recommendedBidRub:null};
+  profitAfterAdsPerOrder:finance.currentProfit,targetProfitPerOrder:finance.desiredProfit,externalReservePerOrder:finance.externalReservePerOrder,cvr:finance.cvr,recommendedPrice:null,recommendedBidMicros:null,recommendedBidRub:null};
  if(blocks.length)return out;
  if(lastAction&&['price_up','bid_up','price_rollback','bid_rollback'].includes(lastAction.type)&&!enough(lastAction,row,now,s)){out.status='observe';reasons.push('Ждём достаточный объём данных после предыдущего шага');return out}
  if(lastAction?.type==='price_up'){
