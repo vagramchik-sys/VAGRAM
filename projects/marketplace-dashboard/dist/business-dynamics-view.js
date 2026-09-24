@@ -324,7 +324,7 @@
       '<div class="bd-freshness" role="status"><i></i><span>Проверяем свежесть…</span></div></header>' +
       noticesMarkup(notices) +
       '<div class="bd-kpis">' + kpiMarkup(model, metric, currentDay, periodLabel) + '</div>' +
-      '<section class="bd-main"><div class="bd-main__chart"><div class="bd-section-title"><div><h3>' + escapeHtml(model.chartUnavailableReason ? periodLabel : periodLabel + ' по времени') + '</h3><p>' + escapeHtml(model.chartUnavailableReason ? 'Доступен подтверждённый итог периода' : 'Факт показан только до общего среза данных') + '</p></div>' + (model.chartUnavailableReason ? '' : '<div class="bd-legend"><span class="is-today">' + escapeHtml(periodLabel) + '</span><span class="is-yesterday">Предыдущий день</span><span class="is-average">Среднее 7 дней</span><span class="is-forecast">Прогноз</span></div>') + '</div>' + chartMarkup(model, metric) + '</div>' +
+      '<section class="bd-main"><div class="bd-main__chart"><div class="bd-section-title"><div><h3>' + escapeHtml(model.chartUnavailableReason ? periodLabel : periodLabel + ' по времени') + '</h3><p>' + escapeHtml(model.chartUnavailableReason ? 'Доступен подтверждённый итог периода' : (model.chartCaption || 'Факт показан только до общего среза данных')) + '</p></div>' + (model.chartUnavailableReason ? '' : '<div class="bd-legend"><span class="is-today">' + escapeHtml(periodLabel) + '</span><span class="is-yesterday">Предыдущий день</span><span class="is-average">Среднее 7 дней</span><span class="is-forecast">Прогноз</span></div>') + '</div>' + chartMarkup(model, metric) + '</div>' +
       '<aside class="bd-side"><section><div class="bd-section-title"><div><h3>Скорость</h3><p>' + escapeHtml(metric.unit === 'rub' ? '₽ / 15 минут' : (metric.label || '') + ' / 15 минут') + '</p></div></div>' + velocityMarkup(model, metric) + '</section>' + storesMarkup(model, metric) + '</aside></section>' +
       '<section class="bd-detail" aria-live="polite" hidden></section></section>';
 
@@ -354,7 +354,11 @@
       cursor.setAttribute('x1', cx); cursor.setAttribute('x2', cx); cursor.removeAttribute('hidden');
       focus.setAttribute('cx', cx); focus.setAttribute('cy', cy); focus.removeAttribute('hidden');
       tooltip.innerHTML = tooltipMarkup(point, model, metric); tooltip.hidden = false;
-      tooltip.style.left = clamp(cx / 10, 12, 88) + '%';
+      var chartWidth = chart.getBoundingClientRect().width;
+      var halfTooltip = tooltip.getBoundingClientRect().width / 2;
+      // Clamp the rendered box, not a fixed percentage: edge points must fit at every width.
+      var center = chartWidth > 0 ? clamp(cx / 1000 * chartWidth, halfTooltip + 8, chartWidth - halfTooltip - 8) : 0;
+      tooltip.style.left = (chartWidth > 0 ? center / chartWidth * 100 : 50) + '%';
       if (pin) {
         pinned = true; detail.hidden = false;
         detail.innerHTML = detailMarkup('Точка ' + formatTime(point.at, model.timezone), tooltipMarkup(point, model, metric));
@@ -387,6 +391,8 @@
       var index = Number(chart.dataset.activeIndex) || 0;
       if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') {
         event.preventDefault(); showPoint(index + (event.key === 'ArrowLeft' ? -1 : 1), false);
+      } else if (event.key === 'Home' || event.key === 'End') {
+        event.preventDefault(); showPoint(event.key === 'Home' ? 0 : points.length - 1, false);
       } else if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); showPoint(index, true); }
     }
     function showEvent(index) {

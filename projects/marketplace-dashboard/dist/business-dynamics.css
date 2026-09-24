@@ -57,4 +57,5 @@ body[data-pult-section="business-chart"] #business-chart.bd-active{position:rela
 .business-dynamics .bd-velocity__bar{background:#448bdb}
 #business-chart.bd-active #ins-chart svg.bd-chart{min-width:0!important;max-width:100%!important}
 .business-dynamics .bd-kpi:first-child{background:#f2f7ff}
+@media(max-width:650px){.business-dynamics .bd-chart__grid text{font-size:24px}}
 @media(max-width:650px){#business-chart.bd-active>.panel-heading{position:static;width:100%;margin-bottom:10px}#business-chart.bd-active .chart-mode-picker{margin-right:0!important;max-width:100%}#business-chart.bd-active .chart-store-picker-title{flex-wrap:wrap;gap:8px}#business-chart.bd-active .chart-store-picker-title>div{display:flex;flex-wrap:wrap;gap:6px}}

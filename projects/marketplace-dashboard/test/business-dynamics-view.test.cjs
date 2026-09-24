@@ -42,6 +42,7 @@ function harness(now = Date.parse('2026-09-24T12:40:00+03:00')) {
       root = new FakeNode('root');
       const chart = html.includes('class="bd-chart"') ? new FakeNode('chart') : null;
       const tooltip = new FakeNode('tooltip'); tooltip.hidden = true;
+      tooltip.getBoundingClientRect = () => ({ width: 240 });
       const detail = new FakeNode('detail'); detail.hidden = true;
       const cursor = new FakeNode('cursor'); cursor.setAttribute('hidden', '');
       const focus = new FakeNode('focus'); focus.setAttribute('hidden', '');
@@ -230,4 +231,21 @@ test('styles stay scoped, readable, and reset the legacy chart only in bd-active
   assert.match(css, /#business-chart\.bd-active #ins-chart svg\.bd-chart\{[^}]*min-height:0!important/);
   assert.match(css, /#business-chart\.bd-active #ins-chart-title[^}]*display:none!important/);
   assert.match(css, /#business-chart\.bd-active \.ins-chart-label\{[^}]*justify-content:flex-end/);
+});
+
+test('first and last tooltip stay inside narrow and desktop charts on focus, hover and click',()=>{
+ for(const width of [280,430,680,1000]){
+  const view=harness();view.api.render(view.host,model());
+  const {chart,tooltip,detail}=view.root.parts;
+  chart.getBoundingClientRect=()=>({left:0,width});
+  tooltip.getBoundingClientRect=()=>({width:240});
+  const fits=()=>{const center=parseFloat(tooltip.style.left)/100*width;assert.ok(center-120>=7.9);assert.ok(center+120<=width-7.9);};
+  chart.emit('focus');fits();
+  for(const key of ['Home','End']){view.root.emit('keydown',{target:chart,key});fits();}
+  assert.equal(chart.dataset.activeIndex,'1');
+  for(const clientX of [0,width]){
+   chart.emit('pointermove',{clientX});fits();
+   chart.emit('click',{clientX});fits();assert.equal(detail.hidden,false);
+  }
+ }
 });

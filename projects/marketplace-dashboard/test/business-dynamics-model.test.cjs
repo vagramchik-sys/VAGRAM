@@ -16,3 +16,22 @@ test('average check uses pooled revenue and order counts and has no additive for
 test('unknown order count remains unavailable, units are not orders',()=>{const a=store();for(const d of a.days){d.totals.orderCount=null;for(const i of d.intervals)i.orderCount=null;}assert.equal(build([a],{metric:'orderCount'}).kpis.today.value,null);assert.equal(build([a],{metric:'avgCheck'}).kpis.today.value,null);assert.equal(build([a]).series.today.at(-1).orders,null);});
 test('forecast excludes an outlier and needs seven usable days after exclusion',()=>{const a=store('1',8);a.days[8]=day(m.shift(date,-8),{revenue:10000});assert.equal(build([a]).kpis.forecast.sampleSize,7);a.days.pop();a.days[7]=day(m.shift(date,-7),{revenue:10000});assert.equal(build([a]).kpis.forecast.available,false);});
 test('freshness is oldest source, future points/events and foreign store events excluded',()=>{const a=store(),b=store('2');a.updatedAt=at(date,40);const p=payload([a,b]);p.events=[{kind:'price',at:at(date,20),storeId:'1'},{kind:'price',at:at(date,49)},{kind:'bid',at:at(date,30),storeId:'other'},{kind:'unsupported',at:at(date,10)}];const r=m.build(p,{now:Date.parse(at(date,48))});assert.equal(r.updatedAt,at(date,40));assert.equal(r.events.length,1);assert.equal(r.events[0].storeId,'1');});
+
+test('total never connects early WB-only values to the first Ozon observation',()=>{
+ const wb=store('wb');wb.market='WB';
+ const ozon=store('ozon');ozon.days[0]={date,basis:'observation',observations:[{at:at(date,40),orderedRevenue:10000,orderedUnits:20,complete:true}]};
+ const r=build([wb,ozon]);
+ assert.ok(r.series.today.filter(p=>Date.parse(p.at)<Date.parse(at(date,40))).every(p=>p.cumulative===null));
+ assert.equal(r.series.today.find(p=>p.cumulative!==null).at,at(date,40));
+ assert.equal(r.series.today.find(p=>p.cumulative!==null).cumulative,14000);
+ assert.equal(r.kpis.today.value,14800);
+ assert.equal(r.kpis.pace.value,null);
+ assert.equal(r.velocity.length,0);
+ assert.match(r.chartCaption,/время загрузки/);
+ ozon.days=[];
+ const missing=build([wb,ozon]);
+ assert.equal(missing.state,'partial');assert.equal(missing.kpis.today.value,4800);
+ assert.ok(missing.series.today.every(p=>p.cumulative===null));
+ assert.match(missing.chartUnavailableReason,/всех выбранных магазинов/);
+ assert.equal(build([wb,ozon],{selectedIds:['wb']}).series.today[0].cumulative,100);
+});
