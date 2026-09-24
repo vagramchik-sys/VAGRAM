@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f6f9ff">
+  <title>Пульт — рекомендации по рекламе</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <link rel="stylesheet" href="/premium.css">
+  <link rel="stylesheet" href="/seller-shell.css">
+  <link rel="stylesheet" href="/seller-workspace.css">
+  <link rel="stylesheet" href="/seller-analytics.css">
+  <link rel="stylesheet" href="/optimizer.css">
+</head>
+<body class="pult-overview-light" data-optimizer-page="ads">
+  <main class="optimizer-page">
+    <div class="optimizer-heading">
+      <div><p class="optimizer-eyebrow">ЦЕНЫ × РЕКЛАМА</p><h1>Рекомендации по рекламе</h1><p>Ставки ограничены подтверждённой прибыльностью. Изменения на Ozon не отправляются.</p></div>
+      <div class="optimizer-heading-actions"><a class="optimizer-secondary" href="/prices.html">Перейти к ценам</a><button type="button" class="optimizer-primary" id="optimizer-reload">Обновить экран</button></div>
+    </div>
+    <div id="optimizer-notice" class="optimizer-notice" role="status" aria-live="polite" hidden></div>
+    <div class="optimizer-mode" id="optimizer-mode" aria-live="polite"></div>
+    <section class="optimizer-kpis" id="optimizer-kpis" aria-label="Показатели рекламы"></section>
+    <section class="optimizer-panel">
+      <div class="optimizer-panel-heading"><div><h2>Товары в кампаниях</h2><p id="optimizer-period"></p></div><span id="optimizer-count"></span></div>
+      <form id="optimizer-filters" class="optimizer-filters" autocomplete="off">
+        <label>Магазин<select name="store" id="optimizer-store"><option value="">Все магазины</option></select></label>
+        <label>Кампания<select name="campaign" id="optimizer-campaign"><option value="">Все кампании</option></select></label>
+        <label class="optimizer-search">SKU или кампания<input name="search" type="search" placeholder="SKU, название кампании" maxlength="200"></label>
+        <label>Состояние<select name="state"><option value="">Все</option><option>BASELINE</option><option>PRICE_UP</option><option>WAIT_PRICE</option><option>BID_UP</option><option>WAIT_ADS</option><option>HOLD</option><option>ROLLBACK</option><option>BLOCKED</option></select></label>
+        <label>Уверенность<select name="confidence"><option value="">Любая</option><option>HIGH</option><option>MEDIUM</option><option>LOW</option></select></label>
+        <label class="optimizer-check"><input name="onlyScalable" type="checkbox"> Только рост</label>
+        <label class="optimizer-check"><input name="onlyBlocked" type="checkbox"> Только блокировки</label>
+      </form>
+      <p class="optimizer-filter-note">Состояние, уверенность и быстрые флажки отбирают строки текущей страницы. Магазин, кампания и поиск отбирают весь список.</p>
+      <p class="optimizer-filter-note">«ед. API» — исходное значение ставки Ozon. Пока его масштаб в рублях не подтверждён, прибыльный потолок и изменение ставки не рассчитываются.</p>
+      <div class="optimizer-table-scroll"><table class="optimizer-table"><thead><tr><th>Товар / кампания</th><th class="number">Текущая</th><th class="number">Конкурентная</th><th class="number">Потолок</th><th class="number">Рекомендация</th><th class="number">Показы</th><th class="number">Клики</th><th class="number">CTR</th><th class="number">CPC</th><th class="number">Заказы</th><th class="number">CVR</th><th class="number">Расходы</th><th class="number">ДРР</th><th class="number">Вклад после рекламы</th><th>Решение</th></tr></thead><tbody id="optimizer-rows"><tr><td colspan="15" class="optimizer-empty">Загружаем сохранённые данные…</td></tr></tbody></table></div>
+      <div class="optimizer-pager"><span id="optimizer-page-info"></span><div><button type="button" id="optimizer-prev" aria-label="Предыдущая страница">←</button><button type="button" id="optimizer-next" aria-label="Следующая страница">→</button></div></div>
+    </section>
+  </main>
+  <dialog id="optimizer-detail" class="optimizer-detail" aria-label="Подробности по товару"><div class="optimizer-detail-head"><h2 id="optimizer-detail-title">Товар</h2><button type="button" id="optimizer-detail-close" aria-label="Закрыть">×</button></div><div id="optimizer-detail-body"></div></dialog>
+  <script src="/optimizer.js"></script>
+  <script src="/seller-workspace.js"></script>
+</body>
+</html>

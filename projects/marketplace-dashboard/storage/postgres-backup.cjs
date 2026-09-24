@@ -8,7 +8,7 @@ const { spawn } = require('node:child_process');
 const { withWriteFence } = require('./postgres-write-fence.cjs');
 
 const LEGACY_SCHEMAS = Object.freeze(['pult', 'pult_history', 'pult_market']);
-const SCHEMAS = Object.freeze([...LEGACY_SCHEMAS, 'pult_live', 'pult_xway']);
+const SCHEMAS = Object.freeze([...LEGACY_SCHEMAS, 'pult_live', 'pult_xway', 'pult_optimizer']);
 const INCOMPLETE_MARKER = 'BACKUP_INCOMPLETE.json';
 const COMPLETE_MARKER = 'BACKUP_COMPLETE.json';
 const MANIFEST_FILE = 'backup-manifest.json';

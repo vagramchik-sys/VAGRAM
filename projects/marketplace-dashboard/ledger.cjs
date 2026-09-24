@@ -11,9 +11,9 @@ function feeGroup(name){for(const [group,names] of Object.entries(groups))if(nam
 function cents(value){if(value===undefined||value===null||value==='')return 0;const n=Number(value);if(!Number.isFinite(n)||!Number.isSafeInteger(Math.round(n*100)))throw Error('Некорректная сумма в начислениях');return Math.round(n*100)}
 function createLedgerBuilder(raw,types=[]){
  const names=new Map(types.map(t=>[t.id,t])),daily=new Map(),skuDaily=new Map(),fees=new Map(),currencies=new Set();
- let totalCents=0,records=0,residualRecords=0,foreignRecords=0;
+ let totalCents=0,records=0,residualRecords=0,foreignRecords=0,unallocatedCents=0;
  function row(map,key,defaults){if(!map.has(key))map.set(key,{...defaults,values:{}});return map.get(key)}
- function add(date,sku,metric,value,contributes=false){const d=row(daily,date,{date});d.values[metric]=(d.values[metric]||0)+value;if(sku){const p=row(skuDaily,date+':'+sku,{date,sku:String(sku)});p.values[metric]=(p.values[metric]||0)+value;if(contributes)p.values.net=(p.values.net||0)+value}}
+ function add(date,sku,metric,value,contributes=false){const d=row(daily,date,{date});d.values[metric]=(d.values[metric]||0)+value;if(sku){const p=row(skuDaily,date+':'+sku,{date,sku:String(sku)});p.values[metric]=(p.values[metric]||0)+value;if(contributes)p.values.net=(p.values.net||0)+value}else if(contributes)unallocatedCents+=Math.abs(value)}
  function fee(date,sku,typeId,amount,forced){const type=names.get(typeId),group=forced||feeGroup(type?.name),name=type?.description||'Услуга Ozon № '+typeId;add(date,sku,group,amount,true);const f=row(fees,date+':'+typeId+':'+group,{date,typeId,name,group});f.values.amount=(f.values.amount||0)+amount;f.count=(f.count||0)+1;}
  function addOperation(op){
    const currency=op.total_amount?.currency||'RUB';currencies.add(currency);if(currency!=='RUB'){foreignRecords++;return}
@@ -42,7 +42,7 @@ function createLedgerBuilder(raw,types=[]){
    for(const service of op.container_fees?.fees||[]){const value=amount(service.accrued);fee(date,null,service.type_id,value);parts+=value}
    const residual=total-parts;if(residual){add(date,null,'unreconciled',residual);add(date,null,'unreconciledRecords',1);residualRecords++}
  }
- return Object.freeze({add:addOperation,finish:()=>({version:3,period:raw.period,completedAt:raw.completedAt,complete:raw.sections?.finance?.ok===true,records,totalCents,residualRecords,foreignRecords,currencies:[...currencies],daily:[...daily.values()],skuDaily:[...skuDaily.values()],fees:[...fees.values()]})});
+ return Object.freeze({add:addOperation,finish:()=>({version:3,period:raw.period,completedAt:raw.completedAt,complete:raw.sections?.finance?.ok===true,records,totalCents,residualRecords,foreignRecords,unallocatedCents,currencies:[...currencies],daily:[...daily.values()],skuDaily:[...skuDaily.values()],fees:[...fees.values()]})});
 }
 function buildLedger(raw,types=[]){const builder=createLedgerBuilder(raw,types);for(const op of raw.operations||[])builder.add(op);return builder.finish()}
 const typesHash=types=>require('crypto').createHash('sha256').update(JSON.stringify(Array.isArray(types)?types:[])).digest('hex');

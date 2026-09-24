@@ -31,14 +31,16 @@ const ROUTE_CAPABILITIES = Object.freeze({
   '/api/manage/refresh-prices': 'pricing-refresh', '/api/wb/orders': 'wb-orders-report', '/api/order-categories': 'order-categories',
   '/api/economics/compare': 'economics-compare', '/api/impact': 'impact', '/api/changes': 'release-notes',
   '/api/finance/contracts': 'finance-documents', '/api/partners/*': 'partner-tools', '/api/charity/*': 'charity-tools'
+  ,'/api/optimizer/*': 'optimizer-api'
 });
-const BACKGROUND_CAPABILITIES = Object.freeze({ schedulerExecution: 'scheduler-runner', periodicAttempts: 'cadence-producer', marketSnapshots: 'market-acquisition', costsAndPrices: 'costs-prices', orders: 'insights-orders', funnel: 'insights-funnel', wbOrders: 'wb-orders-acquisition', intradayCapture: 'intraday-writer', categoryCapture: 'category-writer' });
+const BACKGROUND_CAPABILITIES = Object.freeze({ schedulerExecution: 'scheduler-runner', periodicAttempts: 'cadence-producer', marketSnapshots: 'market-acquisition', costsAndPrices: 'costs-prices', orders: 'insights-orders', funnel: 'insights-funnel', wbOrders: 'wb-orders-acquisition', performance: 'performance-acquisition', intradayCapture: 'intraday-writer', categoryCapture: 'category-writer' });
 const HANDLER_GROUPS = Object.freeze({
   'xway-read': ['xway-read'],
   'store-commands': ['store-commands'],
   'finance-documents': ['finance-documents'],
   'partner-tools': ['partner-tools'],
   'charity-tools': ['charity-tools'],
+  'optimizer-routes': ['optimizer-api'],
   'report-routes': ['insights-api', 'wb-orders-report', 'order-categories', 'economics-compare'],
   'acquisition-routes': ['pricing-refresh', 'insights-refresh'],
   'info-routes': ['impact', 'release-notes']
@@ -89,6 +91,7 @@ function createPostgresServerComposition({ pool, readPool = pool, stateStore, st
   if (typeof acquisition?.insights?.refreshOrders === 'function') available.add('insights-orders');
   if (typeof acquisition?.insights?.refreshFunnel === 'function') available.add('insights-funnel');
   if (typeof acquisition?.wbOrders?.refresh === 'function') available.add('wb-orders-acquisition');
+  if (methods(acquisition?.performance, ['refresh', 'resolve'])) available.add('performance-acquisition');
   if (methods(acquisition?.derivedCapture, ['run', 'resolve'])) { available.add('intraday-writer'); available.add('category-writer'); }
   if (ownerAdapters.workspaceTools?.handle) available.add('workspace');
   for (const slot of Object.values(READ_ROUTES).map(([name]) => name)) if (typeof analytics?.[slot]?.read === 'function') available.add(`analytics.${slot}`);
