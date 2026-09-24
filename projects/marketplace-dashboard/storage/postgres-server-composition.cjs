@@ -27,7 +27,7 @@ const ROUTE_CAPABILITIES = Object.freeze({
   ...Object.fromEntries(Object.entries(READ_ROUTES).map(([route, [slot]]) => [route, `analytics.${slot}`])),
   '/api/truestats/status': 'truestats', '/api/truestats/connect': 'truestats',
   '/api/connect': 'store-commands', '/api/connect-wb': 'store-commands', '/api/disconnect': 'store-commands', '/api/sync': 'store-commands',
-  '/api/insights': 'insights-api', '/api/insights/sources': 'insights-api', '/api/insights/refresh': 'insights-refresh',
+  '/api/business-dynamics': 'insights-api', '/api/insights': 'insights-api', '/api/insights/sources': 'insights-api', '/api/insights/refresh': 'insights-refresh',
   '/api/manage/refresh-prices': 'pricing-refresh', '/api/wb/orders': 'wb-orders-report', '/api/order-categories': 'order-categories',
   '/api/economics/compare': 'economics-compare', '/api/impact': 'impact', '/api/changes': 'release-notes',
   '/api/finance/contracts': 'finance-documents', '/api/partners/*': 'partner-tools', '/api/charity/*': 'charity-tools'

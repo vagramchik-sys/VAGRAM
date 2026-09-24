@@ -13,6 +13,7 @@ function runtime({ href = 'http://127.0.0.1:4317/', market = 'WB', fetchImpl } =
   const wbReports = [];
   const fetches = [];
   const homeUpdates = [];
+  const storeChartUpdates = [];
   const intervals = [];
   const timeouts = [];
   const windowListeners = new Map();
@@ -105,13 +106,13 @@ function runtime({ href = 'http://127.0.0.1:4317/', market = 'WB', fetchImpl } =
     createPultWBEconomics() { return { render(report) { wbReports.push(report); } }; },
     createPultEconomics: inertView,
     createPultSalesDecline: inertView,
-    createPultStoreChart: () => ({ update() {}, render() {} }),
+    createPultStoreChart: () => ({ update(report, storeId) { storeChartUpdates.push({ report, storeId }); }, render() {} }),
     createPultNetProfit: () => ({ element: new FakeElement(), render() {} }),
     PultFocusUI: { create: () => ({ render() {}, toggleFavorite() {}, detail() {} }) }
   });
 
   vm.runInContext(ui, context, { filename: 'insights-ui.js' });
-  return { nodes, wbReports, fetches, homeUpdates, intervals, timeouts, context, dispatch(type) { context.window.dispatchEvent({ type }); }, runTimeout(delay) { const entry = timeouts.find(item => !item.cleared && (delay === undefined || item.delay === delay)); if (!entry) return false; entry.cleared = true; entry.callback(); return true; } };
+  return { nodes, wbReports, fetches, homeUpdates, storeChartUpdates, intervals, timeouts, context, dispatch(type) { context.window.dispatchEvent({ type }); }, runTimeout(delay) { const entry = timeouts.find(item => !item.cleared && (delay === undefined || item.delay === delay)); if (!entry) return false; entry.cleared = true; entry.callback(); return true; } };
 }
 
 function ordersReport() {
@@ -177,19 +178,20 @@ test('periodic poll does not invalidate an in-flight insights response', async (
   assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
 });
 
-test('today order chart requests fresh lightweight data on the next poll', async () => {
+test('today business chart bypasses the legacy insights request on initial load and polling', async () => {
   const app = runtime({
     href: 'http://127.0.0.1:4317/?view=overview&section=business-chart',
-    market: 'Ozon',
-    fetchImpl: async url => url.startsWith('/api/insights?')
-      ? { ok: true, json: async () => ordersReport() }
-      : new Promise(() => {})
+    market: 'Ozon'
   });
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 0);
+  assert.equal(app.storeChartUpdates.length, 1);
+  assert.equal(app.storeChartUpdates[0].report.scope, 'orders');
+  assert.equal(app.storeChartUpdates[0].report.days, 1);
+  assert.equal(app.storeChartUpdates[0].report.current.from, app.storeChartUpdates[0].report.current.to);
   app.intervals[0]();
-  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 2);
-  assert.ok(app.fetches.filter(url => url.startsWith('/api/insights?')).every(url => url.includes('scope=orders')));
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 0);
+  assert.equal(app.storeChartUpdates.length, 2);
 });
 
 test('UI loads on WB and can switch to Ozon without a removed placeholder crash', () => {
@@ -222,9 +224,11 @@ test('homepage starts with completed days while existing deep links retain their
 
 test('business chart uses the orders scope while an explicit economics route loads the full report', () => {
   const chart = runtime({ href: 'http://127.0.0.1:4317/#business-chart', market: 'Ozon' });
-  assert.equal(chart.fetches.length, 1);
-  assert.match(chart.fetches[0], /^\/api\/insights\?/);
-  assert.match(chart.fetches[0], /scope=orders/);
+  assert.equal(chart.fetches.filter(url => url.startsWith('/api/insights?')).length, 0);
+  assert.equal(chart.storeChartUpdates.length, 1);
+  assert.equal(chart.storeChartUpdates[0].report.scope, 'orders');
+  assert.equal(chart.storeChartUpdates[0].report.days, 1);
+  assert.equal(chart.storeChartUpdates[0].report.current.from, chart.storeChartUpdates[0].report.current.to);
   assert.equal(chart.fetches.some(url => url.startsWith('/api/profit-series?')), false);
   assert.equal(chart.fetches.some(url => url.startsWith('/api/data?')), false);
 

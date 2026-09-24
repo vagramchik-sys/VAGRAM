@@ -19,7 +19,12 @@ function point(source,data,products){
   if(!Object.values(values).every(Number.isFinite))return null;
   let economy;
   if(source==='finance'&&Array.isArray(products)){const e=require('./economics.cjs').economics([{ledger:data,products}],{from:date,to:date});economy={profit:e.profit,cogs:e.cogs,realized:e.realized};}
-  return {...(economy?{economy}:{}),date,at:new Date(at).toISOString(),source,values};
+  const coverage=source==='orders'?{from:new Date(date+'T00:00:00+03:00').toISOString(),to:new Date(at).toISOString()}:null;
+  // Old observations carry no such evidence. Only an explicit numeric day row
+  // can certify a new cumulative observation; an absent row is not a zero.
+  const rows=source==='orders'&&Array.isArray(data.daily)?data.daily.filter(row=>row.date===date):[];
+  const complete=rows.length===1&&Number.isFinite(rows[0].revenue)&&Number.isSafeInteger(rows[0].units)&&rows[0].units>=0;
+  return {...(economy?{economy}:{}),...(coverage?{coverage,complete}:{}),date,at:new Date(at).toISOString(),source,values};
 }
 // A combined point requires a new, sufficiently close observation from every selected store.
 // A failed store never becomes a zero and cannot create a false aggregate change.

@@ -1,0 +1,98 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const {createBusinessDynamics}=require('../storage/domains/postgres-business-dynamics.cjs');
+const {createBusinessDynamicsRepository,SQL}=require('../storage/postgres-business-dynamics-repository.cjs');
+const {point}=require('../intraday.cjs');
+const NOW=Date.parse('2026-09-24T09:07:00Z'),DATE='2026-09-24';
+const stores={'1':{name:'Первый',market:'Ozon'},'2':{name:'Второй'},'wb-1':{name:'Третий',market:'WB'}};
+const head=(store_id,domain,value)=>({kind:'head',store_id,domain,value});
+const daily=(date,revenue,units)=>({kind:'daily',store_id:'1',value:{date,revenue,units}});
+const ozonHead=(extra={})=>head('1','insights',{orders:{period:{from:'2026-08-27',to:DATE},todayDate:DATE,updatedAt:'2026-09-24T09:05:00Z',historyUpdatedAt:'2026-09-24T08:30:00Z',...extra},orderSection:{ok:true}});
+const observed=(date,at,revenue=100,complete=false)=>({kind:'observation',store_id:'1',value:{date,at,source:'orders',values:{orderedRevenue:Math.round(revenue*100),orderedUnits:2},...(complete?{complete:true,coverage:{from:new Date(date+'T00:00:00+03:00').toISOString(),to:at}}:{})}});
+function fixture(rows=[],clock=NOW){const calls=[];const service=createBusinessDynamics({repository:{async read(args){calls.push(args);return rows}},storesRepository:{async read(){return stores}},now:()=>clock});return {service,calls};}
+const getDay=(result,id='1',date=DATE)=>result.stores.find(s=>s.id===id).days.find(d=>d.date===date);
+
+test('one bounded bulk read covers Moscow today and exactly 28 preceding dates, even at UTC midnight boundary',async()=>{
+ const {service,calls}=fixture([],Date.parse('2026-09-24T21:02:00Z')),result=await service.read();
+ assert.deepEqual(result.period,{from:'2026-08-28',to:'2026-09-25'});assert.equal(calls.length,1);assert.deepEqual(calls[0],{storeIds:['1','2','wb-1'],...result.period});
+ assert.equal(result.stores.length,3);assert.ok(result.stores.every(s=>s.days.length===29));assert.deepEqual(result.events,[]);
+ assert.equal(result.stores[0].name,'Первый');assert.equal(result.stores[1].market,'Ozon');
+ assert.ok(result.stores.every(s=>s.days.every(d=>d.totals.orderedRevenue===null&&d.intervals.length===0&&!d.complete)));
+});
+
+test('Ozon daily totals and cumulative observations never become 15-minute order-time sales',async()=>{
+ const rows=[ozonHead(),daily(DATE,135,3),daily('2026-09-23',200,4),observed(DATE,'2026-09-24T09:00:00Z',100,true)];
+ const result=await fixture(rows).service.read(),today=getDay(result),yesterday=getDay(result,'1','2026-09-23');
+ assert.equal(today.basis,'observation');assert.deepEqual(today.intervals,[]);assert.equal(today.complete,false);assert.equal(today.observations.length,1);assert.equal(today.observations[0].orderedRevenue,135);assert.equal(today.observations[0].complete,true);
+ assert.deepEqual(today.coverage,{from:'2026-09-23T21:00:00.000Z',to:'2026-09-24T09:05:00.000Z',intervalsComplete:0});
+ assert.equal(yesterday.complete,true);assert.equal(yesterday.totals.orderedRevenue,200);assert.equal(yesterday.updatedAt,'2026-09-24T08:30:00.000Z');
+ assert.equal(result.stores[0].sources[1].updatedAt,'2026-09-24T09:00:00.000Z','intraday timestamp must not borrow the later head observation');
+});
+
+test('legacy points remain visible but cannot certify cumulative coverage or missing daily totals',async()=>{
+ const result=await fixture([ozonHead(),observed('2026-09-23','2026-09-23T12:00:00Z',100)]).service.read(),old=getDay(result,'1','2026-09-23'),today=getDay(result);
+ assert.equal(old.observations.length,1);assert.equal(old.observations[0].complete,false);assert.equal(old.complete,false);assert.equal(old.totals.orderedRevenue,null);assert.equal(old.coverage.from,null);
+ assert.equal(today.totals.orderedRevenue,null);assert.equal(today.basis,'unavailable');assert.deepEqual(today.observations,[]);
+});
+
+test('today-only refresh and missing historical timestamp cannot falsely close yesterday',async()=>{
+ for(const historyUpdatedAt of [null,'2026-09-23T20:55:00Z']){
+  const result=await fixture([ozonHead({historyUpdatedAt}),daily('2026-09-23',100,1)]).service.read(),old=getDay(result,'1','2026-09-23');
+  assert.equal(old.complete,false);assert.equal(old.updatedAt,historyUpdatedAt?new Date(historyUpdatedAt).toISOString():null);
+ }
+});
+
+test('confirmed historical cumulative points stay partial days and future/mismatched coverage is rejected',async()=>{
+ const date='2026-09-23',rows=[observed(date,'2026-09-23T12:00:00Z',100,true),observed(date,'2026-09-24T09:00:00Z',999,true),observed(DATE,'2026-09-24T12:00:00Z',999,true)];
+ const result=await fixture(rows).service.read(),old=getDay(result,'1',date);assert.equal(old.complete,false);assert.equal(old.totals.orderedRevenue,100);assert.equal(old.coverage.to,'2026-09-23T12:00:00.000Z');assert.deepEqual(getDay(result).observations,[]);
+ rows[0].value.coverage.from='2026-09-23T09:00:00Z';const bad=getDay(await fixture(rows).service.read(),'1',date);assert.equal(bad.totals.orderedRevenue,null);assert.equal(bad.observations[0].complete,false);
+});
+
+test('observation response stays at most 96 actual points per store/day without inventing slot timestamps',async()=>{
+ const date='2026-09-23',ms=Date.parse(date+'T00:00:00+03:00'),rows=Array.from({length:288},(_,i)=>observed(date,new Date(ms+i*5*60000).toISOString(),i,true));
+ const day=getDay(await fixture(rows).service.read(),'1',date);assert.equal(day.observations.length,96);assert.equal(day.observations[0].at,'2026-09-22T21:10:00.000Z');assert.equal(day.observations.at(-1).at,'2026-09-23T20:55:00.000Z');assert.equal(day.complete,false);
+});
+
+function wbRows(extra={}){return [head('wb-1','wb-orders',{day:DATE,fetchedAt:'2026-09-24T09:07:00Z',complete:true,orderedRevenue:30.3,orderedUnits:3,orderRowsPresent:true,orderRowsCount:3,...extra}),
+ {kind:'wb-interval',store_id:'wb-1',value:{from:'2026-09-23T21:00:00.000Z',firstAt:'2026-09-23T21:00:00Z',lastAt:'2026-09-23T21:14:59.999Z',orderedRevenue:10.1,orderedUnits:1}},
+ {kind:'wb-interval',store_id:'wb-1',value:{from:'2026-09-23T21:15:00.000Z',firstAt:'2026-09-23T21:15:00Z',lastAt:'2026-09-23T21:15:00Z',orderedRevenue:20.2,orderedUnits:2}}];}
+
+test('WB slots reconcile amounts/units, respect 15-minute and Moscow boundaries, and expose partial current slot',async()=>{
+ const day=getDay(await fixture(wbRows()).service.read(),'wb-1');assert.equal(day.basis,'order-time');assert.equal(day.complete,false);assert.equal(day.intervals.length,49);assert.equal(day.coverage.intervalsComplete,48);
+ assert.equal(day.intervals[0].orderedRevenue,10.1);assert.equal(day.intervals[1].orderedRevenue,20.2);assert.equal(day.intervals[2].orderedRevenue,0);assert.equal(day.intervals.at(-1).status,'partial');
+ assert.equal(day.intervals.at(-1).complete,false);assert.equal(day.coverage.to,'2026-09-24T09:07:00.000Z');assert.equal(day.totals.orderedRevenue,30.3);assert.equal(day.totals.orderCount,null);
+});
+
+test('WB missing, inconsistent, incomplete and future snapshots cannot turn into zero-filled intervals',async()=>{
+ for(const patch of [{complete:false},{orderRowsPresent:false},{orderRowsCount:4},{orderedRevenue:40},{orderedUnits:4},{fetchedAt:'2026-09-24T09:08:00Z'}]){
+  const day=getDay(await fixture(wbRows(patch)).service.read(),'wb-1');assert.equal(day.totals.orderedRevenue,null);assert.deepEqual(day.intervals,[]);
+ }
+ const rows=wbRows();rows[2].value.lastAt='2026-09-24T09:08:00Z';assert.deepEqual(getDay(await fixture(rows).service.read(),'wb-1').intervals,[]);
+});
+
+test('an explicitly imported empty WB day is zero only until its real source timestamp',async()=>{
+ const rows=[head('wb-1','wb-orders',{day:DATE,fetchedAt:'2026-09-23T21:15:00Z',complete:true,orderedRevenue:0,orderedUnits:0,orderRowsPresent:true,orderRowsCount:0})];
+ const day=getDay(await fixture(rows).service.read(),'wb-1');assert.equal(day.totals.orderedRevenue,0);assert.equal(day.intervals.length,1);assert.equal(day.intervals[0].complete,true);assert.equal(day.complete,false);
+ const historical=getDay(await fixture(rows).service.read(),'wb-1','2026-09-23');assert.equal(historical.basis,'unavailable');assert.equal(historical.totals.orderedRevenue,null);
+ rows[0].value.fetchedAt='2026-09-24T21:00:00Z';const closed=getDay(await fixture(rows,Date.parse('2026-09-24T21:01:00Z')).service.read(),'wb-1');assert.equal(closed.complete,true);assert.equal(closed.intervals.length,96);
+});
+
+test('scope validation rejects bad dates and stores before SQL and never silently falls back to all stores',async()=>{
+ const f=fixture();for(const options of [{date:'2026-02-30'},{date:'2026-09-25'},{storeId:'1 OR TRUE'},{storeId:'999'},{market:'other'},{storeId:'1',market:'WB'}])await assert.rejects(f.service.read(options));
+ assert.equal(f.calls.length,0);const result=await f.service.read({storeId:'wb-1',market:'WB'});assert.deepEqual(f.calls[0].storeIds,['wb-1']);assert.equal(result.stores.length,1);
+});
+
+test('repository makes one parameterized bounded statement independent of store count, without historical event scans',async()=>{
+ const calls=[],repository=createBusinessDynamicsRepository({pool:{async query(sql,params){calls.push({sql,params});return {rows:[]}}}});
+ await repository.read({storeIds:['1','2','wb-1'],from:'2026-08-27',to:DATE});assert.equal(calls.length,1);assert.deepEqual(calls[0].params,[['1','2','wb-1'],'2026-08-27',DATE]);
+ assert.match(SQL,/store_id=ANY\(\$1::text\[\]\)/);assert.match(SQL,/business_day BETWEEN \$2::date AND \$3::date/);assert.match(SQL,/entity_type='orders.daily'/);assert.match(SQL,/entity_type='points'/);assert.match(SQL,/entity_type='orders'/);assert.match(SQL,/floor\(extract\(epoch/);assert.doesNotMatch(SQL,/pult_history|record_journal|SELECT \*/i);
+ for(const args of [{storeIds:['1'],from:'2020-01-01',to:DATE},{storeIds:['1','1'],from:'2026-08-27',to:DATE}])await assert.rejects(repository.read(args));assert.equal(calls.length,1);
+ await repository.read({storeIds:[],from:'2026-08-27',to:DATE});assert.equal(calls.length,1);
+});
+
+test('new capture records explicit coverage, but missing or duplicate day rows never certify it',()=>{
+ const data={period:{from:DATE,to:DATE},updatedAt:'2026-09-24T09:05:00Z',daily:[{date:DATE,revenue:0,units:0}]};
+ const valid=point('orders',data);assert.equal(valid.complete,true);assert.deepEqual(valid.coverage,{from:'2026-09-23T21:00:00.000Z',to:'2026-09-24T09:05:00.000Z'});
+ assert.equal(point('orders',{...data,daily:[]}).complete,false);assert.equal(point('orders',{...data,daily:[...data.daily,...data.daily]}).complete,false);
+ assert.equal(point('orders',{...data,updatedAt:'2026-09-24T21:00:00Z'}),null);
+});

@@ -6,15 +6,17 @@ const source=fs.readFileSync(require.resolve('../dist/turnover-chart.js'),'utf8'
 const flush=()=>new Promise(resolve=>setImmediate(()=>setImmediate(resolve)));
 function runtime(load,options={}){
  const nodes=new Map();
- const node=id=>{if(!nodes.has(id))nodes.set(id,{id,value:id==='ins-chart-metric'?'orderedRevenue':'',checked:false,hidden:false,style:{setProperty(){}},_innerHTML:'',innerHTMLWrites:0,get innerHTML(){return this._innerHTML},set innerHTML(value){this._innerHTML=value;this.innerHTMLWrites++},textContent:'',insertAdjacentHTML(){},setAttribute(){},removeAttribute(){},querySelector(){return null},querySelectorAll(){return []},closest(){return this}});return nodes.get(id)};
+ const renderedModels=[];
+ const node=id=>{if(!nodes.has(id)){const classes=new Set();nodes.set(id,{id,value:id==='ins-chart-metric'?'orderedRevenue':'',checked:false,hidden:false,classList:{add(...names){names.forEach(name=>classes.add(name))},remove(...names){names.forEach(name=>classes.delete(name))},contains(name){return classes.has(name)}},style:{setProperty(){}},_innerHTML:'',innerHTMLWrites:0,get innerHTML(){return this._innerHTML},set innerHTML(value){this._innerHTML=value;this.innerHTMLWrites++},textContent:'',insertAdjacentHTML(){},setAttribute(){},removeAttribute(){},querySelector(){return null},querySelectorAll(){return []},closest(){return this}})}return nodes.get(id)};
  let calls=0;
  class Clock extends Date {constructor(...args){super(...(args.length?args:['2026-09-20T12:00:00Z']))}static now(){return Date.parse('2026-09-20T12:00:00Z')}}
- const context={document:{getElementById:node},window:{},PultStoreChart:require('../dist/turnover-chart-model.js'),Intl,Date:Clock,URLSearchParams,Promise,Map,Set,setTimeout,clearTimeout,console};
+ const dynamics=options.dynamicsPayloads&&{PultBusinessDynamicsClient:{create:()=>({read:({store})=>Promise.resolve(options.dynamicsPayloads[store]||options.dynamicsPayloads[''])})},PultBusinessDynamicsModel:require('../dist/business-dynamics-model.js'),PultBusinessDynamicsView:{clear(){},loading(){},error(){},render(_host,model){renderedModels.push(model)}}};
+ const context={document:{getElementById:node},window:{...dynamics},PultStoreChart:require('../dist/turnover-chart-model.js'),Intl,Date:Clock,URLSearchParams,Promise,Map,Set,setTimeout,clearTimeout,console};
  vm.runInNewContext(source,context);
  const chart=context.window.createPultStoreChart({api:url=>url==='/api/stores'?Promise.resolve(options.stores||[]):(calls++,load(url)),metricTitle:()=> 'Сумма',requestTimeoutMs:options.requestTimeoutMs||15000});
  if(options.from)node('ins-from').value=options.from;if(options.to)node('ins-to').value=options.to;
  if(options.categoryMode!==false)node('chart-mode-categories').onclick();
- return {chart,node,calls:()=>calls,update:date=>chart.update({days:1,current:{from:date,to:date}})};
+ return {chart,node,renderedModels,calls:()=>calls,update:date=>chart.update({days:1,current:{from:date,to:date}})};
 }
 const empty={categories:['Перчатки','Крепёж'],types:[{id:'Перчатки',parentId:null,name:'Перчатки'},{id:'Крепёж',parentId:null,name:'Крепёж'}],series:[],byStore:[],coverage:{complete:true},period:{days:1},limitations:[]};
 test('checkboxes and metric changes reuse the loaded report; data refresh invalidates it',async()=>{
@@ -245,4 +247,18 @@ test('overview polling keeps the category cache while the order source revision 
  app.chart.update(report);await flush();assert.equal(urls.length,1);
  app.chart.update({...report,generatedAt:'2026-09-20T09:00:30Z'});await flush();assert.equal(urls.length,1,'timer refresh must not refetch unchanged category inputs');
  app.chart.update({...report,sources:[{...source,ordersAt:'2026-09-20T09:10:00Z'}]});await flush();assert.equal(urls.length,2,'new order data must invalidate category cache');
+});
+
+test('changing the global store resets a stale chart selection before building dynamics',async()=>{
+ const date='2026-09-20',point=(revenue)=>({at:date+'T09:00:00Z',orderedRevenue:revenue,orderedUnits:1,complete:true}),store=(id,revenue)=>({id,name:'Store '+id,market:'Ozon',updatedAt:date+'T09:00:00Z',days:[{date,basis:'observation',complete:false,observations:[point(revenue)]}]}),a=store('A',100),b=store('B',200),payload=stores=>({period:{to:date},stores,events:[]});
+ const app=runtime(()=>Promise.resolve(empty),{categoryMode:false,stores:[{id:'A',name:'Store A'},{id:'B',name:'Store B'}],dynamicsPayloads:{'':payload([a,b]),B:payload([b])}});
+ app.update(date);await flush();
+ app.node('chart-store-options').onchange({target:{type:'checkbox',value:'A',checked:true}});await flush();
+ assert.deepEqual(app.renderedModels.at(-1).stores.map(item=>item.id),['A']);
+ app.node('store').value='B';app.update(date);await flush();
+ const model=app.renderedModels.at(-1);
+ assert.notEqual(model.state,'empty');
+ assert.deepEqual(model.stores.map(item=>item.id),['B']);
+ assert.equal(model.kpis.today.value,200);
+ assert.match(app.node('chart-store-options').innerHTML,/value="" checked/);
 });
