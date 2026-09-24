@@ -1,0 +1,13 @@
+'use strict';
+const test=require('node:test'),assert=require('node:assert/strict');
+const {recommend,fromMicros,toMicros}=require('../optimizer-engine.cjs');
+const now='2026-09-24T09:00:00.000Z';
+function row(extra={}){return{sellerPrice:1000,customerPrice:850,unitCost:500,stock:100,priceUpdatedAt:now,currentBidMicros:'10000000',competitiveBidMicros:'20000000',minBidRub:5,stats:{clicks:100,orders:20,expense:150,sales:17000,views:5000},economics:{contributionBeforeAdsPerOrder:250,profitAfterAdsPerOrder:180},campaignState:'CAMPAIGN_STATE_RUNNING',autopilot:'NO_AUTO_STRATEGY',...extra}}
+test('micro ruble conversion',()=>{assert.equal(fromMicros('10000000'),10);assert.equal(toMicros(12.34),'12340000')});
+test('safe first step raises seller price',()=>{const r=recommend(row(),{mode:'recommend',now});assert.equal(r.status,'price_up');assert.equal(r.recommendedPrice,1051)});
+test('successful price step can increase bid',()=>{const last={type:'price_up',at:'2026-09-24T06:00:00.000Z',before:{sellerPrice:952.38,customerPrice:850,stats:{clicks:70,orders:14,expense:100,sales:12000}}};const r=recommend(row(),{mode:'recommend',now,lastAction:last,settings:{minObservationClicks:20}});assert.equal(r.status,'bid_up');assert.ok(r.recommendedBidRub>10&&r.recommendedBidRub<=20.4)});
+test('buyer price rise causes rollback',()=>{const last={type:'price_up',at:'2026-09-24T06:00:00.000Z',before:{sellerPrice:1000,customerPrice:850,stats:{clicks:70,orders:14,expense:100,sales:12000}}};const r=recommend(row({sellerPrice:1050,customerPrice:900}),{mode:'auto',now,lastAction:last,settings:{minObservationClicks:20}});assert.equal(r.status,'rollback');assert.equal(r.action.type,'price_rollback');assert.equal(r.recommendedPrice,996.45)});
+test('auto blocks without buyer price and economics',()=>{const r=recommend(row({customerPrice:null,economics:{}}),{mode:'auto',now});assert.equal(r.status,'blocked')});
+test('low stock blocks actions',()=>{assert.equal(recommend(row({stock:2}),{mode:'recommend',now}).status,'blocked')});
+test('profit floor rolls bid back',()=>{const last={type:'bid_up',at:'2026-09-24T06:00:00.000Z',before:{currentBidMicros:'9000000',stats:{clicks:70,orders:14,expense:100,sales:12000}}};const r=recommend(row({economics:{contributionBeforeAdsPerOrder:80,profitAfterAdsPerOrder:10}}),{mode:'auto',now,lastAction:last,settings:{targetProfitRub:30,minObservationClicks:20}});assert.equal(r.action.type,'bid_rollback');assert.equal(r.recommendedBidRub,9)});
+test('daily ad limit blocks increases',()=>{assert.equal(recommend(row({stats:{clicks:100,orders:20,expense:500,expenseToday:500}}),{mode:'recommend',now,settings:{maxDailyAdSpendRub:400}}).status,'blocked')});
