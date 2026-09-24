@@ -46,7 +46,7 @@ const HANDLER_GROUPS = Object.freeze({
   'price-ads': ['price-ads']
 });
 
-const REQUIRED = Object.freeze(['core', 'owner', 'workspace', ...Object.values(READ_ROUTES).map(([slot]) => `analytics.${slot}`), 'truestats', 'provider-contracts', 'scheduler-runner', 'cadence-producer', 'market-acquisition', 'costs-prices', 'insights-orders', 'insights-funnel', 'wb-orders-acquisition', 'intraday-writer', 'category-writer', 'store-commands', 'insights-api', 'insights-refresh', 'pricing-refresh', 'wb-orders-report', 'order-categories', 'economics-compare', 'impact', 'release-notes', 'finance-documents', 'partner-tools', 'charity-tools', 'price-ads']);
+const REQUIRED = Object.freeze(['core', 'owner', 'workspace', ...Object.values(READ_ROUTES).map(([slot]) => `analytics.${slot}`), 'truestats', 'provider-contracts', 'scheduler-runner', 'cadence-producer', 'market-acquisition', 'costs-prices', 'insights-orders', 'insights-funnel', 'wb-orders-acquisition', 'intraday-writer', 'category-writer', 'store-commands', 'insights-api', 'insights-refresh', 'pricing-refresh', 'wb-orders-report', 'order-categories', 'economics-compare', 'impact', 'release-notes', 'finance-documents', 'partner-tools', 'charity-tools']);
 const object = value => !!value && typeof value === 'object' && !Array.isArray(value);
 const methods = (value, names) => !!value && names.every(name => typeof value[name] === 'function');
 const reply = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(value)); };
