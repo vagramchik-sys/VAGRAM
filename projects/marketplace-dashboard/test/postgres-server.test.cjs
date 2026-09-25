@@ -155,7 +155,7 @@ test('loopback server awaits fresh reads, enforces session/origin, validates sto
   const core = {
     async ready() { events.push('ready'); return { ready: true, missingAdapters: [] }; },
     async publicStores() { calls.push('stores'); return stores; },
-    async publicSnapshot(id) { calls.push(`snapshot:${id}`); return { id, exact: true }; },
+    async publicSnapshot(id) { calls.push(`snapshot:${id}`); return stores.some(store => store.id === id) ? { id, exact: true } : null; },
     async hasStore(id) { calls.push(`has:${id}`); return stores.some(store => store.id === id); }
   };
   let capturedAuthorize;
@@ -184,7 +184,9 @@ test('loopback server awaits fresh reads, enforces session/origin, validates sto
   stores = [{ id: '2', name: 'Fresh' }];
   assert.deepEqual((await request(runtime.origin, '/api/stores', { cookie })).body, stores);
   assert.deepEqual((await request(runtime.origin, '/api/data?id=2', { cookie })).body, { id: '2', exact: true });
+  assert.deepEqual(calls.slice(-1), ['snapshot:2'], 'connected snapshot needs no duplicate store lookup');
   assert.equal((await request(runtime.origin, '/api/data?id=1', { cookie })).status, 404);
+  assert.deepEqual(calls.slice(-2), ['snapshot:1', 'has:1'], 'null snapshot retains the unknown-store check');
   assert.equal((await request(runtime.origin, '/api/market-history/report?store=1', { cookie })).status, 400);
   assert.equal((await request(runtime.origin, '/api/stock-history/export?store=1', { cookie })).status, 400);
   assert.equal((await request(runtime.origin, '/secret.txt', { cookie })).status, 404);

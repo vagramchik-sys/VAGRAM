@@ -93,8 +93,10 @@ async function start({ pool, core, ownerRoutesFactory, otherHandlers = [], handl
             if (!healthy || closing || req.aborted || res.destroyed || res.writableEnded) { unavailable(res); return; }
           }
           if (url.pathname === '/api/data' && req.method === 'GET') {
-            const id = url.searchParams.get('id'); if (!id || !await core.hasStore(id)) { json(res, 404, { error: 'Магазин не подключён' }); return; }
-            json(res, 200, await core.publicSnapshot(id)); return;
+            const id = url.searchParams.get('id'); if (!id) { json(res, 404, { error: 'Магазин не подключён' }); return; }
+            const snapshot = await core.publicSnapshot(id);
+            if (snapshot === null && !await core.hasStore(id)) { json(res, 404, { error: 'Магазин не подключён' }); return; }
+            json(res, 200, snapshot); return;
           }
           if (['/api/market-history/report', '/api/stock-history/report', '/api/stock-history/export'].includes(url.pathname)) {
             const store = url.searchParams.get('store'); if (store && !await core.hasStore(store)) { json(res, 400, { error: 'Проверьте магазин.' }); return; }
