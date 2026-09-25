@@ -11,7 +11,7 @@
  const zoneLabels={leaders:'🔥 B2B-хит',growth:'📈 Быстро растёт',opportunity:'📦 Стабильный B2B',low:'— Розница',LOW_DATA:'Недостаточно данных'};
  function createPultBuyerOrderSegments({api=async url=>{const response=await fetch(url,{headers:{Accept:'application/json'},cache:'no-store'});let value={};try{value=await response.json()}catch{}if(!response.ok)throw Error(value?.error?.message||value?.error||'Не удалось загрузить аналитику.');return value}}={}){
   if(!$('buyer-order-segments'))return {load:async()=>{},destroy(){}};
-  let active=false,destroyed=false,sequence=0,model=null,zone='all',mode='products',sort={key:'score',direction:'desc'},page=1,trendMode='amount',opportunityOnly=false,loadingMore=false,sortNotice='';const pageSize=15,requestSize=200;
+  let active=false,destroyed=false,sequence=0,model=null,zone='all',mode='products',sort={key:'score',direction:'desc'},page=1,trendMode='amount',opportunityOnly=false,loadingMore=false,sortNotice='';const pageSize=15,requestSize=50;
   function scope(){return {from:$('buyer-segment-from').value,to:$('buyer-segment-to').value,market:$('market')?.value||'all',store:$('store')?.value||''}}
   function storeLabel(row){const id=String(row.storeId||''),option=[...($('store')?.options||[])].find(item=>item.value===id);return row.storeName||option?.textContent||id}
   function setHeading(){if(!active)return;const heading=document.querySelector('#overview .page-heading h1');if(heading)heading.textContent='Корпоративный спрос';for(const link of document.querySelectorAll('[data-page-view="buyers"]'))link.textContent='Корпоративный спрос'}

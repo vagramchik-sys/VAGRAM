@@ -17,7 +17,7 @@ test('corporate demand page exposes the complete analytical structure',()=>{
 
 test('UI uses one bounded B2B endpoint and preserves unavailable semantics',()=>{
  assert.match(js,/\/api\/b2b-radar\?/);assert.doesNotMatch(js,/\/api\/buyer-(?:order|product)-segments/);
- assert.match(js,/requestSize=200/);assert.match(js,/limit:String\(requestSize\)/);assert.match(js,/b2bAmountRub/);
+ assert.match(js,/requestSize=50/);assert.match(js,/limit:String\(requestSize\)/);assert.match(js,/b2bAmountRub/);
  assert.match(js,/slice\(0,200\)/);assert.match(js,/status\(value\)!==['"]unavailable['"]/);
  assert.match(js,/scoreStatus!=='LOW_DATA'/);assert.match(js,/Это не гарантированный прогноз/);
  assert.doesNotMatch(js,/mock|fixture|Math\.random/i);
