@@ -7,6 +7,23 @@ const {decodeMetadata} = require('./postgres-live-codecs.cjs');
 
 const STORE = /^(?:wb-)?[0-9]+$/u;
 const SUMMARY_OPERATION_FIELDS = Object.freeze(['operation_type_name','operation_type','sellerOperName','docTypeName','currency','amount','date','rrDate','saleDt']);
+const SUMMARY_DAY = /^\d{4}-\d{2}-\d{2}$/u;
+const OPERATION_SUMMARY_SQL = `WITH base AS (
+  SELECT source_order,
+    COALESCE(NULLIF(value->>'operation_type_name',''),NULLIF(value->>'operation_type',''),NULLIF(value->>'sellerOperName',''),NULLIF(value->>'docTypeName',''),'Прочее') AS name,
+    COALESCE(NULLIF(value#>>'{total_amount,currency}',''),NULLIF(value->>'currency',''),'RUB') AS currency,
+    CASE
+      WHEN NOT value ? 'amount' OR value->'amount'='null'::jsonb OR value->'amount'='false'::jsonb OR jsonb_typeof(value->'amount')='string' AND btrim(value->>'amount')='' THEN 0::double precision
+      WHEN value->'amount'='true'::jsonb THEN 100::double precision
+      WHEN jsonb_typeof(value->'amount')='number' OR jsonb_typeof(value->'amount')='string' AND btrim(value->>'amount')~'^[+-]?(?:[0-9]+(?:\\.[0-9]*)?|\\.[0-9]+)(?:[eE][+-]?[0-9]+)?$' THEN floor((value->>'amount')::double precision*100+0.5)
+      ELSE NULL::double precision
+    END AS cents,
+    left(COALESCE(NULLIF(value->>'date',''),NULLIF(value->>'rrDate',''),NULLIF(value->>'saleDt',''),''),10) AS day
+  FROM pult_live.facts WHERE store_id=$1 AND domain='market' AND entity_type='operations'
+)
+SELECT CASE WHEN GROUPING(name)=0 THEN 'group' WHEN GROUPING(day)=0 THEN 'day' ELSE 'total' END AS kind,
+  name,day,currency,sum(cents) AS cents,count(*)::text AS records,min(source_order) AS first_order,bool_and(cents IS NOT NULL) AS safe
+FROM base GROUP BY GROUPING SETS ((name,currency),(day,currency),())`;
 
 class LiveMarketError extends Error {
   constructor(code, message) { super(message); this.name = 'LiveMarketError'; this.code = code; }
@@ -63,11 +80,19 @@ function createLiveMarketRepository({liveSources,pool=null} = {}) {
       const head=(await client.query("SELECT revision,metadata,entity_counts FROM pult_live.heads WHERE store_id=$1 AND domain='market'",[storeId])).rows[0];
       if(!head){await client.query('COMMIT');open=false;return null}
       const value=decodeMetadata(pathFor(storeId),head.metadata),collections=await client.query("SELECT entity_type,value FROM pult_live.facts WHERE store_id=$1 AND domain='market' AND entity_type=ANY($2::text[]) ORDER BY source_order,entity_type,entity_key,occurrence",[storeId,['products','stocks']]);
-      const operationFields=SUMMARY_OPERATION_FIELDS.map(key=>`CASE WHEN value ? '${key}' THEN jsonb_build_object('${key}',value->'${key}') ELSE '{}'::jsonb END`).join(' || ');
-      const operations=await client.query(`SELECT (${operationFields} || CASE WHEN NOT value ? 'total_amount' THEN '{}'::jsonb WHEN jsonb_typeof(value->'total_amount')='object' THEN jsonb_build_object('total_amount',CASE WHEN value->'total_amount' ? 'currency' THEN jsonb_build_object('currency',value->'total_amount'->'currency') ELSE '{}'::jsonb END) ELSE jsonb_build_object('total_amount',value->'total_amount') END) AS value FROM pult_live.facts WHERE store_id=$1 AND domain='market' AND entity_type='operations' ORDER BY source_order,entity_key,occurrence`,[storeId]);
+      let operations=await client.query(OPERATION_SUMMARY_SQL,[storeId]),operationSummary=null;
+      const total=operations.rows.find(row=>row.kind==='total'),operationCount=Number(total?.records);
+      if(total?.safe===true&&Number.isSafeInteger(operationCount)&&operationCount>=0){
+        const groups=operations.rows.filter(row=>row.kind==='group').sort((a,b)=>Number(a.first_order)-Number(b.first_order));
+        const daily=operations.rows.filter(row=>row.kind==='day'&&SUMMARY_DAY.test(row.day)).sort((a,b)=>a.day.localeCompare(b.day)||Number(a.first_order)-Number(b.first_order));
+        operationSummary={operationCount,operations:groups.map(row=>({operation_type_name:row.name,currency:row.currency,record_count:Number(row.records),amount:Number(row.cents)/100})),daily:daily.map(row=>({date:row.day,currency:row.currency,records:Number(row.records),amount:Number(row.cents)/100}))};
+      }else{
+        const operationFields=SUMMARY_OPERATION_FIELDS.map(key=>`CASE WHEN value ? '${key}' THEN jsonb_build_object('${key}',value->'${key}') ELSE '{}'::jsonb END`).join(' || ');
+        operations=await client.query(`SELECT (${operationFields} || CASE WHEN NOT value ? 'total_amount' THEN '{}'::jsonb WHEN jsonb_typeof(value->'total_amount')='object' THEN jsonb_build_object('total_amount',CASE WHEN value->'total_amount' ? 'currency' THEN jsonb_build_object('currency',value->'total_amount'->'currency') ELSE '{}'::jsonb END) AS value FROM pult_live.facts WHERE store_id=$1 AND domain='market' AND entity_type='operations' ORDER BY source_order,entity_key,occurrence`,[storeId]);
+      }
       const grouped={products:[],stocks:[]};for(const row of collections.rows)grouped[row.entity_type].push(row.value);
       for(const name of ['products','stocks']){const count=Number(head.entity_counts?.[name]??0);if(!Number.isSafeInteger(count)||count!==grouped[name].length)fail('DATA_INTEGRITY','Live market row count differs from its head');if(Object.hasOwn(value,name))value[name]=grouped[name]}
-      const operationCount=Number(head.entity_counts?.operations??0);if(!Number.isSafeInteger(operationCount)||operationCount!==operations.rows.length)fail('DATA_INTEGRITY','Live finance row count differs from its head');if(Object.hasOwn(value,'operations'))value.operations=operations.rows.map(row=>row.value);
+      const expectedOperations=Number(head.entity_counts?.operations??0),actualOperations=operationSummary?.operationCount??operations.rows.length;if(!Number.isSafeInteger(expectedOperations)||expectedOperations!==actualOperations)fail('DATA_INTEGRITY','Live finance row count differs from its head');if(Object.hasOwn(value,'operations')){if(operationSummary){delete value.operations;value.operationSummary=operationSummary}else value.operations=operations.rows.map(row=>row.value)}
       await client.query('COMMIT');open=false;return value;
     }catch(error){if(open)try{await client.query('ROLLBACK')}catch{}if(error instanceof LiveMarketError||error?.code==='INVALID_ENCODED'||error?.code==='METADATA_TOO_LARGE')throw error;fail('DATABASE_ERROR','Live market summary is unavailable')}finally{try{client?.release()}catch{}}
   }
@@ -120,4 +145,4 @@ function createLiveMarketWriter({liveSources} = {}) {
   return Object.freeze({publish, readCommand});
 }
 
-module.exports = {createLiveMarketRepository, createLiveMarketWriter, LiveMarketError, SUMMARY_OPERATION_FIELDS};
+module.exports = {createLiveMarketRepository, createLiveMarketWriter, LiveMarketError, SUMMARY_OPERATION_FIELDS, OPERATION_SUMMARY_SQL};

@@ -9,6 +9,14 @@ test('WB records never become a fictitious financial total',()=>{
  const s=summarize({market:'WB',financeAmountKnown:false,operations:[{sellerOperName:'Продажа',forPay:'100',rrDate:'2026-09-01'}],products:[]},null);
  assert.equal(s.financeAmountKnown,false);assert.equal(s.operationCount,1);assert.equal(s.daily.length,0);
 });
+test('pre-aggregated finance summary is passed through without raw operations',()=>{
+ const raw={store:'S',clientId:'1',financeAmountKnown:true,operationSummary:{operationCount:2,operations:[{operation_type_name:'Sale',currency:'RUB',amount:3,record_count:2}],daily:[{date:'2026-09-22',currency:'RUB',amount:3,records:2}]}};
+ const value=summarize(raw,null,null);assert.equal(value.operationCount,2);assert.deepEqual(value.operations,raw.operationSummary.operations);assert.deepEqual(value.daily,raw.operationSummary.daily);
+});
+test('pre-aggregated WB finance with unknown amounts does not expose fictitious money',()=>{
+ const raw={market:'WB',financeAmountKnown:false,operationSummary:{operationCount:2,operations:[{operation_type_name:'Sale',currency:'RUB',amount:300,record_count:2}],daily:[{date:'2026-09-22',currency:'RUB',amount:300,records:2}]}};
+ const value=summarize(raw,null,null);assert.equal(value.operationCount,2);assert.deepEqual(value.operations,[{operation_type_name:'Sale',currency:'RUB',amount:0,record_count:2}]);assert.deepEqual(value.daily,[]);
+});
 test('missing stock is distinct from zero and cost filter excludes unmatched WB',()=>{
  const stores=[{id:'1',name:'Ozon'},{id:'wb-1',name:'WB'}],snapshots=new Map([
  ['1',{sections:{stocks:{ok:true}},products:[{product_id:1,name:'A',cost:{status:'zero'}},{product_id:2,name:'B',cost:{status:'filled',unitCost:20}}],stocks:[{product_id:1,stocks:[{present:0}]}]}],

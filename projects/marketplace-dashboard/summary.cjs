@@ -1,7 +1,8 @@
 function summarize(raw, costs, prices) {
   const groups = new Map(), days = new Map();
   const knownAmounts = raw.financeAmountKnown !== false;
-  for (const operation of raw.operations || []) {
+  const prepared = raw.operationSummary;
+  for (const operation of prepared ? [] : raw.operations || []) {
     const name = operation.operation_type_name || operation.operation_type || operation.sellerOperName || operation.docTypeName || 'Прочее';
     const currency = operation.total_amount?.currency || operation.currency || 'RUB';
     const amount = knownAmounts ? Math.round(Number(operation.amount || 0) * 100) : 0;
@@ -22,9 +23,9 @@ function summarize(raw, costs, prices) {
     store: raw.store, clientId: raw.clientId, market: raw.market || 'Ozon',
     completedAt: raw.completedAt, startedAt: raw.startedAt, period: raw.period,
     sections: raw.sections, financeAmountKnown: knownAmounts,
-    operationCount: (raw.operations || []).length,
-    operations: [...groups.values()].map(({ cents, ...g }) => ({ ...g, amount: cents / 100 })),
-    daily: [...days.values()].map(({ cents, ...d }) => ({ ...d, amount: cents / 100 })).sort((a,b) => a.date.localeCompare(b.date)),
+    operationCount: prepared ? prepared.operationCount : (raw.operations || []).length,
+    operations: prepared ? (knownAmounts ? prepared.operations : prepared.operations.map(group => ({ ...group, amount: 0 }))) : [...groups.values()].map(({ cents, ...g }) => ({ ...g, amount: cents / 100 })),
+    daily: prepared ? (knownAmounts ? prepared.daily : []) : [...days.values()].map(({ cents, ...d }) => ({ ...d, amount: cents / 100 })).sort((a,b) => a.date.localeCompare(b.date)),
     costSummary: costs ? {
       source: costs.source, importedAt: costs.importedAt, total: costs.items.length,
       filled: costs.items.filter(p => p.status === 'filled').length,
