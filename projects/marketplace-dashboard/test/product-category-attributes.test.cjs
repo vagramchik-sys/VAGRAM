@@ -62,6 +62,35 @@ test('film, tape, mesh, tarp and bag measurements require explicit units',()=>{
  assert.deepEqual(tape.size,{id:'size-50-mmx25-m',name:'50 мм × 25 м',evidence:'Характеристика «Ширина»: 50 мм; Характеристика «Длина рулона»: 25 м'});
 });
 
+test('tape and film dimensions support mixed units and independent title measurements',()=>{
+ assert.deepEqual(attributes({name:'Скотч упаковочный 48 мм х 180 м'}).size,{id:'size-48-mmx180-m',name:'48 мм × 180 м',evidence:'Название: Скотч упаковочный 48 мм х 180 м'});
+ assert.equal(attributes({title:'Лента 48мм 180м'}).size.id,'size-48-mmx180-m');
+ assert.equal(attributes({title:'Плёнка, длина 180 м, ширина 48 мм'}).size.id,'size-48-mmx180-m');
+ assert.deepEqual(attributes({name:'Скотч 180м, 6 шт.'}).size,{id:'size-180-m',name:'180 м',evidence:'Название: Скотч 180м, 6 шт.'});
+});
+
+test('explicit dimension conflicts fail closed without fabricating dimensions',()=>{
+ const conflict=attributes({name:'Скотч 48 мм х 180 м',characteristics:[{name:'Ширина',values:['50 мм']},{name:'Длина',values:['180 м']}]});
+ assert.equal(conflict.size,null);
+ const noDimensions=attributes({name:'Плёнка 50 мкм, плотность 120 г/м², 6 шт.'});
+ assert.equal(noDimensions.size,null);assert.equal(noDimensions.density.id,'density-120-g-m2');assert.equal(noDimensions.pack.id,'pack-6-pieces');
+ assert.deepEqual(attributes({title:'Скотч 180 м'}).size,{id:'size-180-m',name:'180 м',evidence:'Название: Скотч 180 м'});
+});
+
+test('a compatible article length keeps the complete tape dimensions',()=>{
+ const tape=attributes({name:'Скотч прозрачный широкий упаковочный 48 мм х 120 м, 43 мкм, 36 шт',offer_id:'Скотч_NOVAROLL_120м_36шт'});
+ assert.deepEqual(tape.size,{id:'size-48-mmx120-mx43-mkm',name:'48 мм × 120 м × 43 мкм',evidence:'Название: Скотч прозрачный широкий упаковочный 48 мм х 120 м, 43 мкм, 36 шт'});
+ assert.equal(attributes({name:'Скотч 48 мм х 120 м',offer_id:'Скотч_NOVAROLL_150м'}).size,null);
+ const same=attributes({name:'Лента 48 мм х 120 мм',characteristics:[{name:'Ширина',values:['48 мм']},{name:'Длина',values:['120 мм']}]});
+ assert.notEqual(same.size,null);
+});
+
+test('explicit tape thickness is a separate compatible dimension',()=>{
+ const tape=attributes({name:'Лента клейкая 48 мм х 120 м х 43 мкм (1 шт) прозрачная, канцелярская NovaRoll',offer_id:'Скотч_NOVAROLL_120м_1шт'});
+ assert.deepEqual(tape.size,{id:'size-48-mmx120-mx43-mkm',name:'48 мм × 120 м × 43 мкм',evidence:'Название: Лента клейкая 48 мм х 120 м х 43 мкм (1 шт) прозрачная, канцелярская NovaRoll'});
+ assert.equal(attributes({name:'Лента 48 мм х 120 м х 43 мкм',characteristics:[{name:'Толщина',values:['50 мкм']}]}).size,null);
+});
+
 test('unknown characteristic names, opaque IDs and photos do not create facets',()=>{
  const value=attributes({name:'Саморезы универсальные',offer_id:'SKU_12345',categoryId:77,photo:'black.jpg',characteristics:[{id:999,name:'Модель',values:['Black 120']} ]});
  assert.deepEqual(value,{color:null,material:null,coating:null,size:null,density:null,pack:null});

@@ -6,6 +6,7 @@ const fs = require('node:fs/promises');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { refine, mergeCottonPvcGloveColors } = require('../product-category-refinement.cjs');
+const { rebuild } = require('../product-category-rebuild.cjs');
 const { validate } = require('../product-type-registry.cjs');
 const { createApplicationPool } = require('../storage/postgres-connection.cjs');
 const { createStateStore } = require('../storage/postgres-state.cjs');
@@ -16,8 +17,8 @@ const { createLiveSources } = require('../storage/postgres-live-sources.cjs');
 const { createLiveSourceProviders } = require('../storage/postgres-live-source-providers.cjs');
 
 function options(args) {
-  if (!Array.isArray(args) || new Set(args).size !== args.length || args.some(arg => !['--apply','--merge-cotton-pvc-colors'].includes(arg))) throw Error('Use [--merge-cotton-pvc-colors] [--apply]');
-  return { apply: args.includes('--apply'), mergeColors: args.includes('--merge-cotton-pvc-colors') };
+  if (!Array.isArray(args) || new Set(args).size !== args.length || args.some(arg => !['--apply','--merge-cotton-pvc-colors','--rebuild-product-pack'].includes(arg)) || args.includes('--merge-cotton-pvc-colors') && args.includes('--rebuild-product-pack')) throw Error('Use [--merge-cotton-pvc-colors | --rebuild-product-pack] [--apply]');
+  return { apply: args.includes('--apply'), mergeColors: args.includes('--merge-cotton-pvc-colors'), ...(args.includes('--rebuild-product-pack') ? { rebuild: true } : {}) };
 }
 async function run(args = process.argv.slice(2)) {
   const command = options(args);
@@ -36,13 +37,13 @@ async function run(args = process.argv.slice(2)) {
       const sources = createLiveSources({ repository: createPostgresLiveRepository({ pool }) });
       const catalogs = await createLiveSourceProviders({ sources }).getCatalogs();
       const products = catalogs.flatMap(catalog => catalog.products.map(product => ({ ...product, key: catalog.storeId + ':' + (product.product_id ?? product.nmID) })));
-      result = refine(before.value, products);
+      result = command.rebuild ? rebuild(before.value, products) : refine(before.value, products);
       const byId = new Map(result.registry.types.map(type => [type.id, type]));
       const typePath = id => { const names = []; for (let type = byId.get(id); type; type = byId.get(type.parentId)) names.unshift(type.name); return names; };
       const depths = {};
       for (const product of products) { const assignment = result.registry.assignments[product.key]; const level = assignment ? typePath(assignment.typeId).length : 0; depths[level] = (depths[level] || 0) + 1; }
-      report = { mode: command.apply ? 'apply' : 'preview', operation: 'full-refinement', changed: result.changed, revision: result.registry.revision, products: products.length, refinedAssignments: result.changes.length, newlyClassified: result.assignedNew.length, addedTypes: result.addedTypes.length, productsByDepth: depths,
-        examples: [...new Map(products.filter(product => /саморез|перчатк/iu.test(product.name || '')).map(product => { const assignment = result.registry.assignments[product.key]; return [assignment?.typeId, assignment ? typePath(assignment.typeId) : null]; })).values()].filter(Boolean).slice(0, 30) };
+      report = { mode: command.apply ? 'apply' : 'preview', operation: command.rebuild ? 'product-before-pack' : 'full-refinement', changed: result.changed, revision: result.registry.revision, products: products.length, refinedAssignments: result.changes.length, newlyClassified: result.assignedNew?.length || 0, addedTypes: result.addedTypes.length, productsByDepth: depths,
+        examples: [...new Map(products.filter(product => /саморез|перчатк|скотч/iu.test(product.name || '')).map(product => { const assignment = result.registry.assignments[product.key]; return [assignment?.typeId, assignment ? typePath(assignment.typeId) : null]; })).values()].filter(Boolean).slice(0, 30) };
     }
     if (command.apply && result.changed) {
       const backupDirectory = path.join(root, '.private/taxonomy-backups'); await fs.mkdir(backupDirectory, { recursive: true });

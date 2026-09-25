@@ -93,11 +93,20 @@ function material(text,{named=false}={}){
  return hit(text,found[0]);
 }
 const decimal=value=>String(value).replace(',', '.').replace(/\.0+$/u,'');
+const LINEAR_UNIT={мкм:'mkm',мм:'mm',см:'cm',м:'m'},SIZE_PARTS=new WeakMap();
+function rememberSize(value,parts){SIZE_PARTS.set(value,parts.map(part=>({value:decimal(part.value),unit:part.unit})));return value}
+const linearSize=(parts,evidence)=>{const normalizedParts=parts.map(part=>({value:decimal(part.value),unit:part.unit})),name=normalizedParts.map(part=>part.value+' '+part.unit).join(' × '),id='size-'+normalizedParts.map(part=>part.value+'-'+LINEAR_UNIT[part.unit]).join('x');return rememberSize({id:slug(id),name,evidence},normalizedParts)};
 function size(text,{named=false}={}){
  let match=text.value.match(/(?:^|[^0-9])([0-9]+(?:[.,][0-9]+)?)\s*[xх×]\s*([0-9]+(?:[.,][0-9]+)?)(?:\s*[xх×]\s*([0-9]+(?:[.,][0-9]+)?))?\s*(мм|см|м)(?=$|[^а-я])/u);
- if(match){const values=[match[1],match[2],match[3]].filter(Boolean).map(decimal),unit={мм:'mm',см:'cm',м:'m'}[match[4]],name=values.join('×')+' '+match[4];return {id:slug('size-'+values.join('x')+'-'+unit),name,evidence:text.evidence}}
+ if(match){const values=[match[1],match[2],match[3]].filter(Boolean).map(decimal),unit={мм:'mm',см:'cm',м:'m'}[match[4]],name=values.join('×')+' '+match[4];return rememberSize({id:slug('size-'+values.join('x')+'-'+unit),name,evidence:text.evidence},values.map(value=>({value,unit:match[4]})))}
+ const axes=new Map();for(const axisMatch of text.value.matchAll(/(ширин\p{L}*|длин\p{L}*|высот\p{L}*|толщин\p{L}*)\s*[:=-]?\s*([0-9]+(?:[.,][0-9]+)?)\s*(мкм|мм|см|м)(?![a-zа-я0-9²³])/gu)){const axis=/^ширин/u.test(axisMatch[1])?'width':/^длин/u.test(axisMatch[1])?'length':/^высот/u.test(axisMatch[1])?'height':'thickness',part={value:axisMatch[2],unit:axisMatch[3]};if(axes.has(axis)&&(decimal(axes.get(axis).value)!==decimal(part.value)||axes.get(axis).unit!==part.unit))return null;axes.set(axis,part)}
+ if(axes.size)return linearSize(['width','length','height','thickness'].map(axis=>axes.get(axis)).filter(Boolean),text.evidence);
+ match=text.value.match(/(?:^|[^0-9])([0-9]+(?:[.,][0-9]+)?)\s*(мм|см|м)(?![a-zа-я0-9²³])(?:\s*[xх×]\s*|\s+)([0-9]+(?:[.,][0-9]+)?)\s*(мм|см|м)(?![a-zа-я0-9²³])(?:(?:\s*[xх×,]\s*|\s+)([0-9]+(?:[.,][0-9]+)?)\s*(мкм|мм|см|м)(?![a-zа-я0-9²³]))?/u);
+ if(match)return linearSize([{value:match[1],unit:match[2]},{value:match[3],unit:match[4]},match[5]&&{value:match[5],unit:match[6]}].filter(Boolean),text.evidence);
  match=text.value.match(/(?:объем\p{L}*\s*)?([0-9]+(?:[.,][0-9]+)?)\s*(л|литр\p{L}*)(?=$|[^а-я])/u);
  if(match){const value=decimal(match[1]);return {id:slug('volume-'+value+'-l'),name:value+' л',evidence:text.evidence}}
+ match=text.value.match(/(?:^|[^0-9])([0-9]+(?:[.,][0-9]+)?)\s*(мм|см|м)(?![a-zа-я0-9²³])/u);
+ if(match)return linearSize([{value:match[1],unit:match[2]}],text.evidence);
  match=text.value.match(/размер\p{L}*\s*[:=-]?\s*(xxl|xl|[sml]|[0-9]{1,3})(?=$|[^a-zа-я0-9])/u);
  if(!match&&named)match=text.value.match(/^\s*(xxl|xl|[sml]|[0-9]{1,3})\s*$/u);
  if(!match)return null;const value=match[1].toUpperCase();return {id:slug('size-'+value),name:value,evidence:text.evidence};
@@ -115,8 +124,8 @@ function characteristicFacet(name){
  return null;
 }
 function characteristicSources(product){
- const out=[],dimensions=[];for(const row of Array.isArray(product?.characteristics)?product.characteristics:[]){if(!row||typeof row!=='object')continue;const name=normalized(row.name),facet=characteristicFacet(name);if(!facet)continue;const raw=Array.isArray(row.values)?row.values:[row.value];for(const value of raw){const original=clean(value?.value??value?.name??value);if(!original)continue;const source={facet,value:normalized(original),evidence:'Характеристика «'+clean(row.name)+'»: '+original,named:true,characteristicName:name};const axis=facet==='size'&&(/ширин/u.test(name)?'width':/длин/u.test(name)?'length':/высот/u.test(name)?'height':null);if(axis)dimensions.push({...source,axis});else out.push(source)}}
- if(dimensions.length){const axes=new Map();for(const source of dimensions){const match=source.value.match(/^\s*([0-9]+(?:[.,][0-9]+)?)\s*(мм|см|м)\s*$/u);if(match&&!axes.has(source.axis))axes.set(source.axis,{value:decimal(match[1]),unit:match[2],evidence:source.evidence})}const ordered=['width','length','height'].map(axis=>axes.get(axis)).filter(Boolean);if(ordered.length){const sameUnit=ordered.every(item=>item.unit===ordered[0].unit),parts=ordered.map(item=>item.value),name=sameUnit?parts.join('×')+' '+ordered[0].unit:ordered.map(item=>item.value+' '+item.unit).join(' × '),units={мм:'mm',см:'cm',м:'m'},id=sameUnit?'size-'+parts.join('x')+'-'+units[ordered[0].unit]:'size-'+ordered.map(item=>item.value+'-'+units[item.unit]).join('x');out.push({facet:'size',value:'',evidence:ordered.map(item=>item.evidence).join('; '),named:true,direct:{id:slug(id),name,evidence:ordered.map(item=>item.evidence).join('; ')}})}}
+ const out=[],dimensions=[];for(const row of Array.isArray(product?.characteristics)?product.characteristics:[]){if(!row||typeof row!=='object')continue;const name=normalized(row.name),facet=characteristicFacet(name);if(!facet)continue;const raw=Array.isArray(row.values)?row.values:[row.value];for(const value of raw){const original=clean(value?.value??value?.name??value);if(!original)continue;const source={facet,value:normalized(original),evidence:'Характеристика «'+clean(row.name)+'»: '+original,named:true,characteristicName:name};const axis=facet==='size'&&(/ширин/u.test(name)?'width':/длин/u.test(name)?'length':/высот/u.test(name)?'height':/толщин/u.test(name)?'thickness':null);if(axis)dimensions.push({...source,axis});else out.push(source)}}
+ if(dimensions.length){const axes=new Map();for(const source of dimensions){const match=source.value.match(/^\s*([0-9]+(?:[.,][0-9]+)?)\s*(мкм|мм|см|м)\s*$/u);if(match&&!axes.has(source.axis))axes.set(source.axis,{value:decimal(match[1]),unit:match[2],evidence:source.evidence})}const ordered=['width','length','height','thickness'].map(axis=>axes.get(axis)).filter(Boolean);if(ordered.length){const sameUnit=ordered.every(item=>item.unit===ordered[0].unit),parts=ordered.map(item=>item.value),name=sameUnit?parts.join('×')+' '+ordered[0].unit:ordered.map(item=>item.value+' '+item.unit).join(' × '),units={мкм:'mkm',мм:'mm',см:'cm',м:'m'},id=sameUnit?'size-'+parts.join('x')+'-'+units[ordered[0].unit]:'size-'+ordered.map(item=>item.value+'-'+units[item.unit]).join('x'),evidence=ordered.map(item=>item.evidence).join('; '),direct=rememberSize({id:slug(id),name,evidence},ordered);out.push({facet:'size',value:'',evidence,named:true,direct})}}
  return out;
 }
 function textSources(product){
@@ -135,10 +144,11 @@ function extract(facet,text){
  return null;
 }
 function resolve(values){const byId=new Map();for(const value of values)if(value&&!byId.has(value.id))byId.set(value.id,value);return byId.size===1?[...byId.values()][0]:null}
+function resolveSize(values){const byId=new Map();for(const value of values)if(value&&!byId.has(value.id))byId.set(value.id,value);if(byId.size<=1)return byId.size?[...byId.values()][0]:null;const candidates=[...byId.values()].sort((a,b)=>(SIZE_PARTS.get(b)?.length||0)-(SIZE_PARTS.get(a)?.length||0)),contains=(whole,part)=>{const available=whole.map(item=>item.value+'\0'+item.unit);for(const item of part){const index=available.indexOf(item.value+'\0'+item.unit);if(index<0)return false;available.splice(index,1)}return true};for(const candidate of candidates){const whole=SIZE_PARTS.get(candidate);if(whole&&candidates.every(other=>{const parts=SIZE_PARTS.get(other);return parts&&contains(whole,parts)}))return candidate}return null}
 function attributes(product){
  const result=empty(),named=characteristicSources(product),texts=textSources(product);
  const coatingIds=new Set();for(const source of named)if(source.facet==='coating'){const value=extract('coating',source);if(value)coatingIds.add(value.id)}for(const source of texts){const value=extract('coating',source);if(value)coatingIds.add(value.id)}
- for(const facet of FACETS){const candidates=[];for(const source of named)if(source.facet===facet)candidates.push(extract(facet,source));for(const source of texts){const value=extract(facet,source),coveredMaterial=facet==='material'&&value&&['latex','nitrile','pvc'].includes(value.id)&&coatingIds.has(value.id);candidates.push(coveredMaterial?null:value)}result[facet]=resolve(candidates)}
+ for(const facet of FACETS){const candidates=[];for(const source of named)if(source.facet===facet)candidates.push(extract(facet,source));for(const source of texts){const value=extract(facet,source),coveredMaterial=facet==='material'&&value&&['latex','nitrile','pvc'].includes(value.id)&&coatingIds.has(value.id);candidates.push(coveredMaterial?null:value)}result[facet]=facet==='size'?resolveSize(candidates):resolve(candidates)}
  return result;
 }
 
