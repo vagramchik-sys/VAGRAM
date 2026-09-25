@@ -44,14 +44,34 @@ UNION ALL SELECT 'wb-interval',store_id,'wb-orders',jsonb_build_object(
  'from',to_char(to_timestamp(bucket) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS".000Z"'),
  'orderedUnits',units,'orderedRevenue',revenue,'firstAt',first_at,'lastAt',last_at) FROM wb`;
 
+const TARGET_SQL = `SELECT business_day::text,scope_type,scope_id,amount_cents::text,currency,time_zone,updated_at
+ FROM pult_live.daily_sales_targets
+ WHERE business_day=$1::date AND scope_type=$2 AND scope_id=$3`;
+
 function createBusinessDynamicsRepository({pool}={}) {
  if(typeof pool?.query!=='function')throw new TypeError('SQL read pool is required');
+ const validDate=d=>typeof d==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d))&&new Date(d).toISOString().slice(0,10)===d;
  return Object.freeze({async read({storeIds,from,to}) {
   if(!Array.isArray(storeIds)||storeIds.length>100||storeIds.some(id=>typeof id!=='string'||!/^(?:wb-)?[0-9]+$/.test(id))||new Set(storeIds).size!==storeIds.length)throw new TypeError('Invalid store scope');
-  const validDate=d=>typeof d==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d))&&new Date(d).toISOString().slice(0,10)===d;
   if(!validDate(from)||!validDate(to)||Date.parse(to)-Date.parse(from)!==28*86400000)throw new TypeError('Expected a bounded 29-day window');
   if(!storeIds.length)return [];
   return (await pool.query(SQL,[storeIds,from,to])).rows;
+ },async readTarget({date,scopeType,scopeId}) {
+  const validScope=scopeType==='all'&&scopeId===''||scopeType==='marketplace'&&['Ozon','WB'].includes(scopeId)||scopeType==='store'&&typeof scopeId==='string'&&/^(?:wb-)?[0-9]+$/.test(scopeId);
+  if(!validDate(date)||!validScope)throw new TypeError('Invalid sales target scope');
+  let rows;
+  try { rows=(await pool.query(TARGET_SQL,[date,scopeType,scopeId])).rows; }
+  catch(error) {
+   // The additive target migration may be applied after the web code rolls out.
+   // An absent plan must not make the sales dashboard unavailable.
+   if(error?.code==='42P01')return null;
+   throw error;
+  }
+  if(rows.length!==1)return null;
+  const row=rows[0],amount=Number(row.amount_cents),updated=Date.parse(row.updated_at);
+  if(!Number.isSafeInteger(amount)||amount<0||row.currency!=='RUB'||row.time_zone!=='Europe/Moscow'||!Number.isFinite(updated))throw new TypeError('Invalid sales target row');
+  const scope=scopeType==='all'?{type:'all'}:scopeType==='marketplace'?{type:'marketplace',marketplace:scopeId}:{type:'store',storeId:scopeId};
+  return {date:row.business_day,scope,amountCents:amount,currency:'RUB',timeZone:'Europe/Moscow',updatedAt:new Date(updated).toISOString()};
  }});
 }
-module.exports={createBusinessDynamicsRepository,SQL};
+module.exports={createBusinessDynamicsRepository,SQL,TARGET_SQL};

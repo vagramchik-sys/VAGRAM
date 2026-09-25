@@ -99,7 +99,8 @@ $('ins-export').onclick=()=>{const cell=v=>{let s=String(v??'');if(/^\s*[=+@-]/.
 $('ins-management-load').onclick=()=>void loadManagementSummary();
 window.addEventListener('pult:home-refresh',()=>void load());
 const insightsRoutes=new Set(['overview','business-chart','executive','management-summary','focus-priorities','ins-products-panel','economics','sales-decline','attention']);
-function loadForHash(){const hash=currentHash();if(hash!=='management-summary')cancelManagement();if(hash==='wb-economics'){wbView.render({current:{from:$('ins-from').value,to:$('ins-to').value}});return}if(!insightsRoutes.has(hash))return;if(hash==='management-summary'){void load('orders');void loadManagementSummary();return}void load(fullHashes.has(hash)?'full':'orders')}
-window.addEventListener('hashchange',loadForHash);window.addEventListener('pult:view-change',loadForHash);loadForHash();setInterval(()=>{if(!document.hidden&&!busy&&insightsRoutes.has(currentHash())&&!wantsFullReport())void load('orders')},30000);
+let businessChartVisited=false;
+function loadForHash(){const hash=currentHash();if(hash!=='management-summary')cancelManagement();if(hash==='business-chart'&&!businessChartVisited){businessChartVisited=true;$('ins-range').value='today';setRange()}if(hash==='wb-economics'){wbView.render({current:{from:$('ins-from').value,to:$('ins-to').value}});return}if(!insightsRoutes.has(hash))return;if(hash==='management-summary'){void load('orders');void loadManagementSummary();return}void load(fullHashes.has(hash)?'full':'orders')}
+window.addEventListener('hashchange',loadForHash);window.addEventListener('pult:view-change',loadForHash);loadForHash();setInterval(()=>{const hash=currentHash();if(!document.hidden&&!busy&&hash!=='business-chart'&&insightsRoutes.has(hash)&&!wantsFullReport())void load('orders')},30000);setInterval(()=>{if(!document.hidden&&!busy&&currentHash()==='business-chart'&&!wantsFullReport())void load('orders')},300000);
 document.addEventListener('visibilitychange',()=>{if(document.hidden)cancelManagement()});
 })();

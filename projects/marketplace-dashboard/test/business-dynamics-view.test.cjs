@@ -24,6 +24,7 @@ class FakeNode {
   setAttribute(name, value) { this.attributes.set(name, String(value)); }
   removeAttribute(name) { this.attributes.delete(name); }
   closest() { return null; }
+  focus() { this.focused = true; }
   replaceChildren() { this.innerHTML = ''; this.textContent = ''; }
 }
 
@@ -48,6 +49,9 @@ function harness(now = Date.parse('2026-09-24T12:40:00+03:00')) {
       const focus = new FakeNode('focus'); focus.setAttribute('hidden', '');
       const freshness = new FakeNode('freshness'), freshnessText = new FakeNode('freshness-text');
       freshness.querySelector = selector => selector === 'span' ? freshnessText : null;
+      const qualityPanel = new FakeNode('quality-panel'), qualityScrim = new FakeNode('quality-scrim'), qualityBadge = new FakeNode('quality-badge'), qualityClose = new FakeNode('quality-close');
+      qualityPanel.hidden = true; qualityScrim.hidden = true;
+      qualityPanel.querySelector = selector => selector === '[data-quality-close]' ? qualityClose : null;
       if (chart) {
         const attr = name => html.match(new RegExp('data-' + name + '="([^"]+)"'))?.[1];
         chart.dataset.activeIndex = attr('active-index') || '0';
@@ -60,9 +64,12 @@ function harness(now = Date.parse('2026-09-24T12:40:00+03:00')) {
       points.remove = () => {};
       root.querySelector = selector => ({
         '.bd-chart': chart, '.bd-tooltip': tooltip, '.bd-detail': detail,
-        '.bd-points': html.includes('bd-points') ? points : null, '.bd-freshness': freshness
+        '.bd-points': html.includes('bd-points') ? points : null, '.bd-freshness': freshness,
+        '.bd-quality-panel': html.includes('bd-quality-panel') ? qualityPanel : null,
+        '.bd-quality-scrim': html.includes('bd-quality-scrim') ? qualityScrim : null,
+        '[data-quality-open]': html.includes('data-quality-open') ? qualityBadge : null
       })[selector] || null;
-      root.parts = { chart, tooltip, detail, cursor, focus, freshness, freshnessText };
+      root.parts = { chart, tooltip, detail, cursor, focus, freshness, freshnessText, qualityPanel, qualityScrim, qualityBadge };
     }
   });
   host.querySelector = selector => selector === '.business-dynamics' ? root : selector === '.bd-retry' ? retry : null;
@@ -70,7 +77,7 @@ function harness(now = Date.parse('2026-09-24T12:40:00+03:00')) {
   host.dispatchEvent = event => { host.dispatched = event; return true; };
   const context = {
     window: {}, Intl, Date: Clock, Number, String, Math, JSON, Map, WeakMap, TypeError,
-    CustomEvent: class { constructor(type, options) { this.type = type; this.bubbles = options?.bubbles; } },
+    CustomEvent: class { constructor(type, options) { this.type = type; this.bubbles = options?.bubbles; this.detail = options?.detail; } },
     setInterval(fn) { const id = nextTimer++; timers.set(id, fn); return id; },
     clearInterval(id) { cleared.push(id); timers.delete(id); }
   };
@@ -103,7 +110,7 @@ function group(html, className) {
   return html.match(new RegExp('<g class="[^"]*' + className + '[^"]*">([\\s\\S]*?)</g>'))?.[1] || '';
 }
 
-test('uses asOf for facts, updatedAt for freshness, and scales a no-forecast chart to the known slice', () => {
+test('uses asOf for facts, updatedAt for freshness, and keeps the full 24-hour comparison axis', () => {
   const view = harness(Date.parse('2026-09-24T10:10:00+03:00'));
   const data = model({
     asOf: '2026-09-24T09:00:00+03:00',
@@ -112,8 +119,8 @@ test('uses asOf for facts, updatedAt for freshness, and scales a no-forecast cha
   });
   view.api.render(view.host, data);
   assert.doesNotMatch(view.html, />999</);
-  assert.match(view.root.parts.freshnessText.textContent, /Данные устарели · 7 мин/);
-  assert.equal(view.root.parts.chart.dataset.domain, '540');
+  assert.match(view.root.parts.freshnessText.textContent, /Актуально · 10:03 МСК · 7 мин/);
+  assert.equal(view.root.parts.chart.dataset.domain, '1440');
 });
 
 test('draws all cumulative histories as STEP, keeps incomplete known facts, and breaks only on null', () => {
@@ -248,4 +255,65 @@ test('first and last tooltip stay inside narrow and desktop charts on focus, hov
    chart.emit('click',{clientX});fits();assert.equal(detail.hidden,false);
   }
  }
+});
+
+test('executive screen puts factual KPIs first, adds plan line and keeps warnings in a drawer', () => {
+  const view = harness();
+  const data = model({
+    notices: ['Ozon: время заказа неизвестно'],
+    executive: {
+      today: 20, yesterdaySameTime: 18, changePct: 11.1, last15m: null, last60m: null,
+      previousHourChange: null, target: 40, targetCompletion: 75, remaining: 20,
+      requiredHourly: 2, forecastConfidence: 'medium', marketplaces: [{ market: 'Ozon', share: 100 }],
+      stores: [{ id: '1', name: 'Тестовый магазин', market: 'Ozon', value: 20, share: 100, changePct: -5, velocity: null }],
+      dataQuality: { score: 72, issues: [{ code: 'missing_time', message: 'Время заказов неизвестно' }], byMarket: { Ozon: { score: 72 } } },
+      insights: [{ id: 'change', message: 'Продажи выше вчера на 11,1%.' }]
+    }
+  });
+  view.api.render(view.host, data);
+  assert.match(view.html, /ПУЛЬТ ПРОДАЖ/);
+  assert.match(view.html, /Заказано на сумму/);
+  assert.match(view.html, /Вчера к этому времени/);
+  assert.match(view.html, /План дня/);
+  assert.match(view.html, /Выполнение прогноза/);
+  assert.match(view.html, /bd-chart__line--plan/);
+  assert.match(view.html, /Качество данных 72% · 1 ограничение/);
+  assert.match(view.html, /bd-quality-panel[^>]*hidden/);
+  assert.doesNotMatch(view.html, /<details class="bd-notices"/);
+  assert.match(view.html, /15-минутная детализация всех выбранных магазинов недоступна/);
+  assert.match(view.html, /Тестовый магазин/);
+  assert.match(view.html, /Продажи выше вчера на 11,1%/);
+});
+
+test('executive drawer, refresh and store drill-down work without losing keyboard close', () => {
+  const view = harness();
+  view.api.render(view.host, model({ executive: {
+    today: 20, marketplaces: [], stores: [], dataQuality: { score: 80, issues: [], byMarket: {} }, insights: []
+  } }));
+  const target = selector => ({ closest: query => query === selector ? { dataset: { storeId: 'wb-1' } } : null });
+  view.root.emit('click', { target: target('[data-quality-open]') });
+  assert.equal(view.root.parts.qualityPanel.hidden, false);
+  view.root.emit('keydown', { target: view.root, key: 'Escape' });
+  assert.equal(view.root.parts.qualityPanel.hidden, true);
+  view.root.emit('click', { target: target('[data-bd-refresh]') });
+  assert.equal(view.host.dispatched.type, 'business-dynamics:refresh');
+  view.root.emit('click', { target: target('[data-store-id]') });
+  assert.equal(view.host.dispatched.type, 'business-dynamics:store');
+  assert.equal(view.host.dispatched.detail.storeId, 'wb-1');
+});
+
+test('executive missing values and stale data remain explicit', () => {
+  const view = harness(Date.parse('2026-09-24T12:40:00+03:00'));
+  const data = model({
+    state: 'empty', updatedAt: '2026-09-24T10:40:00+03:00',
+    kpis: { today: { value: null }, forecast: { value: null, available: false } },
+    executive: { today: null, yesterdaySameTime: null, changePct: null, last60m: null,
+      target: null, targetCompletion: null, marketplaces: [], stores: [],
+      dataQuality: { score: 30, issues: [], byMarket: {} }, insights: [] }
+  });
+  view.api.render(view.host, data);
+  assert.match(view.html, /План не задан/);
+  assert.match(view.html, /Прогноз пока недоступен/);
+  assert.doesNotMatch(view.html, /0[^<]*₽/);
+  assert.match(view.root.parts.freshnessText.textContent, /Данные устарели · 10:40 МСК · 120 мин/);
 });

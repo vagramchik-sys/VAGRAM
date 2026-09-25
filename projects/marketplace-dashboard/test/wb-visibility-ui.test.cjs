@@ -191,6 +191,8 @@ test('today business chart bypasses the legacy insights request on initial load 
   assert.equal(app.storeChartUpdates[0].report.current.from, app.storeChartUpdates[0].report.current.to);
   app.intervals[0]();
   assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 0);
+  assert.equal(app.storeChartUpdates.length, 1);
+  app.intervals[1]();
   assert.equal(app.storeChartUpdates.length, 2);
 });
 
@@ -240,7 +242,8 @@ test('business chart uses the orders scope while an explicit economics route loa
   assert.equal(queryEconomics.fetches.length, 1);
   assert.doesNotMatch(queryEconomics.fetches[0], /scope=orders/);
   assert.match(ui, /else void load\('orders'\)/);
-  assert.match(ui, /insightsRoutes\.has\(currentHash\(\)\)&&!wantsFullReport\(\)/);
+  assert.match(ui, /hash!=='business-chart'&&insightsRoutes\.has\(hash\)&&!wantsFullReport\(\)/);
+  assert.match(ui, /currentHash\(\)==='business-chart'&&!wantsFullReport\(\)\)void load\('orders'\)\},300000\)/);
   assert.doesNotMatch(ui, /wbView\.render\(report\);focusView\.render\(report\);economicsView\.render\(report\);declineView\.render\(report\)/);
 });
 

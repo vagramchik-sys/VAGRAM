@@ -2,6 +2,20 @@
 
 // Native live records. No complete source document, snapshot identifier or generation
 // belongs here. A transaction replaces explicit partitions and appends row events.
+const DAILY_SALES_TARGET_SQL = String.raw`CREATE TABLE IF NOT EXISTS pult_live.daily_sales_targets (
+ business_day date NOT NULL,
+ scope_type text COLLATE "C" NOT NULL CHECK(scope_type IN ('all','marketplace','store')),
+ scope_id text COLLATE "C" NOT NULL,
+ amount_cents bigint NOT NULL CHECK(amount_cents>=0 AND amount_cents<=9007199254740991),
+ currency text NOT NULL DEFAULT 'RUB' CHECK(currency='RUB'),
+ time_zone text NOT NULL DEFAULT 'Europe/Moscow' CHECK(time_zone='Europe/Moscow'),
+ updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+ PRIMARY KEY(business_day,scope_type,scope_id),
+ CHECK((scope_type='all' AND scope_id='') OR
+       (scope_type='marketplace' AND scope_id IN ('Ozon','WB')) OR
+       (scope_type='store' AND scope_id ~ '^(wb-)?[0-9]+$'))
+);`;
+
 const LIVE_SCHEMA_SQL = String.raw`
 CREATE SCHEMA IF NOT EXISTS pult_live;
 CREATE TABLE IF NOT EXISTS pult_live.heads (
@@ -30,6 +44,7 @@ CREATE INDEX IF NOT EXISTS live_facts_order_idx ON pult_live.facts(store_id,doma
 -- Per-collection readers filter entity_type and page by source order. Keep the
 -- equality columns first so pagination does not sort complete JSONB records.
 CREATE INDEX IF NOT EXISTS live_facts_entity_order_idx ON pult_live.facts(store_id,domain,entity_type,source_order,entity_key,occurrence);
+${DAILY_SALES_TARGET_SQL}
 -- Transaction-local working rows in an ordinary table: the runtime needs no
 -- CREATE TEMP privilege. Publishers delete them before commit; rollback removes
 -- every inserted working row automatically. No source document is stored here.
@@ -82,6 +97,14 @@ REVOKE ALL ON SCHEMA pult_live FROM PUBLIC;
 REVOKE ALL ON ALL TABLES IN SCHEMA pult_live FROM PUBLIC;
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA pult_live FROM PUBLIC;
 REVOKE ALL ON FUNCTION pult_live.reject_event_mutation() FROM PUBLIC;
+DO $body$ BEGIN
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='pult_app') THEN
+  EXECUTE 'GRANT SELECT ON pult_live.daily_sales_targets TO pult_app';
+ END IF;
+ IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='pult_importer') THEN
+  EXECUTE 'GRANT SELECT,INSERT,UPDATE,DELETE ON pult_live.daily_sales_targets TO pult_importer';
+ END IF;
+END; $body$;
 `;
 
 async function ensurePostgresLiveSchema(queryable) {
@@ -89,4 +112,4 @@ async function ensurePostgresLiveSchema(queryable) {
   await queryable.query(LIVE_SCHEMA_SQL);
 }
 
-module.exports = { LIVE_SCHEMA_SQL, ensurePostgresLiveSchema };
+module.exports = { LIVE_SCHEMA_SQL, DAILY_SALES_TARGET_SQL, ensurePostgresLiveSchema };

@@ -15,6 +15,12 @@ const code = expected => error => error instanceof LiveRepositoryError && error.
 
 test('native schema contains individual facts, bounded heads and immutable row journal', () => {
   assert.match(LIVE_SCHEMA_SQL, /CREATE TABLE IF NOT EXISTS pult_live\.facts/u);
+  assert.match(LIVE_SCHEMA_SQL, /CREATE TABLE IF NOT EXISTS pult_live\.daily_sales_targets/u);
+  assert.match(LIVE_SCHEMA_SQL, /PRIMARY KEY\(business_day,scope_type,scope_id\)/u);
+  assert.match(LIVE_SCHEMA_SQL, /amount_cents bigint NOT NULL CHECK\(amount_cents>=0/u);
+  assert.match(LIVE_SCHEMA_SQL, /time_zone text NOT NULL DEFAULT 'Europe\/Moscow'/u);
+  assert.match(LIVE_SCHEMA_SQL, /GRANT SELECT ON pult_live\.daily_sales_targets TO pult_app/u);
+  assert.match(LIVE_SCHEMA_SQL, /GRANT SELECT,INSERT,UPDATE,DELETE ON pult_live\.daily_sales_targets TO pult_importer/u);
   assert.match(LIVE_SCHEMA_SQL, /business_day date/u);
   assert.match(LIVE_SCHEMA_SQL, /BEFORE UPDATE OR DELETE ON pult_live\.commands/u);
   assert.match(LIVE_SCHEMA_SQL, /BEFORE UPDATE OR DELETE ON pult_live\.record_journal/u);

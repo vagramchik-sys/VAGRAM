@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createBusinessDynamics}=require('../storage/domains/postgres-business-dynamics.cjs');
-const {createBusinessDynamicsRepository,SQL}=require('../storage/postgres-business-dynamics-repository.cjs');
+const {createBusinessDynamicsRepository,SQL,TARGET_SQL}=require('../storage/postgres-business-dynamics-repository.cjs');
 const {point}=require('../intraday.cjs');
 const NOW=Date.parse('2026-09-24T09:07:00Z'),DATE='2026-09-24';
 const stores={'1':{name:'Первый',market:'Ozon'},'2':{name:'Второй'},'wb-1':{name:'Третий',market:'WB'}};
@@ -9,7 +9,7 @@ const head=(store_id,domain,value)=>({kind:'head',store_id,domain,value});
 const daily=(date,revenue,units)=>({kind:'daily',store_id:'1',value:{date,revenue,units}});
 const ozonHead=(extra={})=>head('1','insights',{orders:{period:{from:'2026-08-27',to:DATE},todayDate:DATE,updatedAt:'2026-09-24T09:05:00Z',historyUpdatedAt:'2026-09-24T08:30:00Z',...extra},orderSection:{ok:true}});
 const observed=(date,at,revenue=100,complete=false)=>({kind:'observation',store_id:'1',value:{date,at,source:'orders',values:{orderedRevenue:Math.round(revenue*100),orderedUnits:2},...(complete?{complete:true,coverage:{from:new Date(date+'T00:00:00+03:00').toISOString(),to:at}}:{})}});
-function fixture(rows=[],clock=NOW){const calls=[];const service=createBusinessDynamics({repository:{async read(args){calls.push(args);return rows}},storesRepository:{async read(){return stores}},now:()=>clock});return {service,calls};}
+function fixture(rows=[],clock=NOW,targets=new Map()){const calls=[],targetCalls=[];const service=createBusinessDynamics({repository:{async read(args){calls.push(args);return rows},async readTarget(args){targetCalls.push(args);return targets.get(`${args.date}:${args.scopeType}:${args.scopeId}`)||null}},storesRepository:{async read(){return stores}},now:()=>clock});return {service,calls,targetCalls};}
 const getDay=(result,id='1',date=DATE)=>result.stores.find(s=>s.id===id).days.find(d=>d.date===date);
 
 test('one bounded bulk read covers Moscow today and exactly 28 preceding dates, even at UTC midnight boundary',async()=>{
@@ -82,12 +82,37 @@ test('scope validation rejects bad dates and stores before SQL and never silentl
  assert.equal(f.calls.length,0);const result=await f.service.read({storeId:'wb-1',market:'WB'});assert.deepEqual(f.calls[0].storeIds,['wb-1']);assert.equal(result.stores.length,1);
 });
 
+test('sales target is returned only for the exact requested all, marketplace or store scope',async()=>{
+ const all={date:DATE,scope:{type:'all'},amountCents:12345,currency:'RUB',timeZone:'Europe/Moscow',updatedAt:'2026-09-24T08:00:00.000Z'};
+ const targets=new Map([[`${DATE}:all:`,all],[`${DATE}:marketplace:WB`,{...all,scope:{type:'marketplace',marketplace:'WB'},amountCents:20000}],[`${DATE}:store:wb-1`,{...all,scope:{type:'store',storeId:'wb-1'},amountCents:30000}]]);
+ let f=fixture([],NOW,targets),result=await f.service.read();assert.deepEqual(result.target,all);assert.deepEqual(f.targetCalls,[{date:DATE,scopeType:'all',scopeId:''}]);
+ f=fixture([],NOW,targets);result=await f.service.read({market:'WB'});assert.equal(result.target.amountCents,20000);assert.deepEqual(f.targetCalls[0],{date:DATE,scopeType:'marketplace',scopeId:'WB'});
+ f=fixture([],NOW,targets);result=await f.service.read({storeId:'wb-1',market:'WB'});assert.equal(result.target.amountCents,30000);assert.deepEqual(f.targetCalls[0],{date:DATE,scopeType:'store',scopeId:'wb-1'});
+ f=fixture([],NOW,targets);result=await f.service.read({market:'Ozon'});assert.equal(result.target,null);assert.deepEqual(f.targetCalls[0],{date:DATE,scopeType:'marketplace',scopeId:'Ozon'});
+});
+
 test('repository makes one parameterized bounded statement independent of store count, without historical event scans',async()=>{
  const calls=[],repository=createBusinessDynamicsRepository({pool:{async query(sql,params){calls.push({sql,params});return {rows:[]}}}});
  await repository.read({storeIds:['1','2','wb-1'],from:'2026-08-27',to:DATE});assert.equal(calls.length,1);assert.deepEqual(calls[0].params,[['1','2','wb-1'],'2026-08-27',DATE]);
  assert.match(SQL,/store_id=ANY\(\$1::text\[\]\)/);assert.match(SQL,/business_day BETWEEN \$2::date AND \$3::date/);assert.match(SQL,/entity_type='orders.daily'/);assert.match(SQL,/entity_type='points'/);assert.match(SQL,/entity_type='orders'/);assert.match(SQL,/floor\(extract\(epoch/);assert.doesNotMatch(SQL,/pult_history|record_journal|SELECT \*/i);
  for(const args of [{storeIds:['1'],from:'2020-01-01',to:DATE},{storeIds:['1','1'],from:'2026-08-27',to:DATE}])await assert.rejects(repository.read(args));assert.equal(calls.length,1);
  await repository.read({storeIds:[],from:'2026-08-27',to:DATE});assert.equal(calls.length,1);
+});
+
+test('repository reads one exact indexed sales target and preserves integer cents',async()=>{
+ const calls=[],pool={async query(sql,params){calls.push({sql,params});return {rows:[{business_day:DATE,scope_type:'marketplace',scope_id:'WB',amount_cents:'12345',currency:'RUB',time_zone:'Europe/Moscow',updated_at:'2026-09-24T08:00:00Z'}]}}},repository=createBusinessDynamicsRepository({pool});
+ assert.deepEqual(await repository.readTarget({date:DATE,scopeType:'marketplace',scopeId:'WB'}),{date:DATE,scope:{type:'marketplace',marketplace:'WB'},amountCents:12345,currency:'RUB',timeZone:'Europe/Moscow',updatedAt:'2026-09-24T08:00:00.000Z'});
+ assert.equal(calls.length,1);assert.equal(calls[0].sql,TARGET_SQL);assert.deepEqual(calls[0].params,[DATE,'marketplace','WB']);assert.match(TARGET_SQL,/WHERE business_day=\$1::date AND scope_type=\$2 AND scope_id=\$3/u);
+ for(const args of [{date:'2026-02-30',scopeType:'all',scopeId:''},{date:DATE,scopeType:'marketplace',scopeId:'all'},{date:DATE,scopeType:'store',scopeId:'bad'}])await assert.rejects(repository.readTarget(args));
+ assert.equal(calls.length,1);
+});
+
+test('missing optional target table leaves dashboard available, other SQL failures surface',async()=>{
+ const argumentsForTarget={date:DATE,scopeType:'all',scopeId:''};
+ const missing=createBusinessDynamicsRepository({pool:{async query(){throw Object.assign(new Error('table missing'),{code:'42P01'});}}});
+ assert.equal(await missing.readTarget(argumentsForTarget),null);
+ const unavailable=createBusinessDynamicsRepository({pool:{async query(){throw Object.assign(new Error('database unavailable'),{code:'08006'});}}});
+ await assert.rejects(unavailable.readTarget(argumentsForTarget),{code:'08006'});
 });
 
 test('new capture records explicit coverage, but missing or duplicate day rows never certify it',()=>{

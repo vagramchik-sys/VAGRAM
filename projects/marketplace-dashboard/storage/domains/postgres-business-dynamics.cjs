@@ -75,7 +75,7 @@ function wbDays(days,head,rows,now) {
 }
 
 function createBusinessDynamics({repository,storesRepository,now=()=>Date.now()}={}) {
- if(typeof repository?.read!=='function'||typeof storesRepository?.read!=='function')throw new TypeError('Business dynamics SQL dependencies are required');
+ if(typeof repository?.read!=='function'||typeof repository?.readTarget!=='function'||typeof storesRepository?.read!=='function')throw new TypeError('Business dynamics SQL dependencies are required');
  async function read({date,storeId,market='all'}={}) {
   const instant=Number(new Date(now()));if(!Number.isFinite(instant))throw Error('Invalid clock');
   const target=date||moscowDay(instant);
@@ -85,7 +85,8 @@ function createBusinessDynamics({repository,storesRepository,now=()=>Date.now()}
   const stores=Object.entries(directory).map(([id,s])=>({id,name:s.name,market:s.market==='WB'?'WB':'Ozon'})).filter(s=>(!storeId||s.id===storeId)&&(market==='all'||s.market===market));
   if(storeId&&!stores.length)throw new DynamicsError('Магазин не относится к выбранному маркетплейсу.');
   const dates=Array.from({length:29},(_,i)=>moscowDay(start(target)-(28-i)*DAY)),period={from:dates[0],to:target};
-  const result=await repository.read({storeIds:stores.map(s=>s.id),...period}),byStore=new Map();
+  const targetScope=storeId?{scopeType:'store',scopeId:storeId}:market==='all'?{scopeType:'all',scopeId:''}:{scopeType:'marketplace',scopeId:market};
+  const [result,salesTarget]=await Promise.all([repository.read({storeIds:stores.map(s=>s.id),...period}),repository.readTarget({date:target,...targetScope})]),byStore=new Map();
   for(const row of result){if(!byStore.has(row.store_id))byStore.set(row.store_id,[]);byStore.get(row.store_id).push(row);}
   for(const store of stores) {
    const rows=byStore.get(store.id)||[],domain=store.market==='WB'?'wb-orders':'insights',head=rows.find(r=>r.kind==='head'&&r.domain===domain)?.value;
@@ -99,7 +100,7 @@ function createBusinessDynamics({repository,storesRepository,now=()=>Date.now()}
     store.sources.push({id:'intraday',basis:'observation',updatedAt:last});
    }
   }
-  return {version:1,timeZone:'Europe/Moscow',currency:'RUB',intervalMinutes:15,period,generatedAt:iso(instant),events:[],stores};
+  return {version:1,timeZone:'Europe/Moscow',currency:'RUB',intervalMinutes:15,period,generatedAt:iso(instant),target:salesTarget,events:[],stores};
  }
  return Object.freeze({read});
 }

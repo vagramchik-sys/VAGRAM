@@ -20,6 +20,7 @@
     if (!finite(value)) return '—';
     if (unit === 'rub') return integer.format(value) + '\u00a0₽';
     if (unit === 'percent') return (value > 0 ? '+' : '') + number.format(value) + '%';
+    if (unit === 'share') return number.format(value) + '%';
     if (unit === 'orders') return integer.format(value) + '\u00a0заказов';
     if (unit === 'units') return integer.format(value) + '\u00a0шт.';
     return number.format(value);
@@ -154,14 +155,16 @@
       return asOf == null || entry.timestamp == null || entry.timestamp >= asOf;
     });
     var all = today.concat(yesterday, avg, forecast);
+    var target = metric.unit === 'rub' && finite(model.executive && model.executive.target) ? model.executive.target : null;
     var values = all.filter(function (entry) { return finite(entry.point.cumulative); }).map(function (entry) { return entry.point.cumulative; });
+    if (finite(target)) values.push(target);
     var min = Math.min.apply(Math, values.concat([0])), max = Math.max.apply(Math, values.concat([0]));
     if (min === max) max = min + 1;
-    var left = 62, top = 18, width = 910, height = 238, bottom = top + height;
+    var left = 62, top = 24, width = 910, height = 340, bottom = top + height;
     var finiteForecast = forecast.some(function (entry) { return finite(entry.point.cumulative); });
     var asOfMinute = chartMinute(model.asOf, model);
     var latestFactMinute = today.reduce(function (value, entry) { return finite(entry.point.cumulative) ? Math.max(value, entry.minute) : value; }, 0);
-    var domain = finiteForecast ? 1440 : clamp(Math.max(asOfMinute || 0, latestFactMinute, 1), 1, 1440);
+    var domain = 1440;
     var x = function (minute) { return left + clamp(minute, 0, domain) / domain * width; };
     var y = function (value) { return bottom - (value - min) / (max - min) * height; };
     function path(entries, step) {
@@ -188,6 +191,7 @@
         String(Math.floor(minute / 60)).padStart(2, '0') + ':' + String(minute % 60).padStart(2, '0') + '</text>';
     }).join('');
     var forecastBand = finiteForecast && asOfMinute != null ? '<rect class="bd-chart__forecast-band" x="' + x(asOfMinute) + '" y="' + top + '" width="' + Math.max(0, left + width - x(asOfMinute)) + '" height="' + height + '"><title>' + escapeHtml(model.forecastLabel || 'Прогноз до 24:00') + '</title></rect><text class="bd-chart__forecast-label" x="' + (x(asOfMinute) + 10) + '" y="' + (top + 16) + '">Прогноз</text>' : '';
+    var planLine = finite(target) ? '<g class="bd-chart__line bd-chart__line--plan"><path d="M ' + left + ' ' + y(target).toFixed(2) + ' H ' + (left + width) + '"></path><text x="' + (left + width - 4) + '" y="' + (y(target) - 7).toFixed(2) + '" text-anchor="end">План ' + escapeHtml(compact(target)) + '</text></g>' : '';
     var eventMarkers = list(model.events).map(function (event, index) { return { event: event, index: index }; }).filter(function (entry) {
       var timestamp = dateValue(entry.event && entry.event.at);
       return timestamp != null && (asOf == null || timestamp <= asOf);
@@ -201,8 +205,9 @@
     }).join('');
     var incompleteNote = today.some(function (entry) { return finite(entry.point.cumulative) && entry.point.complete === false; }) ? '<p class="bd-chart__coverage">Известные значения · покрытие неполное</p>' : '';
     var historyNote = model.historyAvailable === false ? '<p class="bd-chart__history">Среднее за 7 дней пока недоступно.</p>' : '';
-    return incompleteNote + '<div class="bd-chart-wrap"><svg class="bd-chart" viewBox="0 0 1000 304" role="img" tabindex="0" data-active-index="0" data-min="' + min + '" data-max="' + max + '" data-domain="' + domain + '" aria-label="Динамика ' + escapeHtml(metric.label || 'показателя') + ' в течение дня. Используйте стрелки для просмотра точек.">' +
+    return incompleteNote + '<div class="bd-chart-wrap"><svg class="bd-chart" viewBox="0 0 1000 430" role="img" tabindex="0" data-active-index="0" data-min="' + min + '" data-max="' + max + '" data-domain="' + domain + '" data-plot-top="' + top + '" data-plot-height="' + height + '" aria-label="Динамика ' + escapeHtml(metric.label || 'показателя') + ' в течение дня. Используйте стрелки для просмотра точек.">' +
       forecastBand + '<g class="bd-chart__grid">' + grid + hours + '</g>' +
+      planLine +
       '<g class="bd-chart__line bd-chart__line--yesterday">' + path(yesterday, true) + '</g>' +
       '<g class="bd-chart__line bd-chart__line--average">' + path(avg, true) + '</g>' +
       '<g class="bd-chart__line bd-chart__line--forecast">' + path(forecast, false) + '</g>' +
@@ -239,6 +244,95 @@
     }).join('');
   }
 
+  function executiveKpisMarkup(model, currentDay) {
+    var data = model.executive || {}, forecast = model.kpis && model.kpis.forecast || {};
+    var confidence = { high: 'высокая', medium: 'средняя', low: 'низкая' }[data.forecastConfidence] || 'не определена';
+    var rows = [
+      [currentDay ? 'Вчера к этому времени' : 'Предыдущий день к этому времени', data.yesterdaySameTime, 'rub', 'Одинаковый момент МСК'],
+      ['Изменение', data.changePct, 'percent', finite(data.changePct) ? 'К вчера на тот же момент' : 'Нет сопоставимого среза'],
+      ['Темп · 60 минут', data.last60m, 'rub', finite(data.last60m) ? 'Подтверждённые заказы за час' : 'Нет точного времени всех заказов'],
+      ['Прогноз дня', forecast.available === false ? null : forecast.value, 'rub', forecast.available ? 'Профиль ' + (forecast.sampleSize || 0) + ' дней · уверенность ' + confidence : 'Прогноз пока недоступен'],
+      ['План дня', data.target, 'rub', finite(data.target) ? 'Установленная цель продаж' : 'План не задан'],
+      ['Выполнение прогноза', data.targetCompletion, 'share', finite(data.targetCompletion) ? 'Прогноз / план' : 'Нужны план и прогноз']
+    ];
+    return rows.map(function (row) {
+      return '<article class="bd-kpi' + (finite(row[1]) ? '' : ' is-unavailable') + '"><span>' + escapeHtml(row[0]) + '</span><strong>' + escapeHtml(formatValue(row[1], row[2])) + '</strong><small>' + escapeHtml(row[3]) + '</small></article>';
+    }).join('');
+  }
+
+  function qualityMarkup(model) {
+    var quality = model.executive && model.executive.dataQuality || {};
+    var issues = list(quality.issues);
+    if (!issues.length) issues = list(model.notices);
+    var score = finite(quality.score) ? clamp(Math.round(quality.score), 0, 100) : null;
+    var label = score === null ? 'Качество данных' : 'Качество данных ' + score + '%';
+    var issueWord = issues.length % 10 === 1 && issues.length % 100 !== 11 ? 'ограничение' : issues.length % 10 >= 2 && issues.length % 10 <= 4 && (issues.length % 100 < 12 || issues.length % 100 > 14) ? 'ограничения' : 'ограничений';
+    var details = issues.map(function (issue) {
+      var message = typeof issue === 'string' ? issue : issue && (issue.message || issue.label || issue.reason) || 'Ограничение данных';
+      return '<li>' + escapeHtml(message) + '</li>';
+    }).join('');
+    var markets = quality.byMarket || {};
+    var marketRows = ['Ozon', 'WB'].map(function (market) {
+      var value = markets[market] && typeof markets[market] === 'object' ? markets[market].score : markets[market];
+      return finite(value) ? '<span>' + market + ' <b>' + escapeHtml(Math.round(value)) + '%</b></span>' : '';
+    }).join('');
+    return '<button type="button" class="bd-quality-badge" data-quality-open aria-haspopup="dialog">' + escapeHtml(label) + (issues.length ? ' · ' + issues.length + ' ' + issueWord : '') + '</button>' +
+      '<div class="bd-quality-scrim" data-quality-close hidden></div>' +
+      '<aside class="bd-quality-panel" role="dialog" aria-modal="true" aria-labelledby="bd-quality-title" hidden><div class="bd-quality-panel__head"><div><small>Проверка источников</small><h3 id="bd-quality-title">Качество данных</h3></div><button type="button" data-quality-close aria-label="Закрыть панель">×</button></div>' +
+      '<strong class="bd-quality-panel__score">' + (score === null ? '—' : score + '%') + '</strong><div class="bd-quality-panel__markets">' + marketRows + '</div>' +
+      '<h4>Ограничения</h4><ul>' + (details || '<li>Подтверждённых ограничений нет.</li>') + '</ul></aside>';
+  }
+
+  function liveMarkup(model) {
+    var data = model.executive || {}, market = list(data.marketplaces);
+    function share(key) { return market.find(function (row) { return row.market === key; })?.share ?? null; }
+    var rows = [
+      ['Последние 60 минут', data.last60m, 'rub'],
+      ['Последние 3 часа', data.last3h, 'rub'],
+      ['К предыдущему часу', data.previousHourChange, 'percent'],
+      ['Ozon · доля', share('Ozon'), 'share'],
+      ['WB · доля', share('WB'), 'share'],
+      ['До плана', data.remaining, 'rub'],
+      ['Нужный темп / час', data.requiredHourly, 'rub']
+    ];
+    var fifteen = finite(data.last15m) ? '<div class="bd-live__highlight"><span>Последние 15 минут</span><strong>' + escapeHtml(formatValue(data.last15m, 'rub')) + '</strong></div>' : '<p class="bd-live__note">15-минутная детализация всех выбранных магазинов недоступна.</p>';
+    return '<section class="bd-live" aria-label="Сейчас"><div class="bd-section-title"><h3>Сейчас</h3><span>По подтверждённым данным</span></div>' + fifteen +
+      '<dl>' + rows.map(function (row) { return '<div><dt>' + escapeHtml(row[0]) + '</dt><dd>' + escapeHtml(formatValue(row[1], row[2])) + '</dd></div>'; }).join('') + '</dl></section>';
+  }
+
+  function contributionMarkup(model, metric) {
+    var data = model.executive || {}, stores = list(data.stores).length ? data.stores : list(model.stores);
+    if (!stores.length) return '<section class="bd-contribution"><div class="bd-section-title"><h3>Вклад магазинов</h3></div><p class="bd-empty-note">Нет подтверждённых данных по магазинам.</p></section>';
+    return '<section class="bd-contribution" aria-label="Вклад магазинов"><div class="bd-section-title"><div><h3>Вклад магазинов</h3><p>Выберите магазин для подробного просмотра</p></div></div>' +
+      '<div class="bd-contribution__scroll"><table><thead><tr><th>Магазин</th><th>Сегодня</th><th>Доля</th><th>К вчера</th><th>Темп · 60 мин</th></tr></thead><tbody>' + stores.slice(0, 40).map(function (store) {
+        var delta = finite(store.changePct) ? store.changePct : null;
+        var direction = delta === null ? '—' : delta > 0 ? '↑' : delta < 0 ? '↓' : '→';
+        var sourceNote = store.staggered || store.complete === false ? '<small>Известная часть' + (store.asOf ? ' · ' + escapeHtml(formatTime(store.asOf, model.timezone)) + ' МСК' : '') + '</small>' : '';
+        return '<tr><th><button type="button" data-store-id="' + escapeHtml(store.id) + '"><i class="bd-store__market bd-store__market--' + escapeHtml(String(store.market || '').toLowerCase()) + '">' + escapeHtml(store.market || '—') + '</i><span>' + escapeHtml(store.name || 'Магазин') + '</span></button></th><td>' + escapeHtml(formatValue(store.value, metric.unit)) + sourceNote + '</td><td>' + escapeHtml(formatValue(store.share, 'share')) + '</td><td class="' + (delta > 0 ? 'is-up' : delta < 0 ? 'is-down' : '') + '">' + direction + ' ' + escapeHtml(formatValue(delta, 'percent')) + '</td><td>' + escapeHtml(formatValue(store.velocity, metric.unit)) + '</td></tr>';
+      }).join('') + '</tbody></table></div></section>';
+  }
+
+  function insightsMarkup(model) {
+    var rows = list(model.executive && model.executive.insights);
+    if (!rows.length) return '';
+    return '<section class="bd-insights" aria-label="Что изменилось"><div class="bd-section-title"><h3>Что изменилось</h3><span>По правилам, без предположений</span></div><ul>' + rows.slice(0, 4).map(function (item) {
+      var message = typeof item === 'string' ? item : item && (item.message || item.text) || '';
+      return '<li>' + escapeHtml(message) + '</li>';
+    }).join('') + '</ul></section>';
+  }
+
+  function executiveMarkup(model, metric, partial, periodLabel) {
+    var data = model.executive || {}, today = finite(data.today) ? data.today : model.kpis && model.kpis.today && model.kpis.today.value;
+    var delta = data.changePct;
+    var subtitle = model.kpis && model.kpis.today && model.kpis.today.subtitle || '';
+    return '<section class="business-dynamics bd-executive' + (partial ? ' is-partial' : '') + '" data-updated-at="' + escapeHtml(model.updatedAt || '') + '">' +
+      '<header class="bd-head"><div class="bd-head__main"><span class="bd-eyebrow">ПУЛЬТ ПРОДАЖ · ' + escapeHtml(periodLabel) + '</span><h2>Заказано на сумму</h2><div class="bd-hero-value">' + escapeHtml(formatValue(today, metric.unit)) + '</div><p>' + escapeHtml(subtitle || 'По подтверждённым данным') + (finite(delta) ? ' <b class="' + (delta < 0 ? 'is-down' : 'is-up') + '">' + escapeHtml(formatValue(delta, 'percent')) + ' к вчера</b>' : '') + '</p></div>' +
+      '<div class="bd-head__status"><div class="bd-freshness" role="status"><i></i><span>Проверяем свежесть…</span></div><button type="button" class="bd-refresh" data-bd-refresh aria-label="Обновить данные">↻ Обновить</button>' + qualityMarkup(model) + '</div></header>' +
+      '<div class="bd-kpis bd-kpis--executive">' + executiveKpisMarkup(model, model.date === dateKey(Date.now(), model.timezone)) + '</div>' +
+      '<section class="bd-main"><div class="bd-main__chart"><div class="bd-section-title"><div><h3>Продажи в течение дня</h3><p>' + escapeHtml(model.chartCaption || 'Накопительный итог · МСК') + '</p></div><div class="bd-legend"><span class="is-today">Сегодня</span><span class="is-yesterday">Вчера</span><span class="is-average">Среднее 7 дней</span><span class="is-forecast">Прогноз</span>' + (finite(data.target) ? '<span class="is-plan">План</span>' : '') + '</div></div>' + chartMarkup(model, metric) + '</div><aside class="bd-side">' + liveMarkup(model) + '</aside></section>' +
+      contributionMarkup(model, metric) + insightsMarkup(model) + '<section class="bd-detail" aria-live="polite" hidden></section></section>';
+  }
+
   function velocityMarkup(model, metric) {
     var asOf = dateValue(model.asOf);
     var values = list(model.velocity).filter(function (item) {
@@ -269,13 +363,18 @@
   }
 
   function tooltipMarkup(point, model, metric) {
+    var average = list(model.series && model.series.avg7d).find(function (row) { return dateValue(row && row.at) === dateValue(point.at); });
+    var hourRows = list(model.velocity).filter(function (row) { return dateValue(row && row.to) <= dateValue(point.at); }).slice(-4);
+    var hour = hourRows.length === 4 && hourRows.every(function (row, index) { return row.complete && finite(row.value) && (index === 0 || dateValue(hourRows[index - 1].to) === dateValue(row.from)); }) && dateValue(hourRows[3].to) === dateValue(point.at) ? hourRows.reduce(function (sum, row) { return sum + row.value; }, 0) : null;
     var rows = [
       ['Накопительно', tooltipValue(point.cumulative, metric.unit)],
+      ['Вчера', tooltipValue(point.yesterday, metric.unit)],
+      ['Среднее 7 дней', tooltipValue(average && average.cumulative, metric.unit)],
+      ['Отклонение к вчера', tooltipValue(point.vsYesterdayPct, 'percent')],
+      ['Темп · 60 минут', tooltipValue(hour, metric.unit)],
       ['Последние 15 минут', tooltipValue(point.last15, metric.unit)],
       ['Заказы с начала дня', tooltipValue(point.orders, 'orders')],
       ['Средний чек с начала дня', tooltipValue(point.avgCheck, 'rub')],
-      ['Вчера', tooltipValue(point.yesterday, metric.unit)],
-      ['Дельта', tooltipValue(point.vsYesterdayPct, 'percent')],
       ['Ozon', tooltipValue(point.ozon, metric.unit)],
       ['WB', tooltipValue(point.wb, metric.unit)]
     ];
@@ -307,7 +406,7 @@
     model = model || {};
     destroy(host, false);
     var metric = model.metric || { label: 'Оборот', unit: 'rub' };
-    if (model.state === 'empty') {
+    if (model.state === 'empty' && !(model.executive && metric.key === 'orderedRevenue')) {
       var emptyPeriod = model.periodLabel || dayLabel(model.date, model.timezone) || 'выбранный период';
       var emptyReasons = [model.chartUnavailableReason].concat(list(model.notices)).filter(Boolean);
       host.innerHTML = stateMarkup('empty', 'Нет данных: ' + emptyPeriod, emptyReasons.join(' ') || 'Показатели появятся после первого подтверждённого интервала.');
@@ -319,7 +418,7 @@
     var periodLabel = model.periodLabel || (currentDay ? 'Сегодня' : selectedDayLabel);
     var dateLabel = formatDate(model.asOf, model.timezone) || selectedDayLabel;
     var notices = list(model.notices);
-    host.innerHTML = '<section class="business-dynamics' + (partial ? ' is-partial' : '') + '" data-updated-at="' + escapeHtml(model.updatedAt || '') + '">' +
+    host.innerHTML = model.executive && metric.key === 'orderedRevenue' ? executiveMarkup(model, metric, partial, periodLabel) : '<section class="business-dynamics' + (partial ? ' is-partial' : '') + '" data-updated-at="' + escapeHtml(model.updatedAt || '') + '">' +
       '<header class="bd-head"><div><span class="bd-eyebrow">Динамика бизнеса</span><h2>' + escapeHtml(metric.label || 'Оборот') + '</h2><p>' + escapeHtml(dateLabel) + ' · факты на <time>' + escapeHtml(formatTime(model.asOf, model.timezone)) + '</time></p></div>' +
       '<div class="bd-freshness" role="status"><i></i><span>Проверяем свежесть…</span></div></header>' +
       noticesMarkup(notices) +
@@ -349,7 +448,8 @@
       if (!finite(max) || max === min) max = min + 1;
       if (!finite(domain) || domain <= 0) domain = 1440;
       var cx = 62 + clamp(minute == null ? 0 : minute, 0, domain) / domain * 910;
-      var cy = 256 - (point.cumulative - min) / (max - min) * 238;
+      var plotTop = Number(chart.dataset.plotTop) || 24, plotHeight = Number(chart.dataset.plotHeight) || 340;
+      var cy = plotTop + plotHeight - (point.cumulative - min) / (max - min) * plotHeight;
       var cursor = chart.querySelector('.bd-chart__cursor'), focus = chart.querySelector('.bd-chart__focus');
       cursor.setAttribute('x1', cx); cursor.setAttribute('x2', cx); cursor.removeAttribute('hidden');
       focus.setAttribute('cx', cx); focus.setAttribute('cy', cy); focus.removeAttribute('hidden');
@@ -402,24 +502,41 @@
       detail.innerHTML = detailMarkup(event.label || 'Событие', '<p class="bd-detail__meta">' + escapeHtml(formatTime(event.at, model.timezone) + (event.kind ? ' · ' + event.kind : '')) + '</p><p>' + escapeHtml(event.detail || 'Без дополнительных подробностей') + '</p>');
     }
     function onRootClick(event) {
+      if (event.target.closest('[data-bd-refresh]')) {
+        host.dispatchEvent(new CustomEvent('business-dynamics:refresh', { bubbles: true })); return;
+      }
+      var qualityOpen = event.target.closest('[data-quality-open]'), qualityClose = event.target.closest('[data-quality-close]');
+      if (qualityOpen || qualityClose) {
+        var panel = root.querySelector('.bd-quality-panel'), scrim = root.querySelector('.bd-quality-scrim');
+        if (panel && scrim) { panel.hidden = !qualityOpen; scrim.hidden = !qualityOpen; if (qualityOpen) panel.querySelector('[data-quality-close]')?.focus?.(); else root.querySelector('[data-quality-open]')?.focus?.(); }
+        return;
+      }
+      var storeButton = event.target.closest('[data-store-id]');
+      if (storeButton) { host.dispatchEvent(new CustomEvent('business-dynamics:store', { bubbles: true, detail: { storeId: storeButton.dataset.storeId } })); return; }
       var marker = event.target.closest('[data-event-index]');
       if (marker) { showEvent(Number(marker.dataset.eventIndex)); return; }
       if (event.target.closest('[data-detail-close]')) { pinned = false; detail.hidden = true; detail.replaceChildren(); }
+    }
+    function onEscape(event) {
+      if (event.key !== 'Escape') return;
+      var panel = root.querySelector('.bd-quality-panel'), scrim = root.querySelector('.bd-quality-scrim');
+      if (panel && !panel.hidden) { panel.hidden = true; if (scrim) scrim.hidden = true; root.querySelector('[data-quality-open]')?.focus?.(); event.preventDefault(); }
     }
     if (chart) {
       chart.addEventListener('pointermove', onPointer); chart.addEventListener('click', onPointer); chart.addEventListener('focus', onChartFocus);
       cleanups.push(function () { chart.removeEventListener('pointermove', onPointer); chart.removeEventListener('click', onPointer); chart.removeEventListener('focus', onChartFocus); });
     }
-    root.addEventListener('click', onRootClick); root.addEventListener('keydown', onKey);
-    cleanups.push(function () { root.removeEventListener('click', onRootClick); root.removeEventListener('keydown', onKey); });
+    root.addEventListener('click', onRootClick); root.addEventListener('keydown', onKey); root.addEventListener('keydown', onEscape);
+    cleanups.push(function () { root.removeEventListener('click', onRootClick); root.removeEventListener('keydown', onKey); root.removeEventListener('keydown', onEscape); });
 
     function updateFreshness() {
       var node = root.querySelector('.bd-freshness'), timestamp = dateValue(model.updatedAt);
       if (!node) return;
-      if (timestamp == null) { node.className = 'bd-freshness is-stale'; node.querySelector('span').textContent = 'Свежесть источников неизвестна'; return; }
-      var age = Date.now() - timestamp, minutes = Math.max(0, Math.floor(age / 60000)), stale = age > 5 * 60000;
-      node.className = 'bd-freshness' + (stale ? ' is-stale' : '');
-      node.querySelector('span').textContent = stale ? 'Данные устарели · ' + minutes + ' мин.' : 'Обновлено ' + (minutes < 1 ? 'только что' : minutes + ' мин. назад');
+      if (timestamp == null) { node.className = 'bd-freshness is-stale'; node.querySelector('span').textContent = 'Свежесть неизвестна'; return; }
+      var age = Date.now() - timestamp, minutes = Math.max(0, Math.floor(age / 60000));
+      var label = minutes < 15 ? 'Актуально' : minutes < 30 ? 'Небольшая задержка' : minutes < 60 ? 'Данные задерживаются' : 'Данные устарели';
+      node.className = 'bd-freshness' + (minutes >= 60 ? ' is-stale' : minutes >= 30 ? ' is-delayed' : '');
+      node.querySelector('span').textContent = label + ' · ' + formatTime(model.updatedAt, model.timezone) + ' МСК · ' + minutes + ' мин. назад';
     }
     updateFreshness();
     var timer = setInterval(updateFreshness, 30000);
