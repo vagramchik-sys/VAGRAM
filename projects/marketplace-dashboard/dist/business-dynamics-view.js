@@ -26,6 +26,21 @@
     return number.format(value);
   }
 
+  function signedMoney(value) {
+    return finite(value) ? (value > 0 ? '+' : value < 0 ? '−' : '') + formatValue(Math.abs(value), 'rub') : '—';
+  }
+
+  function miniTrend(points, label, type) {
+    var values = list(points).map(function (point) { return typeof point === 'number' ? point : point && point.cumulative; }).filter(finite).slice(-14);
+    if (values.length < 2) return '';
+    var low = Math.min.apply(Math, values), high = Math.max.apply(Math, values);
+    if (low === high) high = low + 1;
+    var coords = values.map(function (value, index) {
+      return (index * 86 / (values.length - 1)).toFixed(1) + ',' + (27 - (value - low) / (high - low) * 22).toFixed(1);
+    }).join(' ');
+    return '<svg class="bd-mini-trend bd-mini-trend--' + escapeHtml(type || 'blue') + '" viewBox="0 0 88 30" role="img" aria-label="' + escapeHtml(label) + '"><polyline points="' + coords + '"></polyline></svg>';
+  }
+
   function formatTime(value, timezone) {
     var timestamp = dateValue(value);
     if (timestamp == null) return '—';
@@ -107,7 +122,7 @@
     destroy(host, false);
     host.innerHTML = '<section class="business-dynamics bd-loading" aria-busy="true" aria-live="polite">' +
       '<div class="bd-loading__head"><i></i><i></i></div><div class="bd-loading__kpis">' +
-      '<i></i><i></i><i></i><i></i></div><div class="bd-loading__chart"></div>' +
+      '<i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div class="bd-loading__chart"></div>' +
       '<span class="bd-sr-only">Загружаем динамику бизнеса</span></section>';
   }
 
@@ -160,10 +175,10 @@
     if (finite(target)) values.push(target);
     var min = Math.min.apply(Math, values.concat([0])), max = Math.max.apply(Math, values.concat([0]));
     if (min === max) max = min + 1;
-    var left = 62, top = 24, width = 910, height = 340, bottom = top + height;
+    var left = 62, top = 24, width = 910, height = metric.key === 'orderedRevenue' ? 170 : 340, bottom = top + height;
     var finiteForecast = forecast.some(function (entry) { return finite(entry.point.cumulative); });
     var asOfMinute = chartMinute(model.asOf, model);
-    var latestFactMinute = today.reduce(function (value, entry) { return finite(entry.point.cumulative) ? Math.max(value, entry.minute) : value; }, 0);
+    var latestFact = today.filter(function (entry) { return finite(entry.point.cumulative); }).at(-1);
     var domain = 1440;
     var x = function (minute) { return left + clamp(minute, 0, domain) / domain * width; };
     var y = function (value) { return bottom - (value - min) / (max - min) * height; };
@@ -183,7 +198,7 @@
       return '<g><line x1="' + left + '" y1="' + py + '" x2="' + (left + width) + '" y2="' + py + '"></line>' +
         '<text x="' + (left - 10) + '" y="' + (py + 4) + '">' + escapeHtml(compact(tick)) + '</text></g>';
     }).join('');
-    var tickStep = [15, 30, 60, 120, 180, 240, 360].find(function (step) { return step >= domain / 5; }) || 360;
+    var tickStep = metric.key === 'orderedRevenue' ? 180 : ([15, 30, 60, 120, 180, 240, 360].find(function (step) { return step >= domain / 5; }) || 360);
     var tickMinutes = []; for (var tick = 0; tick <= domain; tick += tickStep) tickMinutes.push(tick);
     if (domain - tickMinutes[tickMinutes.length - 1] >= tickStep / 2) tickMinutes.push(Math.round(domain));
     var hours = tickMinutes.map(function (minute) {
@@ -192,6 +207,7 @@
     }).join('');
     var forecastBand = finiteForecast && asOfMinute != null ? '<rect class="bd-chart__forecast-band" x="' + x(asOfMinute) + '" y="' + top + '" width="' + Math.max(0, left + width - x(asOfMinute)) + '" height="' + height + '"><title>' + escapeHtml(model.forecastLabel || 'Прогноз до 24:00') + '</title></rect><text class="bd-chart__forecast-label" x="' + (x(asOfMinute) + 10) + '" y="' + (top + 16) + '">Прогноз</text>' : '';
     var planLine = finite(target) ? '<g class="bd-chart__line bd-chart__line--plan"><path d="M ' + left + ' ' + y(target).toFixed(2) + ' H ' + (left + width) + '"></path><text x="' + (left + width - 4) + '" y="' + (y(target) - 7).toFixed(2) + '" text-anchor="end">План ' + escapeHtml(compact(target)) + '</text></g>' : '';
+    var nowMarker = metric.key === 'orderedRevenue' && latestFact ? '<g class="bd-chart__now"><line x1="' + x(latestFact.minute) + '" y1="' + top + '" x2="' + x(latestFact.minute) + '" y2="' + bottom + '"></line><circle cx="' + x(latestFact.minute) + '" cy="' + y(latestFact.point.cumulative) + '" r="6"></circle><text x="' + (x(latestFact.minute) + (latestFact.minute > 1100 ? -10 : 10)) + '" y="' + (y(latestFact.point.cumulative) - 11) + '" text-anchor="' + (latestFact.minute > 1100 ? 'end' : 'start') + '">' + escapeHtml(compact(latestFact.point.cumulative)) + ' ₽</text><text class="bd-chart__now-time" x="' + x(latestFact.minute) + '" y="' + (bottom + 48) + '" text-anchor="middle">' + escapeHtml(formatTime(latestFact.point.at, timezone)) + '</text></g>' : '';
     var eventMarkers = list(model.events).map(function (event, index) { return { event: event, index: index }; }).filter(function (entry) {
       var timestamp = dateValue(entry.event && entry.event.at);
       return timestamp != null && (asOf == null || timestamp <= asOf);
@@ -205,13 +221,13 @@
     }).join('');
     var incompleteNote = today.some(function (entry) { return finite(entry.point.cumulative) && entry.point.complete === false; }) ? '<p class="bd-chart__coverage">Известные значения · покрытие неполное</p>' : '';
     var historyNote = model.historyAvailable === false ? '<p class="bd-chart__history">Среднее за 7 дней пока недоступно.</p>' : '';
-    return incompleteNote + '<div class="bd-chart-wrap"><svg class="bd-chart" viewBox="0 0 1000 430" role="img" tabindex="0" data-active-index="0" data-min="' + min + '" data-max="' + max + '" data-domain="' + domain + '" data-plot-top="' + top + '" data-plot-height="' + height + '" aria-label="Динамика ' + escapeHtml(metric.label || 'показателя') + ' в течение дня. Используйте стрелки для просмотра точек.">' +
+    return incompleteNote + '<div class="bd-chart-wrap"><svg class="bd-chart" viewBox="0 0 1000 ' + (bottom + 66) + '" role="img" tabindex="0" data-active-index="0" data-min="' + min + '" data-max="' + max + '" data-domain="' + domain + '" data-plot-top="' + top + '" data-plot-height="' + height + '" aria-label="Динамика ' + escapeHtml(metric.label || 'показателя') + ' в течение дня. Используйте стрелки для просмотра точек.">' +
       forecastBand + '<g class="bd-chart__grid">' + grid + hours + '</g>' +
       planLine +
       '<g class="bd-chart__line bd-chart__line--yesterday">' + path(yesterday, true) + '</g>' +
       '<g class="bd-chart__line bd-chart__line--average">' + path(avg, true) + '</g>' +
       '<g class="bd-chart__line bd-chart__line--forecast">' + path(forecast, false) + '</g>' +
-      '<g class="bd-chart__line bd-chart__line--today">' + path(today, true) + '</g>' + eventMarkers +
+      '<g class="bd-chart__line bd-chart__line--today">' + path(today, true) + '</g>' + nowMarker + eventMarkers +
       '<line class="bd-chart__cursor" x1="0" y1="' + top + '" x2="0" y2="' + bottom + '" hidden></line><circle class="bd-chart__focus" cx="0" cy="0" r="4" hidden></circle></svg>' +
       '<div class="bd-tooltip" role="status" hidden></div></div>' + historyNote +
       '<script type="application/json" class="bd-points">' + safeJson(today.filter(function (entry) { return finite(entry.point.cumulative); }).slice(-192).map(function (entry) { return entry.point; })) + '</script>';
@@ -247,17 +263,28 @@
   function executiveKpisMarkup(model, currentDay) {
     var data = model.executive || {}, forecast = model.kpis && model.kpis.forecast || {};
     var confidence = { high: 'высокая', medium: 'средняя', low: 'низкая' }[data.forecastConfidence] || 'не определена';
+    var comparable = finite(data.today) && finite(data.yesterdaySameTime) && finite(data.changePct);
+    var difference = comparable ? data.today - data.yesterdaySameTime : null;
+    var completeToday = list(model.series && model.series.today).filter(function (row) { return row && row.complete === true; });
+    var history = list(model.series && model.series.yesterday);
+    var velocity = list(model.velocity).filter(function (row) { return row && row.complete === true; }).map(function (row) { return row.value; });
+    var quality = data.dataQuality || {}, issues = list(quality.issues);
+    var qualityScore = finite(quality.score) ? clamp(Math.round(quality.score), 0, 100) : null;
+    var issueWord = issues.length % 10 === 1 && issues.length % 100 !== 11 ? 'ограничение' : issues.length % 10 >= 2 && issues.length % 10 <= 4 && (issues.length % 100 < 12 || issues.length % 100 > 14) ? 'ограничения' : 'ограничений';
     var rows = [
-      [currentDay ? 'Вчера к этому времени' : 'Предыдущий день к этому времени', data.yesterdaySameTime, 'rub', 'Одинаковый момент МСК'],
-      ['Изменение', data.changePct, 'percent', finite(data.changePct) ? 'К вчера на тот же момент' : 'Нет сопоставимого среза'],
-      ['Темп · 60 минут', data.last60m, 'rub', finite(data.last60m) ? 'Подтверждённые заказы за час' : 'Нет точного времени всех заказов'],
-      ['Прогноз дня', forecast.available === false ? null : forecast.value, 'rub', forecast.available ? 'Профиль ' + (forecast.sampleSize || 0) + ' дней · уверенность ' + confidence : 'Прогноз пока недоступен'],
-      ['План дня', data.target, 'rub', finite(data.target) ? 'Установленная цель продаж' : 'План не задан'],
-      ['Выполнение прогноза', data.targetCompletion, 'share', finite(data.targetCompletion) ? 'Прогноз / план' : 'Нужны план и прогноз']
+      { label: currentDay ? 'Сегодня' : 'Выбранный день', value: data.today, unit: 'rub', note: model.kpis && model.kpis.today && model.kpis.today.subtitle || 'По доступным данным', kind: 'today', trend: miniTrend(completeToday, 'Подтверждённая динамика сегодня', 'blue') },
+      { label: currentDay ? 'Вчера к этому времени' : 'Предыдущий день к этому времени', value: data.yesterdaySameTime, unit: 'rub', note: 'Одинаковый момент МСК', kind: 'yesterday', trend: miniTrend(history, 'Динамика предыдущего дня', 'muted') },
+      { label: 'Разница', value: difference, unit: 'signed', note: comparable ? formatValue(data.changePct, 'percent') + ' к вчера' : 'Нет сопоставимого среза', kind: 'difference', tone: comparable ? (difference < 0 ? 'is-down' : 'is-up') : '' },
+      { label: 'Текущий темп', value: data.last60m, unit: 'hour', note: finite(data.previousHourChange) ? formatValue(data.previousHourChange, 'percent') + ' к пред. часу' : 'Нет точного времени всех заказов', kind: 'pace', trend: miniTrend(velocity, 'Скорость подтверждённых заказов', 'blue') },
+      { label: 'Прогноз дня', value: forecast.available === false ? null : forecast.value, unit: 'rub', note: finite(data.targetCompletion) ? 'Выполнение прогноза ' + formatValue(data.targetCompletion, 'share') : forecast.available ? 'Уверенность ' + confidence + ' · ' + (forecast.sampleSize || 0) + ' дней' : 'Прогноз пока недоступен', kind: 'forecast' },
+      { label: 'План дня', value: data.target, unit: 'rub', note: finite(data.target) ? 'Подтверждённая цель' : 'План не задан', kind: 'plan' }
     ];
-    return rows.map(function (row) {
-      return '<article class="bd-kpi' + (finite(row[1]) ? '' : ' is-unavailable') + '"><span>' + escapeHtml(row[0]) + '</span><strong>' + escapeHtml(formatValue(row[1], row[2])) + '</strong><small>' + escapeHtml(row[3]) + '</small></article>';
+    var cards = rows.map(function (row) {
+      var formatted = row.unit === 'signed' ? signedMoney(row.value) : row.unit === 'hour' ? (finite(row.value) ? formatValue(row.value, 'rub') + '/ч' : '—') : formatValue(row.value, row.unit);
+      return '<article class="bd-kpi bd-kpi--' + row.kind + (finite(row.value) ? '' : ' is-unavailable') + '"><span>' + escapeHtml(row.label) + '</span><strong class="' + (row.tone || '') + '">' + escapeHtml(formatted) + '</strong><small>' + escapeHtml(row.note) + '</small>' + (row.trend || '') + '</article>';
     }).join('');
+    var qualityLabel = 'Качество данных' + (qualityScore === null ? '' : ' ' + qualityScore + '%') + ' · ' + issues.length + ' ' + issueWord;
+    return cards + '<article class="bd-kpi bd-kpi--quality"><button type="button" data-quality-open aria-haspopup="dialog" aria-label="' + escapeHtml(qualityLabel) + '"><span>Качество данных</span><strong>' + (qualityScore === null ? '—' : qualityScore + '%') + '</strong><small>' + escapeHtml(issues.length + ' ' + issueWord) + '</small><i aria-hidden="true">›</i></button></article>';
   }
 
   function qualityMarkup(model) {
@@ -265,8 +292,6 @@
     var issues = list(quality.issues);
     if (!issues.length) issues = list(model.notices);
     var score = finite(quality.score) ? clamp(Math.round(quality.score), 0, 100) : null;
-    var label = score === null ? 'Качество данных' : 'Качество данных ' + score + '%';
-    var issueWord = issues.length % 10 === 1 && issues.length % 100 !== 11 ? 'ограничение' : issues.length % 10 >= 2 && issues.length % 10 <= 4 && (issues.length % 100 < 12 || issues.length % 100 > 14) ? 'ограничения' : 'ограничений';
     var details = issues.map(function (issue) {
       var message = typeof issue === 'string' ? issue : issue && (issue.message || issue.label || issue.reason) || 'Ограничение данных';
       return '<li>' + escapeHtml(message) + '</li>';
@@ -276,8 +301,7 @@
       var value = markets[market] && typeof markets[market] === 'object' ? markets[market].score : markets[market];
       return finite(value) ? '<span>' + market + ' <b>' + escapeHtml(Math.round(value)) + '%</b></span>' : '';
     }).join('');
-    return '<button type="button" class="bd-quality-badge" data-quality-open aria-haspopup="dialog">' + escapeHtml(label) + (issues.length ? ' · ' + issues.length + ' ' + issueWord : '') + '</button>' +
-      '<div class="bd-quality-scrim" data-quality-close hidden></div>' +
+    return '<div class="bd-quality-scrim" data-quality-close hidden></div>' +
       '<aside class="bd-quality-panel" role="dialog" aria-modal="true" aria-labelledby="bd-quality-title" hidden><div class="bd-quality-panel__head"><div><small>Проверка источников</small><h3 id="bd-quality-title">Качество данных</h3></div><button type="button" data-quality-close aria-label="Закрыть панель">×</button></div>' +
       '<strong class="bd-quality-panel__score">' + (score === null ? '—' : score + '%') + '</strong><div class="bd-quality-panel__markets">' + marketRows + '</div>' +
       '<h4>Ограничения</h4><ul>' + (details || '<li>Подтверждённых ограничений нет.</li>') + '</ul></aside>';
@@ -285,52 +309,89 @@
 
   function liveMarkup(model) {
     var data = model.executive || {}, market = list(data.marketplaces);
-    function share(key) { return market.find(function (row) { return row.market === key; })?.share ?? null; }
-    var rows = [
-      ['Последние 60 минут', data.last60m, 'rub'],
-      ['Последние 3 часа', data.last3h, 'rub'],
-      ['К предыдущему часу', data.previousHourChange, 'percent'],
-      ['Ozon · доля', share('Ozon'), 'share'],
-      ['WB · доля', share('WB'), 'share'],
-      ['До плана', data.remaining, 'rub'],
-      ['Нужный темп / час', data.requiredHourly, 'rub']
-    ];
-    var fifteen = finite(data.last15m) ? '<div class="bd-live__highlight"><span>Последние 15 минут</span><strong>' + escapeHtml(formatValue(data.last15m, 'rub')) + '</strong></div>' : '<p class="bd-live__note">15-минутная детализация всех выбранных магазинов недоступна.</p>';
-    return '<section class="bd-live" aria-label="Сейчас"><div class="bd-section-title"><h3>Сейчас</h3><span>По подтверждённым данным</span></div>' + fifteen +
-      '<dl>' + rows.map(function (row) { return '<div><dt>' + escapeHtml(row[0]) + '</dt><dd>' + escapeHtml(formatValue(row[1], row[2])) + '</dd></div>'; }).join('') + '</dl></section>';
+    var updated = dateValue(model.updatedAt), fresh = updated !== null && Date.now() - updated <= 15 * 60000 && model.state === 'ready';
+    var ozon = market.find(function (row) { return row.market === 'Ozon'; });
+    var wb = market.find(function (row) { return row.market === 'WB'; });
+    var shareKnown = market.length > 0 && market.every(function (row) { return finite(row.share) && finite(row.value); });
+    var ozonShare = shareKnown && ozon ? clamp(ozon.share, 0, 100) : null;
+    var marketRows = market.map(function (row) {
+      return '<div class="bd-live__market-row"><span><i class="bd-live__market-dot bd-live__market-dot--' + escapeHtml(String(row.market).toLowerCase()) + '"></i>' + escapeHtml(row.market) + '</span><b>' + escapeHtml(formatValue(row.share, 'share')) + '</b><small>' + escapeHtml(formatValue(row.value, 'rub')) + '</small></div>';
+    }).join('');
+    var marketMix = shareKnown ? '<div class="bd-live__mix"><div class="bd-live__donut" style="--ozon-share:' + (ozonShare === null ? 0 : ozonShare) + '%"><strong>' + escapeHtml(formatValue(data.today, 'rub')) + '</strong></div><div class="bd-live__markets">' + marketRows + '</div></div>' :
+      '<div class="bd-live__mix-empty">Доли появятся после общего подтверждённого среза.</div>';
+    var fifteen = finite(data.last15m) ? '<div class="bd-live__metric"><span>Продажи за 15 минут</span><strong>' + escapeHtml(formatValue(data.last15m, 'rub')) + '</strong></div>' :
+      '<p class="bd-live__note">15-минутная детализация всех выбранных магазинов недоступна.</p>';
+    return '<section class="bd-live" aria-label="Сейчас"><div class="bd-section-title"><h3>Сейчас</h3><span class="' + (fresh ? 'is-up' : '') + '">' + (fresh ? '● Данные поступают' : 'Последний доступный срез') + '</span></div>' +
+      fifteen + '<div class="bd-live__metric"><span>За последний час</span><strong>' + escapeHtml(finite(data.last60m) ? formatValue(data.last60m, 'rub') + '/ч' : '—') + '</strong>' +
+      (finite(data.previousHourChange) ? '<small class="' + (data.previousHourChange < 0 ? 'is-down' : 'is-up') + '">' + escapeHtml(formatValue(data.previousHourChange, 'percent')) + ' к пред. часу</small>' : '') + '</div>' +
+      '<div class="bd-live__market"><span>Доля маркетплейсов</span>' + marketMix + '</div>' +
+      '<div class="bd-live__foot"><div><span>До плана</span><strong>' + escapeHtml(formatValue(data.remaining, 'rub')) + '</strong></div><div><span>Нужный темп</span><strong>' + escapeHtml(finite(data.requiredHourly) ? formatValue(data.requiredHourly, 'rub') + '/ч' : '—') + '</strong></div></div></section>';
   }
 
   function contributionMarkup(model, metric) {
     var data = model.executive || {}, stores = list(data.stores).length ? data.stores : list(model.stores);
     if (!stores.length) return '<section class="bd-contribution"><div class="bd-section-title"><h3>Вклад магазинов</h3></div><p class="bd-empty-note">Нет подтверждённых данных по магазинам.</p></section>';
-    return '<section class="bd-contribution" aria-label="Вклад магазинов"><div class="bd-section-title"><div><h3>Вклад магазинов</h3><p>Выберите магазин для подробного просмотра</p></div></div>' +
-      '<div class="bd-contribution__scroll"><table><thead><tr><th>Магазин</th><th>Сегодня</th><th>Доля</th><th>К вчера</th><th>Темп · 60 мин</th></tr></thead><tbody>' + stores.slice(0, 40).map(function (store) {
+    var anyPartial = stores.some(function (store) { return store.staggered || store.complete === false; });
+    return '<section class="bd-contribution" aria-label="Вклад магазинов"><div class="bd-section-title"><h3>Вклад магазинов</h3><span>' + (anyPartial ? 'Известная часть · срезы магазинов могут различаться' : 'На выбранное время МСК') + '</span></div>' +
+      '<div class="bd-contribution__scroll"><table><thead><tr><th>Магазин</th><th>Сегодня</th><th>Вчера к этому времени</th><th>Δ</th><th>Доля</th><th>Темп · 60 мин</th></tr></thead><tbody>' + stores.slice(0, 40).map(function (store) {
         var delta = finite(store.changePct) ? store.changePct : null;
-        var direction = delta === null ? '—' : delta > 0 ? '↑' : delta < 0 ? '↓' : '→';
-        var sourceNote = store.staggered || store.complete === false ? '<small>Известная часть' + (store.asOf ? ' · ' + escapeHtml(formatTime(store.asOf, model.timezone)) + ' МСК' : '') + '</small>' : '';
-        return '<tr><th><button type="button" data-store-id="' + escapeHtml(store.id) + '"><i class="bd-store__market bd-store__market--' + escapeHtml(String(store.market || '').toLowerCase()) + '">' + escapeHtml(store.market || '—') + '</i><span>' + escapeHtml(store.name || 'Магазин') + '</span></button></th><td>' + escapeHtml(formatValue(store.value, metric.unit)) + sourceNote + '</td><td>' + escapeHtml(formatValue(store.share, 'share')) + '</td><td class="' + (delta > 0 ? 'is-up' : delta < 0 ? 'is-down' : '') + '">' + direction + ' ' + escapeHtml(formatValue(delta, 'percent')) + '</td><td>' + escapeHtml(formatValue(store.velocity, metric.unit)) + '</td></tr>';
+        var sourceNote = store.staggered || store.complete === false ? '<small class="bd-sr-only">Известная часть' + (store.asOf ? ' · ' + escapeHtml(formatTime(store.asOf, model.timezone)) + ' МСК' : '') + '</small>' : '';
+        var value = finite(store.comparisonToday) ? store.comparisonToday : store.value;
+        var share = finite(store.share) ? '<span class="bd-share"><span>' + escapeHtml(formatValue(store.share, 'share')) + '</span><i style="--share:' + clamp(store.share, 0, 100) + '%"></i></span>' : '—';
+        return '<tr><th><button type="button" data-store-id="' + escapeHtml(store.id) + '"><i class="bd-store__avatar bd-store__avatar--' + escapeHtml(String(store.market || '').toLowerCase()) + '">' + escapeHtml(String(store.name || 'М').trim().charAt(0).toUpperCase()) + '</i><span>' + escapeHtml(store.name || 'Магазин') + '</span></button></th><td>' + escapeHtml(formatValue(value, metric.unit)) + sourceNote + '</td><td>' + escapeHtml(formatValue(store.yesterdaySameTime, metric.unit)) + '</td><td class="' + (delta > 0 ? 'is-up' : delta < 0 ? 'is-down' : '') + '">' + escapeHtml(formatValue(delta, 'percent')) + '</td><td>' + share + '</td><td>' + escapeHtml(finite(store.velocity) ? formatValue(store.velocity, metric.unit) + '/ч' : '—') + '</td></tr>';
       }).join('') + '</tbody></table></div></section>';
   }
 
   function insightsMarkup(model) {
     var rows = list(model.executive && model.executive.insights);
-    if (!rows.length) return '';
-    return '<section class="bd-insights" aria-label="Что изменилось"><div class="bd-section-title"><h3>Что изменилось</h3><span>По правилам, без предположений</span></div><ul>' + rows.slice(0, 4).map(function (item) {
+    return '<section class="bd-insights" aria-label="Что происходит сейчас"><div class="bd-section-title"><h3>Что происходит сейчас</h3></div>' +
+      (rows.length ? '<ul>' + rows.slice(0, 4).map(function (item) {
       var message = typeof item === 'string' ? item : item && (item.message || item.text) || '';
-      return '<li>' + escapeHtml(message) + '</li>';
-    }).join('') + '</ul></section>';
+      var value = item && item.value, tone = finite(value) ? value < 0 ? 'is-down' : 'is-up' : '';
+      return '<li class="' + tone + '"><i aria-hidden="true">' + (tone === 'is-down' ? '↓' : tone === 'is-up' ? '↑' : 'i') + '</i><span>' + escapeHtml(message) + '</span></li>';
+    }).join('') + '</ul>' : '<p class="bd-empty-note">Сопоставимых изменений пока нет.</p>') + '</section>';
+  }
+
+  function categoriesMarkup() {
+    return '<section class="bd-categories" aria-label="Продажи по категориям"><div class="bd-section-title"><h3>Продажи по категориям</h3></div>' +
+      '<div class="bd-secondary-empty"><strong>—</strong><p>Для выбранного периода детализация по категориям открывается отдельно.</p>' +
+      '<button type="button" data-open-categories>Показать категории →</button></div></section>';
+  }
+
+  function recentMarkup(model) {
+    var rows = list(model.stores).filter(function (store) { return dateValue(store && store.updatedAt) !== null; }).sort(function (a, b) { return dateValue(b.updatedAt) - dateValue(a.updatedAt); }).slice(0, 5);
+    return '<section class="bd-recent" aria-label="Последние обновления"><div class="bd-section-title"><h3>Последние обновления</h3></div>' +
+      (rows.length ? '<div class="bd-recent__rows">' + rows.map(function (store) {
+        return '<div><time>' + escapeHtml(formatTime(store.updatedAt, model.timezone)) + '</time><span>Обновлены данные</span><b>' + escapeHtml(store.name || 'Магазин') + '</b><small>' + escapeHtml(store.market || '—') + '</small></div>';
+      }).join('') + '</div>' : '<p class="bd-empty-note">События обновления пока недоступны.</p>') + '</section>';
+  }
+
+  function marketplacesMarkup(model) {
+    var rows = list(model.executive && model.executive.marketplaces);
+    return '<section class="bd-marketplaces" aria-label="Площадки"><div class="bd-section-title"><h3>Площадки</h3></div>' +
+      (rows.length ? '<div class="bd-marketplaces__rows">' + rows.map(function (row) {
+        return '<div><strong>' + escapeHtml(row.market || 'Площадка') + '</strong><b>' + escapeHtml(formatValue(row.value, 'rub')) + '</b><span>' + escapeHtml(formatValue(row.share, 'share')) + '</span>' +
+          (finite(row.share) ? '<i style="--share:' + clamp(row.share, 0, 100) + '%"></i>' : '') + '</div>';
+      }).join('') + '</div>' : '<p class="bd-empty-note">Нет подтверждённых данных по площадкам.</p>') +
+      '<p class="bd-secondary-note">Прочерк означает отсутствие общего подтверждённого среза.</p></section>';
+  }
+
+  function productsMarkup() {
+    return '<section class="bd-products" aria-label="Топ товаров"><div class="bd-section-title"><h3>Топ товаров</h3></div>' +
+      '<div class="bd-secondary-empty"><strong>—</strong><p>Подтверждённый рейтинг товаров за выбранное время пока не рассчитан.</p><button type="button" data-open-categories>Открыть товары →</button></div></section>';
   }
 
   function executiveMarkup(model, metric, partial, periodLabel) {
-    var data = model.executive || {}, today = finite(data.today) ? data.today : model.kpis && model.kpis.today && model.kpis.today.value;
-    var delta = data.changePct;
-    var subtitle = model.kpis && model.kpis.today && model.kpis.today.subtitle || '';
+    var data = model.executive || {};
+    var subtitle = model.kpis && model.kpis.today && model.kpis.today.subtitle || 'По подтверждённым данным';
     return '<section class="business-dynamics bd-executive' + (partial ? ' is-partial' : '') + '" data-updated-at="' + escapeHtml(model.updatedAt || '') + '">' +
-      '<header class="bd-head"><div class="bd-head__main"><span class="bd-eyebrow">ПУЛЬТ ПРОДАЖ · ' + escapeHtml(periodLabel) + '</span><h2>Заказано на сумму</h2><div class="bd-hero-value">' + escapeHtml(formatValue(today, metric.unit)) + '</div><p>' + escapeHtml(subtitle || 'По подтверждённым данным') + (finite(delta) ? ' <b class="' + (delta < 0 ? 'is-down' : 'is-up') + '">' + escapeHtml(formatValue(delta, 'percent')) + ' к вчера</b>' : '') + '</p></div>' +
-      '<div class="bd-head__status"><div class="bd-freshness" role="status"><i></i><span>Проверяем свежесть…</span></div><button type="button" class="bd-refresh" data-bd-refresh aria-label="Обновить данные">↻ Обновить</button>' + qualityMarkup(model) + '</div></header>' +
+      '<header class="bd-head"><div class="bd-head__main"><span class="bd-eyebrow">ПУЛЬТ ПРОДАЖ · ' + escapeHtml(periodLabel) + '</span><h2>Динамика бизнеса</h2><p>Заказано на сумму <span>· ' + escapeHtml(subtitle) + '</span></p></div>' +
+      '<div class="bd-head__status"><div class="bd-freshness" role="status"><i></i><span>Проверяем свежесть…</span></div><button type="button" class="bd-refresh" data-bd-refresh aria-label="Обновить данные">↻</button></div></header>' +
       '<div class="bd-kpis bd-kpis--executive">' + executiveKpisMarkup(model, model.date === dateKey(Date.now(), model.timezone)) + '</div>' +
-      '<section class="bd-main"><div class="bd-main__chart"><div class="bd-section-title"><div><h3>Продажи в течение дня</h3><p>' + escapeHtml(model.chartCaption || 'Накопительный итог · МСК') + '</p></div><div class="bd-legend"><span class="is-today">Сегодня</span><span class="is-yesterday">Вчера</span><span class="is-average">Среднее 7 дней</span><span class="is-forecast">Прогноз</span>' + (finite(data.target) ? '<span class="is-plan">План</span>' : '') + '</div></div>' + chartMarkup(model, metric) + '</div><aside class="bd-side">' + liveMarkup(model) + '</aside></section>' +
-      contributionMarkup(model, metric) + insightsMarkup(model) + '<section class="bd-detail" aria-live="polite" hidden></section></section>';
+      '<section class="bd-main"><div class="bd-main__chart"><div class="bd-section-title"><div><h3>Динамика заказов (накопительно)</h3><p>' + escapeHtml(model.chartCaption || 'Накопительный итог · МСК') + '</p></div><div class="bd-legend"><span class="is-today">Сегодня</span><span class="is-yesterday">Вчера</span><span class="is-average">Среднее 7 дней</span><span class="is-forecast">Прогноз</span>' + (finite(data.target) ? '<span class="is-plan">План</span>' : '') + '</div></div>' + chartMarkup(model, metric) + '</div><aside class="bd-side">' + liveMarkup(model) + insightsMarkup(model) + '</aside></section>' +
+      '<div class="bd-secondary-grid">' + contributionMarkup(model, metric) + categoriesMarkup() + '</div>' +
+      '<div class="bd-tertiary-grid">' + recentMarkup(model) + marketplacesMarkup(model) + productsMarkup() + '</div>' +
+      qualityMarkup(model) + '<section class="bd-detail" aria-live="polite" hidden></section></section>';
   }
 
   function velocityMarkup(model, metric) {
@@ -504,6 +565,9 @@
     function onRootClick(event) {
       if (event.target.closest('[data-bd-refresh]')) {
         host.dispatchEvent(new CustomEvent('business-dynamics:refresh', { bubbles: true })); return;
+      }
+      if (event.target.closest('[data-open-categories]')) {
+        host.dispatchEvent(new CustomEvent('business-dynamics:categories', { bubbles: true })); return;
       }
       var qualityOpen = event.target.closest('[data-quality-open]'), qualityClose = event.target.closest('[data-quality-close]');
       if (qualityOpen || qualityClose) {

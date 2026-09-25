@@ -283,6 +283,9 @@ test('executive screen puts factual KPIs first, adds plan line and keeps warning
   assert.match(view.html, /15-минутная детализация всех выбранных магазинов недоступна/);
   assert.match(view.html, /Тестовый магазин/);
   assert.match(view.html, /Продажи выше вчера на 11,1%/);
+  assert.equal((view.html.match(/<article class="bd-kpi bd-kpi--/g) || []).length, 7);
+  assert.match(view.html, /<th>Вчера к этому времени<\/th>/);
+  assert.match(view.html, /Для выбранного периода детализация по категориям открывается отдельно/);
 });
 
 test('executive drawer, refresh and store drill-down work without losing keyboard close', () => {
@@ -300,6 +303,8 @@ test('executive drawer, refresh and store drill-down work without losing keyboar
   view.root.emit('click', { target: target('[data-store-id]') });
   assert.equal(view.host.dispatched.type, 'business-dynamics:store');
   assert.equal(view.host.dispatched.detail.storeId, 'wb-1');
+  view.root.emit('click', { target: target('[data-open-categories]') });
+  assert.equal(view.host.dispatched.type, 'business-dynamics:categories');
 });
 
 test('executive missing values and stale data remain explicit', () => {
@@ -314,6 +319,6 @@ test('executive missing values and stale data remain explicit', () => {
   view.api.render(view.host, data);
   assert.match(view.html, /План не задан/);
   assert.match(view.html, /Прогноз пока недоступен/);
-  assert.doesNotMatch(view.html, /0[^<]*₽/);
+  assert.doesNotMatch(view.html, /<strong[^>]*>0\s*₽<\/strong>/);
   assert.match(view.root.parts.freshnessText.textContent, /Данные устарели · 10:40 МСК · 120 мин/);
 });

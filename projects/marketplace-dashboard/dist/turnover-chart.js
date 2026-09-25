@@ -29,6 +29,7 @@
   function renderOptions(){$('chart-store-options').innerHTML=options().map(s=>'<label style="--series-color:'+s.color+'"><input type="checkbox" value="'+esc(s.id)+'" '+(selected.has(s.id)?'checked':'')+'><i></i><span>'+esc(s.name)+'</span></label>').join('')}
   $('chart-store-options').onchange=e=>{if(e.target.type!=='checkbox')return;if(e.target.checked){if(e.target.value==='')selected.clear();else selected.delete('');selected.add(e.target.value)}else selected.delete(e.target.value);renderOptions();void render()};
   $('ins-chart').addEventListener('business-dynamics:refresh',()=>{dynamicsClient?.invalidate();void render()});
+  $('ins-chart').addEventListener('business-dynamics:categories',()=>setMode('categories'));
   $('ins-chart').addEventListener('business-dynamics:store',event=>{const id=event.detail?.storeId,control=$('store');if(!control||!id||![...control.options].some(option=>option.value===id))return;control.value=id;control.dispatchEvent(new Event('change',{bubbles:true}))});
   $('chart-only-total').onclick=()=>{selected=new Set(['']);renderOptions();void render()};
   $('chart-all-stores').onclick=()=>{selected=new Set(options().filter(s=>s.id).map(s=>s.id));renderOptions();void render()};

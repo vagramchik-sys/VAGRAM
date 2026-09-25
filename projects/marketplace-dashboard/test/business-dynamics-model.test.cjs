@@ -43,6 +43,8 @@ test('executive contract exposes only confirmed interval windows and comparable 
  assert.equal(r.executive.forecastConfidence,'low');assert.equal(r.kpis.forecast.spread,0);
  assert.deepEqual(r.executive.marketplaces,[{market:'Ozon',value:4800,share:100,changePct:0,velocity:400}]);
  assert.deepEqual(r.executive.stores.map(({id,value,share,changePct,velocity})=>({id,value,share,changePct,velocity})),[{id:'1',value:4800,share:100,changePct:0,velocity:400}]);
+ assert.equal(r.executive.stores[0].comparisonToday,4800);
+ assert.equal(r.executive.stores[0].yesterdaySameTime,4800);
  assert.deepEqual(r.executive.dataQuality,{score:100,issues:[],byMarket:{Ozon:{score:100,issues:[]}}});
  assert.ok(r.executive.insights.every(item=>item.kind==='fact'));
 });
@@ -135,6 +137,6 @@ test('staggered Ozon and WB keep each confirmed store contribution without claim
  const wb=store('wb');wb.market='WB';const ozon=store('ozon');ozon.days[0]={date,basis:'observation',complete:false,observations:[{at:at(date,40),orderedRevenue:10000,orderedUnits:20,complete:true}]};
  const r=build([wb,ozon]),byId=new Map(r.executive.stores.map(row=>[row.id,row]));
  assert.equal(r.state,'partial');assert.equal(r.executive.today,14800);
- assert.deepEqual({...byId.get('ozon')},{id:'ozon',name:'Магазин ozon',market:'Ozon',value:10000,asOf:at(date,40),complete:true,staggered:true,share:null,changePct:null,velocity:null});
+ assert.deepEqual({...byId.get('ozon')},{id:'ozon',name:'Магазин ozon',market:'Ozon',value:10000,asOf:at(date,40),complete:true,staggered:true,share:null,comparisonToday:null,yesterdaySameTime:null,changePct:null,velocity:null});
  assert.equal(byId.get('wb').value,4800);assert.equal(byId.get('wb').asOf,at(date,48));assert.equal(byId.get('wb').complete,true);assert.equal(byId.get('wb').staggered,true);assert.equal(byId.get('wb').share,null);assert.equal(byId.get('wb').changePct,null);assert.equal(byId.get('wb').velocity,400);
 });
