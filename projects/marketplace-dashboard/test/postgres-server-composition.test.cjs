@@ -4,7 +4,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const { createPostgresServerComposition, createAnalyticsHandler } = require('../storage/postgres-server-composition.cjs');
 
-const analytics = () => Object.fromEntries(['buyerOrderSegments', 'buyerProductSegments', 'orderCategoryDaily', 'categorySales', 'profitSeries', 'wbEconomics', 'conversion'].map(name => [name, { read: async input => ({ name, input }) }]));
+const analytics = () => Object.fromEntries(['buyerOrderSegments', 'buyerProductSegments', 'b2bRadar', 'orderCategoryDaily', 'categorySales', 'profitSeries', 'wbEconomics', 'conversion'].map(name => [name, { read: async input => ({ name, input }) }]));
 const stateStore = { read: async () => null, readCommand: async () => null, write: async () => {}, remove: async () => {} };
 const noop = async () => ({});
 const ownerAdapters = { management: { products: noop, state: noop, preview: noop, create: noop, transition: noop, note: noop }, financeRegister: { report: noop, saveLoan: noop, savePayment: noop }, supplierPortals: { read: async () => ({ categories: [] }), preview: noop, saveCategory: noop, savePortal: noop }, history: { status: noop, report: noop }, stockHistory: { status: noop, report: noop, csv: noop }, workspaceTools: { handle: async () => false } };
@@ -38,6 +38,7 @@ test('coverage exposes implemented SQL reads and blocks production start on miss
 test('analytics handler preserves query names and awaits TrueStats command envelopes', async () => {
   const seen = [], services = analytics(), stats = { status: async () => ({ connected: true }), async connect(key, op) { seen.push({ key, op }); return { connected: true }; } }, handler = createAnalyticsHandler({ analytics: services, trueStats: stats });
   let res = response(); assert.equal(await handler.handle({ method: 'GET' }, res, new URL('http://local/api/buyer-product-segments?from=2026-09-01&to=2026-09-02&market=WB&store=wb-1&limit=5&buyerType=legal')), true); assert.equal(res.status, 200); assert.deepEqual(res.value.input, { from: '2026-09-01', to: '2026-09-02', market: 'WB', storeId: 'wb-1', limit: 5, buyerType: 'legal' });
+  res=response();assert.equal(await handler.handle({method:'GET'},res,new URL('http://local/api/b2b-radar?from=2026-09-01&to=2026-09-07&market=Ozon&store=1&limit=50&offset=100')),true);assert.equal(res.status,200);assert.deepEqual(res.value.input,{from:'2026-09-01',to:'2026-09-07',market:'Ozon',storeId:'1',limit:50,offset:100});
   const body = { key: 'synthetic-key', commandId: '11111111-1111-4111-8111-111111111111', timestamp: '2026-09-22T00:00:00.000Z' };
   res = response(); await handler.handle(Object.assign(require('node:stream').Readable.from([JSON.stringify(body)]), { method: 'POST', headers: {} }), res, new URL('http://local/api/truestats/connect')); assert.equal(res.status, 200); assert.deepEqual(seen[0], { key: 'synthetic-key', op: { commandId: body.commandId, timestamp: body.timestamp } });
   res = response(); await handler.handle(Object.assign(require('node:stream').Readable.from(['null']), { method: 'POST', headers: {} }), res, new URL('http://local/api/truestats/connect')); assert.equal(res.status, 400);

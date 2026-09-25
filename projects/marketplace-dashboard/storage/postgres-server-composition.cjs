@@ -10,6 +10,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const READ_ROUTES = Object.freeze({
   '/api/buyer-order-segments': ['buyerOrderSegments', value => ({ from: value.get('from'), to: value.get('to'), market: value.get('market') || 'all', storeId: value.get('store') || undefined })],
   '/api/buyer-product-segments': ['buyerProductSegments', value => ({ from: value.get('from'), to: value.get('to'), market: value.get('market') || 'all', storeId: value.get('store') || undefined, limit: Number(value.get('limit') || 20), buyerType: value.get('buyerType') || 'legal' })],
+  '/api/b2b-radar': ['b2bRadar', value => ({ from: value.get('from'), to: value.get('to'), market: value.get('market') || 'all', storeId: value.get('store') || undefined, limit: Number(value.get('limit') || 100), offset: Number(value.get('offset') || 0) })],
   '/api/category-sales': ['categorySales', value => ({ category: value.get('category') || undefined, from: value.get('from') || undefined, to: value.get('to') || undefined, market: value.get('market') || 'all', store: value.get('store') || undefined, days: Number(value.get('days') || 7) })],
   '/api/conversion': ['conversion', value => ({ storeId: value.get('store') || undefined, market: value.get('market') || 'all' })],
   '/api/order-category-daily': ['orderCategoryDaily', value => ({ from: value.get('from'), to: value.get('to'), market: value.get('market') || 'all', store: value.get('store') || undefined })],
