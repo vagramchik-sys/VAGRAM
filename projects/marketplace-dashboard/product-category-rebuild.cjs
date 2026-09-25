@@ -11,6 +11,7 @@ const collator = new Intl.Collator('ru', { numeric: true, sensitivity: 'base' })
 // Explicit maintenance only. Rebuild derived branches from the reviewed family,
 // never from the previous generated leaf (which would freeze old mistakes).
 function rebuild(input, products, { reviewedAt = new Date().toISOString() } = {}) {
+  if (String(input?.revision || '').startsWith('stalkrepej-')) return require('./product-category-site.cjs').rebuildFromSite(input, products, { reviewedAt });
   const original = validate(input), next = structuredClone(original);
   const old = new Map(original.types.map(type => [type.id, type]));
   const baseId = id => { let type = old.get(id); while (type && generated(type.id)) type = old.get(type.parentId); if (!type) throw Error('Missing reviewed product family'); return type.id; };
