@@ -3,9 +3,10 @@
 
   const LIMIT = 50;
   const moneyFormatter = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 2 });
+  const bidFormatter = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 6 });
   const countFormatter = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 0 });
   const percentFormatter = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
-  const stateNames = Object.freeze({ BASELINE: 'Наблюдение', PRICE_UP: 'Поднять цену', WAIT_PRICE: 'Проверяем цену', BID_UP: 'Поднять ставку', WAIT_ADS: 'Проверяем рекламу', HOLD: 'Без изменений', ROLLBACK: 'Вернуть изменение', BLOCKED: 'Нет рекомендации' });
+  const stateNames = Object.freeze({ BASELINE: 'Наблюдение', PRICE_UP: 'Поднять цену', WAIT_PRICE: 'Проверяем цену', BID_UP: 'Поднять ставку', WAIT_ADS: 'Проверяем рекламу', WAIT_ECONOMICS: 'WAIT_ECONOMICS · Ожидаем экономику', HOLD: 'Без изменений', ROLLBACK: 'Вернуть изменение', BLOCKED: 'Нет рекомендации' });
   const confidenceNames = Object.freeze({ HIGH: 'Высокая', MEDIUM: 'Средняя', LOW: 'Низкая' });
 
   function numeric(value) {
@@ -17,7 +18,24 @@
     return null;
   }
   function money(value) { const amount = numeric(value); return amount === null ? '—' : moneyFormatter.format(amount) + ' ₽'; }
-  function bid(value, raw) { return numeric(value) !== null ? money(value) : typeof raw === 'string' && /^\d+(?:\.\d+)?$/u.test(raw) && raw.length <= 30 ? raw + ' ед. API' : '—'; }
+  function bid(value) { const amount = numeric(value); return amount === null ? '—' : bidFormatter.format(amount) + ' ₽'; }
+  function bidComparison(ad = {}) {
+    const current = numeric(ad.currentBid), competitive = numeric(ad.competitiveBid);
+    return { belowMarketPct: current !== null && competitive > 0 ? (competitive - current) / competitive * 100 : null,
+      roomPct: current > 0 && competitive !== null ? (competitive - current) / current * 100 : null };
+  }
+  function bidComparisonText(ad = {}) {
+    const {belowMarketPct} = bidComparison(ad);
+    const comparison = belowMarketPct === null ? 'Сравнение недоступно' : belowMarketPct === 0 ? 'На уровне конкурентной' : (belowMarketPct > 0 ? 'ниже рынка на ' : 'выше рынка на ') + percent(Math.abs(belowMarketPct));
+    return ['Текущая ' + bid(ad.currentBid), 'Конкурентная ' + bid(ad.competitiveBid), comparison].join(' · ');
+  }
+  function competitiveRoom(ad = {}) { const value = bidComparison(ad).roomPct; return value === null ? '—' : (value > 0 ? '+' : '') + percent(value); }
+  function confirmedBidValues(economics = {}, optimizer = {}) {
+    const cap = economics.confirmed === true ? numeric(optimizer.maxProfitableBid) : null;
+    const recommended = economics.confirmed === true ? numeric(optimizer.recommendedBid) : null;
+    return {cap, recommended: cap !== null && recommended !== null && recommended <= cap ? recommended : null,
+      contribution: economics.confirmed === true ? numeric(economics.contributionAfterAds) : null};
+  }
   function count(value) { const amount = numeric(value); return amount === null ? '—' : countFormatter.format(amount); }
   function percent(value) { const amount = numeric(value); return amount === null ? '—' : percentFormatter.format(amount) + ' %'; }
   function dateTime(value) { const time = Date.parse(value); return Number.isFinite(time) ? new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Moscow' }).format(time) + ' МСК' : '—'; }
@@ -58,11 +76,11 @@
       return (!filters.state || state === filters.state)
         && (!filters.confidence || item.optimizer?.confidence === filters.confidence)
         && (!filters.onlyScalable || state === (pageName === 'ads' ? 'BID_UP' : 'PRICE_UP'))
-        && (!filters.onlyBlocked || state === 'BLOCKED');
+        && (!filters.onlyBlocked || ['BLOCKED', 'WAIT_ECONOMICS'].includes(state));
     });
   }
 
-  if (typeof module === 'object' && module.exports) module.exports = { LIMIT, numeric, money, bid, count, percent, dateTime, adsCoverage, adsPeriodText, listParams, safeItems, filterPageItems };
+  if (typeof module === 'object' && module.exports) module.exports = { LIMIT, numeric, money, bid, bidComparison, bidComparisonText, competitiveRoom, confirmedBidValues, count, percent, dateTime, adsCoverage, adsPeriodText, listParams, safeItems, filterPageItems };
   if (!scope?.document) return;
 
   const document = scope.document;
@@ -73,7 +91,7 @@
   const rows = $('optimizer-rows');
   const dialog = $('optimizer-detail');
   const state = { offset: 0, total: 0, payload: null, shown: 0, loading: null, requestId: 0, settingsRequestId: 0, detailId: 0 };
-  const rowColumns = page === 'prices' ? 12 : 15;
+  const rowColumns = page === 'prices' ? 12 : 16;
 
   async function api(url, options) {
     const response = await scope.fetch(url, { credentials: 'same-origin', ...options });
@@ -109,7 +127,7 @@
     cell.append(button);
     const sub = document.createElement('span'); sub.className = 'secondary-line';
     sub.textContent = [item.product?.offerId, item.product?.sku, page === 'ads' ? item.campaign?.name : null].filter(Boolean).join(' · ') || 'Артикул не указан';
-    cell.append(sub); tr.append(cell);
+    cell.append(sub); tr.append(cell); return cell;
   }
   function stateCell(tr, optimizer) {
     const cell = document.createElement('td');
@@ -142,11 +160,19 @@
   }
   function renderAdsRow(item) {
     const tr = document.createElement('tr');
-    productCell(tr, item);
-    textCell(tr, bid(item.advertising?.currentBid, item.advertising?.currentBidRaw), 'number main-number');
-    textCell(tr, bid(item.advertising?.competitiveBid, item.advertising?.competitiveBidRaw), 'number');
-    textCell(tr, money(item.optimizer?.maxProfitableBid), 'number');
-    textCell(tr, money(item.optimizer?.recommendedBid), 'number main-number');
+    const product = productCell(tr, item), values = confirmedBidValues(item.economics, item.optimizer);
+    const comparison = document.createElement('span'); comparison.className = 'secondary-line';
+    comparison.textContent = bidComparisonText(item.advertising);
+    product.append(comparison);
+    if (item.economics?.confirmed !== true) {
+      const reason = document.createElement('span'); reason.className = 'optimizer-reason';
+      reason.textContent = 'Экономика SKU неполная'; product.append(reason);
+    }
+    textCell(tr, bid(item.advertising?.currentBid), 'number main-number');
+    textCell(tr, bid(item.advertising?.competitiveBid), 'number');
+    textCell(tr, bid(values.cap), 'number');
+    textCell(tr, bid(values.recommended), 'number main-number');
+    textCell(tr, competitiveRoom(item.advertising), 'number');
     textCell(tr, count(item.advertising?.impressions), 'number');
     textCell(tr, count(item.advertising?.clicks), 'number');
     textCell(tr, percent(item.advertising?.ctrPct), 'number');
@@ -155,7 +181,7 @@
     textCell(tr, percent(item.advertising?.cvrPct), 'number');
     textCell(tr, money(item.advertising?.spend), 'number');
     textCell(tr, percent(item.advertising?.drrPct), 'number');
-    textCell(tr, money(item.economics?.contributionAfterAds), 'number');
+    textCell(tr, money(values.contribution), 'number');
     stateCell(tr, item.optimizer);
     return tr;
   }
@@ -185,12 +211,25 @@
       ['Потенциал прибыли', 'potentialContributionIncrease', money]
     ] : [
       ['Расходы на рекламу', 'spend', money], ['Рекламная выручка', 'revenue', money],
-      ['Вклад после рекламы', 'contributionAfterAds', money], ['Доля рекламы', 'drrPct', percent],
-      ['Ниже конкурентной', 'belowCompetitiveCount', count], ['Выше прибыльного потолка', 'aboveProfitableCount', count],
-      ['Можно масштабировать', 'scalableCount', count], ['Заблокировано', 'blockedCount', count]
+      ['Общий ДРР', 'drrPct', percent], ['SKU ниже конкурентной ставки', 'belowCompetitiveCount', count],
+      ['SKU с рекламой', 'advertisedSkuCount', count], ['SKU с достаточной статистикой', 'sufficientStatisticsSkuCount', count],
+      ['Вклад SKU после рекламы', 'contributionAfterAds', money]
     ];
     const note = summary.complete === true ? 'Подтверждённые данные' : 'Данные могут быть неполными';
-    $('optimizer-kpis').replaceChildren(...spec.map(([label, key, format]) => metric(label, format(summary[key]), note)));
+    $('optimizer-kpis').replaceChildren(...spec.map(([label, key, format]) => {
+      let detail = note;
+      if (page === 'ads') {
+        detail = summary.complete === true ? 'За выбранный период' : 'По доступным строкам · данные неполные';
+        if (key === 'drrPct') detail = 'Расходы / выручка строк, где известны обе суммы';
+        if (key === 'advertisedSkuCount' || key === 'belowCompetitiveCount') detail = 'По магазинам · без повторов между кампаниями';
+        if (key === 'sufficientStatisticsSkuCount') {
+          const t = summary.statisticsThresholds;
+          detail = t ? 'Полный период · от ' + count(t.minImpressions) + ' показов, ' + count(t.minClicks) + ' кликов, ' + count(t.minOrders) + ' заказов' : 'Недостаточно данных для оценки';
+        }
+        if (key === 'contributionAfterAds') detail = summary.economicsComplete === true ? 'По SKU, без повторов между кампаниями' : 'Экономика SKU неполная';
+      }
+      return metric(label, format(key === 'contributionAfterAds' && summary.economicsComplete !== true ? null : summary[key]), detail);
+    }));
   }
   function renderMode(settings, caps = {}) {
     const element = $('optimizer-mode');
@@ -295,11 +334,12 @@
     const economics = detail.economics || item.economics || {};
     const optimizer = detail.optimizer || item.optimizer || {};
     const automation = detail.automation || {};
+    const bidValues = confirmedBidValues(economics, optimizer);
     $('optimizer-detail-title').textContent = product.name || 'Товар';
     const blocks = [
       detailSection('PRICE · ЦЕНА', [['Цена продавца', money(price.sellerPrice)], ['Цена покупателя', money(price.customerPrice)], ['Разница', money(price.sellerCustomerDifference)], ['Следующая цена', money(optimizer.recommendedPrice)], ['Источник цены покупателя', price.customerPriceSource || 'Не подтверждён']]),
-      detailSection('ADVERTISING · РЕКЛАМА', [['Текущая ставка', bid(ads.currentBid, ads.currentBidRaw)], ['Конкурентная ставка', bid(ads.competitiveBid, ads.competitiveBidRaw)], ['Прибыльный потолок', money(optimizer.maxProfitableBid)], ['Рекомендация', money(optimizer.recommendedBid)], ['Показы / клики / заказы', [count(ads.impressions), count(ads.clicks), count(ads.orders)].join(' / ')], ['Расход / ДРР', `${money(ads.spend)} / ${percent(ads.drrPct)}`]], ads.connected === false ? 'Performance API не подключён.' : ads.unit !== 'RUB_PER_CLICK' ? 'Ставки в единицах API: пересчёт в рубли не подтверждён, рекомендации отключены.' : ''),
-      detailSection('ECONOMICS · ЭКОНОМИКА', [['Себестоимость', money(cost.unitCost)], ['Остаток', count(stock.quantity)], ['Запас в днях', count(stock.days)], ['До рекламы', money(economics.contributionBeforeAds)], ['После рекламы', money(economics.contributionAfterAds)], ['На заказ', money(economics.contributionPerOrder)], ['Маржа', percent(economics.marginPct)]], economics.economicsStatus === 'complete' ? '' : 'Экономика неполная: отсутствующие суммы не равны нулю.'),
+      detailSection('ADVERTISING · РЕКЛАМА', [['Текущая ставка', bid(ads.currentBid)], ['Конкурентная ставка', bid(ads.competitiveBid)], ['Прибыльный потолок', bid(bidValues.cap)], ['Рекомендация', bid(bidValues.recommended)], ['Минимальная ставка', bid(ads.minimumBid)], ['Запас до конкурентной', competitiveRoom(ads)], ['Показы / клики / заказы', [count(ads.impressions), count(ads.clicks), count(ads.orders)].join(' / ')], ['Расход / ДРР', `${money(ads.spend)} / ${percent(ads.drrPct)}`]], ads.connected === false ? 'Performance API не подключён.' : bidComparisonText(ads)),
+      detailSection('ECONOMICS · ЭКОНОМИКА', [['Себестоимость', money(cost.unitCost)], ['Остаток', count(stock.quantity)], ['Запас в днях', count(stock.days)], ['До рекламы', money(economics.contributionBeforeAds)], ['После рекламы, весь SKU', money(bidValues.contribution)], ['На заказ', money(economics.contributionPerOrder)], ['Маржа', percent(economics.marginPct)]], economics.confirmed === true ? 'Вклад по всему SKU, а не только по выбранной кампании.' : 'Экономика SKU неполная'),
       detailSection('OPTIMIZER · РЕШЕНИЕ', [['Состояние', stateNames[optimizer.state] || optimizer.state || '—'], ['Следующее действие', optimizer.action || 'NONE'], ['Уверенность', confidenceNames[optimizer.confidence] || '—'], ['Блокировки', Array.isArray(optimizer.blockers) && optimizer.blockers.length ? optimizer.blockers.join(', ') : '—']], optimizer.humanReason || 'Причина ещё не рассчитана.', true),
       detailSection('AUTO · БЕЗОПАСНОСТЬ', [['Цена', automation.price?.state || 'HOLD'], ['Ставка', automation.bid?.state || 'HOLD']],
         `Цена: ${automation.price?.humanReason || 'Нет подтверждённых условий.'} Ставка: ${automation.bid?.humanReason || 'Нет подтверждённых условий.'}`, true)

@@ -129,7 +129,8 @@ test('all statistics reads preserve unknown sums and require explicit daily cove
   assert.equal(reads.length, 3);
   for (const {sql, args} of reads) {
     assert.match(sql, /MIN\(stat_date\)::text AS period_from,MAX\(stat_date\)::text AS period_to/);
-    assert.match(sql, /CASE WHEN COUNT\(spend\)=COUNT\(\*\) THEN SUM\(spend\) END spend/);
+    if (sql === reads[0].sql) assert.match(sql, /SUM\(spend\) spend/);
+    else assert.match(sql, /CASE WHEN COUNT\(spend\)=COUNT\(\*\) THEN SUM\(spend\) END spend/);
     assert.match(sql, /MIN\(observed_at\) statistics_observed_at/);
     assert.match(sql, /COUNT\(\*\)=\(\$\d+::date-\$\d+::date\+1\)/);
     assert.match(sql, /FROM "pult_optimizer"\."statistics_coverage" cv/);
@@ -139,7 +140,9 @@ test('all statistics reads preserve unknown sums and require explicit daily cove
     assert.ok(args.includes(options.from)); assert.ok(args.includes(options.to));
   }
   assert.match(reads[0].sql, /p\.current_bid_raw,p\.competitive_bid_raw,p\.minimum_bid_raw/);
-  assert.match(reads[0].sql, /CASE WHEN COUNT\(current_bid\)OVER\(\)=COUNT\(\*\)OVER\(\)/);
+  assert.match(reads[0].sql, /FROM q GROUP BY store_id,sku/);
+  assert.match(reads[0].sql, /SUM\(spend::numeric\)::text summary_spend/);
+  assert.match(reads[0].sql, /LEFT JOIN LATERAL/);
 });
 
 test('refresh stores explicit daily coverage and never prunes acquired statistics history', async () => {

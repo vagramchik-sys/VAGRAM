@@ -1,6 +1,6 @@
 'use strict';
 const test = require('node:test'), assert = require('node:assert/strict');
-const {financeShape, productShape, advertisingShape, createPostgresOptimizer} = require('../storage/domains/postgres-optimizer.cjs');
+const {financeShape, productShape, advertisingShape, advertisingDecision, createPostgresOptimizer} = require('../storage/domains/postgres-optimizer.cjs');
 const {calculateContributionEconomics} = require('../optimizer/economics.cjs');
 
 test('ledger expense normalization preserves net reversals', () => {
@@ -112,4 +112,45 @@ test('SKU detail explains why an apparent bid recommendation cannot be applied a
   assert.ok(detail.automation.bid.reasonCodes.includes('AUTO_NOT_ENABLED'));
   assert.ok(detail.automation.bid.reasonCodes.includes('PREVIOUS_BID_STEP_UNEVALUATED_OR_COOLDOWN'));
   assert.ok(detail.automation.bid.reasonCodes.includes('SKU_30D_AD_SHARE_UNVERIFIED'));
+});
+
+test('all three Ozon bid fields normalize once while raw values remain separate', () => {
+  const raw = {current_bid_raw: '130000000', competitive_bid_raw: '200000000', minimum_bid_raw: '3500000'};
+  const shaped = advertisingShape(raw);
+  assert.equal(shaped.currentBid, 130); assert.equal(shaped.competitiveBid, 200); assert.equal(shaped.minimumBid, 3.5); assert.equal(shaped.unit, 'RUB_PER_CLICK');
+  assert.equal(shaped.currentBidRaw, raw.current_bid_raw);
+  const normalized = advertisingShape({...raw, current_bid: '130', competitive_bid: '200', minimum_bid: '3.5', bid_unit: 'RUB_PER_CLICK'});
+  assert.equal(normalized.currentBid, 130); assert.equal(normalized.competitiveBid, 200); assert.equal(normalized.minimumBid, 3.5);
+});
+
+test('unallocated SKU economics forces WAIT_ECONOMICS and removes profit/recommendation', () => {
+  const econ = {economicsStatus: 'complete', contributionAfterAds: 100, contributionPerOrder: 10, marginPct: 20};
+  const decision = {state: 'BID_UP', action: 'BID', recommendedBid: 170, maxProfitableBid: 180};
+  const result = advertisingDecision(decision, econ, {complete: false}, {currentBid: 130, competitiveBid: 200});
+  assert.equal(result.optimizer.state, 'WAIT_ECONOMICS'); assert.equal(result.optimizer.action, 'NONE');
+  assert.equal(result.optimizer.recommendedBid, null); assert.equal(result.optimizer.maxProfitableBid, null);
+  assert.equal(result.economics.contributionAfterAds, null); assert.equal(result.economics.incompleteReason, 'Экономика SKU неполная');
+  assert.equal(econ.contributionAfterAds, 100, 'input remains unchanged');
+});
+
+test('confirmed economics still bounds recommendation by its RUB profitable ceiling', () => {
+  const econ = {economicsStatus: 'complete', contributionAfterAds: 100};
+  const decision = {state: 'BID_UP', action: 'BID', recommendedBid: 170, maxProfitableBid: 180};
+  const run = change => advertisingDecision({...decision, ...change}, econ, {complete: true}, {currentBid: 130, competitiveBid: 200});
+  const valid = run({}); assert.equal(valid.optimizer.recommendedBid, 170); assert.equal(valid.optimizer.maxProfitableBid, 180);
+  assert.equal(valid.optimizer.competitiveWarning, 'Конкурентную ставку догонять невыгодно');
+  assert.equal(run({recommendedBid: 181}).optimizer.recommendedBid, null);
+  assert.equal(run({maxProfitableBid: null}).optimizer.recommendedBid, null);
+  assert.equal(run({recommendedBid: 180}).optimizer.recommendedBid, 180);
+});
+
+test('ad KPIs survive pagination and unknown finance, empty selection never creates profit zero', async () => {
+  const summary = {spend: 123, revenue: 1000, drrPct: 12.3, belowCompetitiveCount: 7, advertisedSkuCount: 10, sufficientStatisticsSkuCount: 2, complete: false};
+  const repository = {readAds: async () => ({items: [], total: 20, summary}), readProductInputs: async () => [], readRecentExperiments: async () => [], readPriceInputs: async () => ({items: []}), readAdsForProducts: async () => [], readHistory: async () => [], readSettings: async () => ({}), connectionStatus: async () => ({stores: []}), campaignOptions: async () => []};
+  const domain = createPostgresOptimizer({repository, storesRepository: {read: async () => ({})}, sourceProviders: {getProducts: async () => []}, optimizer: {calculateContributionEconomics}});
+  const result = await domain.ads({offset: 50});
+  for (const [key, value] of Object.entries(summary)) assert.equal(result.summary[key], value);
+  assert.equal(result.summary.contributionAfterAds, null);
+  repository.readAds = async () => ({items: [], total: 0, summary: {spend: null, revenue: null}});
+  assert.equal((await domain.ads({})).summary.contributionAfterAds, null);
 });

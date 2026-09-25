@@ -39,15 +39,47 @@ function createOptimizerRepository({pool,readPool=pool,now=()=>new Date(),schema
  }
  async function resolveRefresh({storeId,commandId,expectedRevision}={}){storeId=store(storeId);if(!UUID.test(commandId||''))fail('INVALID_ARGUMENT','Refresh command is invalid');const row=(await pool.query(`SELECT kind,store_id,intent_hash,receipt FROM ${t('commands')} WHERE command_id=$1`,[commandId])).rows[0];if(!row)return null;if(row.kind!=='refresh-performance'||row.store_id!==storeId||expectedRevision!==undefined&&row.intent_hash!==refreshIntent(storeId,expectedRevision).hash)fail('COMMAND_ID_REUSED','Optimizer command id was reused');return clone(row.receipt)}
  // Null metrics stay unknown; complete requires an explicit successful coverage record for every requested day.
- function statisticsColumns(options,params){
+ function statisticsColumns(options,params,partial=false){
   const from=options.from?params.indexOf(String(options.from))+1:0,to=options.to?params.indexOf(String(options.to))+1:0;
   const metrics=['impressions','clicks','orders','spend','revenue'];
-  const totals=metrics.map(field=>`CASE WHEN COUNT(${field})=COUNT(*) THEN SUM(${field}) END ${field}`).join(',');
+  const totals=metrics.map(field=>partial?`SUM(${field}) ${field}`:`CASE WHEN COUNT(${field})=COUNT(*) THEN SUM(${field}) END ${field}`).join(',')+(partial?',SUM(spend) FILTER(WHERE revenue IS NOT NULL) paired_spend,SUM(revenue) FILTER(WHERE spend IS NOT NULL) paired_revenue':'');
   const covered=from&&to?`(SELECT COUNT(*) FROM ${t('statistics_coverage')} cv WHERE cv.store_id=${t('statistics')}.store_id AND cv.stat_date BETWEEN $${from}::date AND $${to}::date AND cv.status='complete')=($${to}::date-$${from}::date+1)`: 'false';
   return `store_id,campaign_id,sku,MIN(stat_date)::text AS period_from,MAX(stat_date)::text AS period_to,MIN(observed_at) statistics_observed_at,${totals},(BOOL_AND(complete) AND ${metrics.map(field=>`COUNT(${field})=COUNT(*)`).join(' AND ')} AND ${from&&to?`COUNT(*)=($${to}::date-$${from}::date+1) AND MIN(stat_date)=$${from}::date AND MAX(stat_date)=$${to}::date AND ${covered}`:'false'}) complete`;
  }
  function readFilters(options={}){const clauses=[],params=[],add=(sql,v)=>{params.push(v);clauses.push(sql.replace('?',`$${params.length}`))};if(options.storeId)add('p.store_id=?',store(options.storeId));if(options.campaignId)add('p.campaign_id=?',String(options.campaignId));if(options.search){const q=`%${String(options.search).slice(0,200)}%`;params.push(q);const n=params.length;clauses.push(`(p.sku ILIKE $${n} OR COALESCE(c.name,'') ILIKE $${n})`)}return{where:clauses.length?'WHERE '+clauses.join(' AND '):'',params}}
- async function readAds(options={}){const limit=Math.max(1,Math.min(200,Number(options.limit)||50)),offset=Math.max(0,Number(options.offset)||0),f=readFilters(options),params=[...f.params],dates=[];if(options.from){params.push(String(options.from));dates.push(`stat_date>=$${params.length}::date`)}if(options.to){params.push(String(options.to));dates.push(`stat_date<=$${params.length}::date`)}if(options.storeId)dates.push(`store_id=$${f.params.indexOf(String(options.storeId))+1}`);const rows=(await readPool.query(`WITH s AS(SELECT ${statisticsColumns(options,params)} FROM ${t('statistics')} ${dates.length?'WHERE '+dates.join(' AND '):''} GROUP BY store_id,campaign_id,sku),q AS(SELECT p.store_id,p.campaign_id,c.name campaign_name,c.state campaign_state,c.payment_type,p.sku,p.product_id,l.status sku_link_status,p.current_bid::text,p.competitive_bid::text,p.minimum_bid::text,p.bid_unit,p.current_bid_raw,p.competitive_bid_raw,p.minimum_bid_raw,p.current_bid_raw_unit,p.competitive_bid_raw_unit,p.minimum_bid_raw_unit,p.observed_at,s.statistics_observed_at,s.period_from,s.period_to,s.impressions::text,s.clicks::text,s.orders::text,s.spend::text,s.revenue::text,s.complete FROM ${t('campaign_products')}p JOIN ${t('campaigns')}c USING(store_id,campaign_id) LEFT JOIN ${t('sku_links')}l USING(store_id,sku) LEFT JOIN s USING(store_id,campaign_id,sku) ${f.where}) SELECT q.*,COUNT(*)OVER()::text total,CASE WHEN COUNT(spend)OVER()=COUNT(*)OVER() THEN SUM(spend::numeric)OVER()::text END summary_spend,CASE WHEN COUNT(revenue)OVER()=COUNT(*)OVER() THEN SUM(revenue::numeric)OVER()::text END summary_revenue,CASE WHEN COUNT(current_bid)OVER()=COUNT(*)OVER() AND COUNT(competitive_bid)OVER()=COUNT(*)OVER() THEN COUNT(*)FILTER(WHERE current_bid::numeric<competitive_bid::numeric)OVER()::text END summary_below,BOOL_AND(COALESCE(complete,false))OVER() summary_complete FROM q ORDER BY store_id COLLATE "C",campaign_id COLLATE "C",sku COLLATE "C" LIMIT $${params.length+1} OFFSET $${params.length+2}`,[...params,limit,offset])).rows,first=rows[0],items=rows.map(({total,summary_spend,summary_revenue,summary_below,summary_complete,...row})=>row);return{items,total:Number(first?.total||0),limit,offset,summary:{spend:first?.summary_spend===null||first?.summary_spend===undefined?null:Number(first.summary_spend),revenue:first?.summary_revenue===null||first?.summary_revenue===undefined?null:Number(first.summary_revenue),belowCompetitiveCount:first?.summary_below==null?null:Number(first.summary_below),complete:first?.summary_complete===true}}}
+ async function readAds(options={}) {
+  const {DEFAULT_SETTINGS}=require('../optimizer/decision.cjs');
+  const limit=Math.max(1,Math.min(200,Number(options.limit)||50)),offset=Math.max(0,Number(options.offset)||0),f=readFilters(options),params=[...f.params],dates=[];
+  if(options.from){params.push(String(options.from));dates.push(`stat_date>=$${params.length}::date`)}
+  if(options.to){params.push(String(options.to));dates.push(`stat_date<=$${params.length}::date`)}
+  if(options.storeId)dates.push(`store_id=$${f.params.indexOf(String(options.storeId))+1}`);
+  const columns=statisticsColumns(options,params,true);
+  const thresholds={};for(const field of ['minImpressions','minClicks','minOrders']) {
+   const value=options.statisticsThresholds?.[field]??DEFAULT_SETTINGS[field];
+   if(!Number.isSafeInteger(value)||value<1)fail('INVALID_ARGUMENT','Statistics thresholds are invalid');
+   thresholds[field]=value;params.push(value);
+  }
+  const [viewsParam,clicksParam,ordersParam]=[params.length-2,params.length-1,params.length];
+  // Compare pairs in the same stored unit; conversion for display lives only in bid-units.cjs.
+  const below=`CASE WHEN bid_unit='RUB_PER_CLICK' AND current_bid IS NOT NULL AND competitive_bid IS NOT NULL THEN current_bid::numeric<competitive_bid::numeric WHEN current_bid_raw~'^[0-9]+([.][0-9]+)?$' AND competitive_bid_raw~'^[0-9]+([.][0-9]+)?$' THEN current_bid_raw::numeric<competitive_bid_raw::numeric END`;
+  const result=await readPool.query(`WITH s AS(SELECT ${columns} FROM ${t('statistics')} ${dates.length?'WHERE '+dates.join(' AND '):''} GROUP BY store_id,campaign_id,sku),
+   q AS(SELECT p.store_id,p.campaign_id,c.name campaign_name,c.state campaign_state,c.payment_type,p.sku,p.product_id,l.status sku_link_status,p.current_bid::text,p.competitive_bid::text,p.minimum_bid::text,p.bid_unit,p.current_bid_raw,p.competitive_bid_raw,p.minimum_bid_raw,p.current_bid_raw_unit,p.competitive_bid_raw_unit,p.minimum_bid_raw_unit,p.observed_at,s.statistics_observed_at,s.period_from,s.period_to,s.impressions::text,s.clicks::text,s.orders::text,s.spend::text,s.revenue::text,s.paired_spend::text,s.paired_revenue::text,s.complete
+    FROM ${t('campaign_products')}p JOIN ${t('campaigns')}c USING(store_id,campaign_id) LEFT JOIN ${t('sku_links')}l USING(store_id,sku) LEFT JOIN s USING(store_id,campaign_id,sku) ${f.where}),
+   totals AS(SELECT COUNT(*)::text total,SUM(spend::numeric)::text summary_spend,SUM(revenue::numeric)::text summary_revenue,
+    SUM(paired_spend::numeric)::text summary_paired_spend,SUM(paired_revenue::numeric)::text summary_paired_revenue,
+    BOOL_AND(COALESCE(complete,false)) summary_complete FROM q),
+   sku_groups AS(SELECT store_id,sku,BOOL_OR(${below}) below,BOOL_OR(period_from IS NOT NULL) has_statistics,
+    (BOOL_AND(COALESCE(complete,false)) AND COUNT(impressions)=COUNT(*) AND COUNT(clicks)=COUNT(*) AND COUNT(orders)=COUNT(*) AND SUM(impressions::numeric)>=$${viewsParam} AND SUM(clicks::numeric)>=$${clicksParam} AND SUM(orders::numeric)>=$${ordersParam}) sufficient
+    FROM q GROUP BY store_id,sku),
+   sku_totals AS(SELECT COUNT(*)::text summary_sku_count,CASE WHEN COUNT(below)>0 THEN COUNT(*) FILTER(WHERE below) END::text summary_below,
+    CASE WHEN COUNT(*) FILTER(WHERE has_statistics)>0 THEN COUNT(*) FILTER(WHERE sufficient) END::text summary_sufficient FROM sku_groups)
+   SELECT page.*,totals.*,sku_totals.* FROM totals CROSS JOIN sku_totals LEFT JOIN LATERAL
+    (SELECT * FROM q ORDER BY store_id COLLATE "C",campaign_id COLLATE "C",sku COLLATE "C" LIMIT $${params.length+1} OFFSET $${params.length+2}) page ON true`,[...params,limit,offset]);
+  const first=result.rows[0],items=result.rows.filter(row=>row.store_id!==null&&row.store_id!==undefined).map(row=>Object.fromEntries(Object.entries(row).filter(([key])=>key!=='total'&&!key.startsWith('summary_'))));
+  const known=field=>first?.[field]===null||first?.[field]===undefined?null:Number(first[field]);
+  const pairedSpend=known('summary_paired_spend'),pairedRevenue=known('summary_paired_revenue');
+  return {items,total:Number(first?.total||0),limit,offset,summary:{spend:known('summary_spend'),revenue:known('summary_revenue'),drrPct:pairedSpend!==null&&pairedRevenue>0?pairedSpend/pairedRevenue*100:null,belowCompetitiveCount:known('summary_below'),advertisedSkuCount:known('summary_sku_count'),sufficientStatisticsSkuCount:known('summary_sufficient'),statisticsThresholds:thresholds,complete:first?.summary_complete===true}};
+ }
  async function readPriceInputs(options={}){
   const limit=Math.max(1,Math.min(200,Number(options.limit)||50)),offset=Math.max(0,Number(options.offset)||0),params=[],clauses=["p.domain='market'","p.entity_type='products'","p.store_id~'^[0-9]+$'"];
   if(options.storeId){params.push(store(options.storeId));clauses.push(`p.store_id=$${params.length}`)}
