@@ -26,7 +26,7 @@ test('rebuild is idempotent and reacts to corrected product data instead of free
 test('deep navigation is shortened, product characteristics retained and pack is always last',()=>{
  const source={schemaVersion:1,revision:'screws',reviewedAt,types:[{id:'root',name:'Крепёж',parentId:null},{id:'navigation',name:'Резьбовой крепёж',parentId:'root'},{id:'screws',name:'Саморезы',parentId:'navigation'},{id:'wood',name:'Саморез по дереву',parentId:'screws'}],assignments:{'1:a':'wood','1:b':'wood'},rules:[]};
  const result=rebuild(source,[{key:'1:a',name:'Саморез по дереву чёрный 3,5х35 мм 100 шт'},{key:'1:b',name:'Саморез по дереву жёлтый 3,5х35 мм 200 шт'}],{reviewedAt});
- assert.equal(path(result.registry,'1:a').length,5);assert.match(path(result.registry,'1:a')[3],/чёрный/);assert.equal(path(result.registry,'1:a')[4],'Упаковка: 100 шт.');assert.ok(result.registry.types.some(t=>t.id==='wood'));
+ assert.equal(path(result.registry,'1:a').length,5);assert.equal(path(result.registry,'1:a')[3],'Цвет: чёрный');assert.match(path(result.registry,'1:a')[4],/3.5×35 мм/);assert.ok(result.registry.types.some(t=>t.id==='wood'));
 });
 test('missing packaging is explicit and never guessed as one piece; numeric pack ordering',()=>{
  const ps=[{key:'1:a',name:'Скотч прозрачный 48 мм х 120 м 24 шт'},{key:'1:b',name:'Скотч прозрачный 48 мм х 120 м 6 шт'},{key:'1:c',name:'Скотч прозрачный 48 мм х 120 м'}];
@@ -39,4 +39,17 @@ test('keeps the owners merged gray and unspecified glove group through rebuildin
  const r={schemaVersion:1,revision:'gloves',reviewedAt,types:[{id:'ppe',parentId:null,name:'Средства защиты'},{id:'gloves',parentId:'ppe',name:'Перчатки'},{id:'cotton',parentId:'gloves',name:'Перчатки хлопчатобумажные с ПВХ'},{id:'attr-merged',parentId:'cotton',name:'Цвет: серый / не указан'}],assignments:{'1:a':'attr-merged','1:b':'attr-merged'},rules:[]};
  const ps=[{key:'1:a',name:'Перчатки хлопчатобумажные с ПВХ серые 100 пар'},{key:'1:b',name:'Перчатки хлопчатобумажные с ПВХ 100 пар'}];
  const result=rebuild(r,ps,{reviewedAt});assert.equal(result.registry.assignments['1:a'].typeId,result.registry.assignments['1:b'].typeId);assert.match(path(result.registry,'1:a')[3],/серый \/ не указан/);assert.equal(path(result.registry,'1:a')[4],'Упаковка: 100 пар');assert.equal(rebuild(result.registry,ps,{reviewedAt}).changed,false);
+});
+
+test('wood screws use colour at level four, product dimensions at five and retain every pack SKU',()=>{
+ const r={schemaVersion:1,revision:'wood',reviewedAt,types:[{id:'fasteners',parentId:null,name:'Крепёж'},{id:'screws',parentId:'fasteners',name:'Саморезы'},{id:'wood',parentId:'screws',name:'Саморез по дереву'}],assignments:{'1:a':'wood','1:b':'wood','1:c':'wood','1:d':'wood','1:e':'wood'},rules:[]};
+ const ps=[{key:'1:a',name:'Саморез по дереву чёрный 3,5х35 мм 100 шт'},{key:'1:b',name:'Саморез по дереву чёрный 3,5х35 мм 200 шт'},{key:'1:c',name:'Саморез по дереву жёлтый 3,5х35 мм 100 шт'},{key:'1:d',name:'Саморез по дереву чёрный 3,5х50 мм 100 шт'},{key:'1:e',name:'Саморез по дереву 3,5х35 мм 100 шт'}];
+ const result=rebuild(r,ps,{reviewedAt}),out=result.registry;
+ assert.deepEqual(path(out,'1:a'),['Крепёж','Саморезы','Саморез по дереву','Цвет: чёрный','Саморез по дереву · Размер: 3.5×35 мм']);
+ assert.equal(out.assignments['1:a'].typeId,out.assignments['1:b'].typeId);
+ assert.notEqual(out.assignments['1:a'].typeId,out.assignments['1:c'].typeId);
+ assert.notEqual(out.assignments['1:a'].typeId,out.assignments['1:d'].typeId);
+ assert.equal(path(out,'1:e')[3],'Цвет: не указан');
+ assert.deepEqual(Object.keys(out.assignments),Object.keys(r.assignments));
+ assert.equal(rebuild(out,ps,{reviewedAt}).changed,false);
 });

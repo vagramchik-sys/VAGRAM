@@ -61,15 +61,20 @@ function rebuild(input, products, { reviewedAt = new Date().toISOString() } = {}
     }
     const facets = Object.keys(labels).filter(key => rows.some(row => row.facets[key] && row.facets[key].id !== represented[key]?.id));
     const hasPack = rows.some(row => row.facets.pack);
+    // The owner wants wood-screw colour at level 4. Product dimensions use
+    // level 5; individual marketplace cards below retain their pack variants.
+    const colorFirst = depth(id) === 3 && /^Саморез по дереву$/iu.test(family.name);
     for (const row of rows) {
       let target = id;
-      if (facets.length) {
-        const signature = facets.map(key => [key, row.facets[key]?.id || 'unknown']);
-        const description = facets.filter(key => !represented[key] || row.facets[key]?.id !== represented[key].id)
+      if (colorFirst) target = node(id, 'color|' + (row.facets.color?.id || 'unknown'), 'Цвет: ' + (row.facets.color?.name || 'не указан'));
+      const productFacets = colorFirst ? facets.filter(key => key !== 'color') : facets;
+      if (productFacets.length || colorFirst) {
+        const signature = productFacets.map(key => [key, row.facets[key]?.id || 'unknown']);
+        const description = productFacets.filter(key => !represented[key] || row.facets[key]?.id !== represented[key].id)
           .map(key => labels[key] + ': ' + (row.facets[key]?.name || 'не указан')).join(' · ');
-        target = node(id, 'product|' + JSON.stringify(signature), family.name + ' · ' + description);
+        target = node(target, 'product|' + JSON.stringify(signature), family.name + (description ? ' · ' + description : ' · Размер: не указан'));
       }
-      if (hasPack) target = node(target, 'pack|' + (row.facets.pack?.id || 'unknown'), 'Упаковка: ' + (row.facets.pack?.name || 'не указана'));
+      if (hasPack && !colorFirst) target = node(target, 'pack|' + (row.facets.pack?.id || 'unknown'), 'Упаковка: ' + (row.facets.pack?.name || 'не указана'));
       next.assignments[row.key] = { ...row.assignment, typeId: target };
       if (target !== row.assignment.typeId) changes.push({ key: row.key, from: row.assignment.typeId, to: target });
     }
