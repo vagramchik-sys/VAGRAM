@@ -81,7 +81,7 @@ test('missing, conflicting and malformed campaign types cannot replace a prior s
 test('only normalized CPC campaigns enter product and statistics requests in a mixed response', async () => {
   const productRequests=[];
   const f=fixture({transport:{
-    listCampaigns:async()=>[{id:'7',PaymentType:'CPC',advObjectType:'SKU'},{id:'8',paymentType:'CPM',advObjectType:'SKU'},{id:'9',PaymentType:'CPO',advObjectType:'SKU'}],
+    listCampaigns:async()=>[{id:'7',state:'CAMPAIGN_STATE_RUNNING',PaymentType:'CPC',advObjectType:'SKU'},{id:'8',state:'CAMPAIGN_STATE_RUNNING',paymentType:'CPM',advObjectType:'SKU'},{id:'9',state:'CAMPAIGN_STATE_RUNNING',PaymentType:'CPO',advObjectType:'SKU'}],
     listCampaignProducts:async(_store,campaignId)=>{productRequests.push(campaignId);return[{sku:'101',bid:'12500000'}]}
   }});
   await f.api.refresh({storeId:'1',expectedRevision:'0',commandId:COMMAND});
@@ -89,6 +89,60 @@ test('only normalized CPC campaigns enter product and statistics requests in a m
   assert.deepEqual(saved.campaigns.map(row=>row.payment_type),['CPC','CPM','CPO']);
   assert.deepEqual(productRequests,['7']);assert.deepEqual(f.calls.find(row=>row[0]==='stats')[1].campaignIds,['7']);
   assert.deepEqual(saved.products.map(row=>row.campaign_id),['7']);assert.deepEqual(saved.statistics.map(row=>row.campaign_id),['7']);
+});
+
+test('running and inactive CPC campaigns are queried while archived campaigns only keep metadata', async () => {
+  const productRequests=[],statisticsRequests=[];
+  const f=fixture({transport:{
+    listCampaigns:async()=>[
+      {id:'7',title:'Running',state:'CAMPAIGN_STATE_RUNNING',PaymentType:'CPC',advObjectType:'SKU'},
+      {id:'8',title:'Inactive',state:'CAMPAIGN_STATE_INACTIVE',PaymentType:'CPC',advObjectType:'SKU'},
+      {id:'19581092',title:'Archived',state:'CAMPAIGN_STATE_ARCHIVED',PaymentType:'CPC',advObjectType:'SKU'}
+    ],
+    listCampaignProducts:async(_store,campaignId)=>{productRequests.push(campaignId);return[{sku:'101',bid:'12500000'}]},
+    getSkuStatistics:async(_store,input)=>{statisticsRequests.push(input);return[{campaignId:'7',sku:'101',date:'2026-09-23',views:'100',clicks:'10',orders:'2',expense:'25.50',sales:'200'}]}
+  }});
+  await f.api.refresh({storeId:'1',expectedRevision:'0',commandId:COMMAND});
+  const saved=f.calls.find(row=>row[0]==='commit')[1];
+  assert.deepEqual(saved.campaigns.map(row=>({id:row.campaign_id,state:row.state,active:row.active})),[
+    {id:'7',state:'CAMPAIGN_STATE_RUNNING',active:true},
+    {id:'8',state:'CAMPAIGN_STATE_INACTIVE',active:false},
+    {id:'19581092',state:'CAMPAIGN_STATE_ARCHIVED',active:false}
+  ]);
+  assert.deepEqual(productRequests,['7','8']);
+  assert.equal(statisticsRequests.length,1);assert.deepEqual(statisticsRequests[0].campaignIds,['7','8']);
+  assert.deepEqual(saved.products.map(row=>row.campaign_id),['7','8']);assert.deepEqual(saved.statistics.map(row=>row.campaign_id),['7']);
+});
+
+test('an archived-only snapshot commits campaign metadata without detail or statistics requests', async () => {
+  let detailRequests=0,statisticsRequests=0;
+  const f=fixture({transport:{
+    listCampaigns:async()=>[
+      {id:'19581092',title:'Archived CPC',state:'CAMPAIGN_STATE_ARCHIVED',PaymentType:'CPC',advObjectType:'SKU'},
+      {id:'19581093',title:'Archived CPM',state:'CAMPAIGN_STATE_ARCHIVED',PaymentType:'CPM',advObjectType:'SKU'}
+    ],
+    listCampaignProducts:async()=>{detailRequests++;throw Error('archived detail must not be requested')},
+    getSkuStatistics:async()=>{statisticsRequests++;throw Error('archived statistics must not be requested')}
+  }});
+  await f.api.refresh({storeId:'1',expectedRevision:'0',commandId:COMMAND});
+  const saved=f.calls.find(row=>row[0]==='commit')[1];
+  assert.equal(detailRequests,0);assert.equal(statisticsRequests,0);
+  assert.deepEqual(saved.campaigns.map(row=>row.campaign_id),['19581092','19581093']);
+  assert.deepEqual(saved.products,[]);assert.deepEqual(saved.statistics,[]);assert.deepEqual(saved.links,[]);
+});
+
+test('unknown campaign states keep metadata and make no detail or statistics requests', async () => {
+  let detailRequests=0,statisticsRequests=0;
+  const f=fixture({transport:{
+    listCampaigns:async()=>[{id:'10',title:'Future state',state:'CAMPAIGN_STATE_FUTURE',PaymentType:'CPC',advObjectType:'SKU'}],
+    listCampaignProducts:async()=>{detailRequests++;return[]},
+    getSkuStatistics:async()=>{statisticsRequests++;return[]}
+  }});
+  await f.api.refresh({storeId:'1',expectedRevision:'0',commandId:COMMAND});
+  const saved=f.calls.find(row=>row[0]==='commit')[1];
+  assert.equal(detailRequests,0);assert.equal(statisticsRequests,0);
+  assert.deepEqual(saved.campaigns.map(row=>({id:row.campaign_id,state:row.state})),[{id:'10',state:'CAMPAIGN_STATE_FUTURE'}]);
+  assert.deepEqual(saved.products,[]);assert.deepEqual(saved.statistics,[]);
 });
 
 test('empty and explicitly non-CPC campaign lists make no CPC detail or statistics requests', async () => {
@@ -105,7 +159,7 @@ test('empty and explicitly non-CPC campaign lists make no CPC detail or statisti
 
 test('statistics from an excluded non-CPC campaign fail the normalized scope check', async () => {
   const f=fixture({transport:{
-    listCampaigns:async()=>[{id:'7',PaymentType:'CPC',advObjectType:'SKU'},{id:'8',PaymentType:'CPM',advObjectType:'SKU'}],
+    listCampaigns:async()=>[{id:'7',state:'CAMPAIGN_STATE_RUNNING',PaymentType:'CPC',advObjectType:'SKU'},{id:'8',state:'CAMPAIGN_STATE_RUNNING',PaymentType:'CPM',advObjectType:'SKU'}],
     getSkuStatistics:async()=>[{campaignId:'8',sku:'101',date:'2026-09-23',views:'100',clicks:'10',orders:'2',expense:'25.50',sales:'200'}]
   }});
   await assert.rejects(f.api.refresh({storeId:'1',expectedRevision:'0',commandId:COMMAND}),{code:'PERFORMANCE_INVALID_RESPONSE'});
