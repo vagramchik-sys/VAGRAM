@@ -15,8 +15,8 @@ test('request metrics aggregate timings and bytes without retaining SQL, URLs, o
   const req = { method: 'GET', url: '/api/partners/very-private-customer?token=secret-token' }, res = response();
   await metrics.run(req, res, async () => { const lease = await pool.connect(); await lease.query(secretSql); await external('https://example.invalid/secret-token'); res.end('hello'); });
   const snapshot = metrics.snapshot(), [item] = snapshot.series;
-  assert.deepEqual({ route: item.route, count: item.count, sqlCount: item.sqlCount, sqlMs: item.sqlMs, poolWaitMs: item.poolWaitMs, externalCount: item.externalCount, externalMs: item.externalMs, responseBytes: item.responseBytes, wallMs: item.wallMs }, { route: '/api/partners/*', count: 1, sqlCount: 1, sqlMs: 3, poolWaitMs: 2, externalCount: 1, externalMs: 5, responseBytes: 5, wallMs: 10 });
-  assert.deepEqual({ route: snapshot.recent[0].route, sqlCount: snapshot.recent[0].sqlCount, responseBytes: snapshot.recent[0].responseBytes }, { route: '/api/partners/*', sqlCount: 1, responseBytes: 5 });
+  assert.deepEqual({ route: item.route, count: item.count, sqlCount: item.sqlCount, sqlMs: item.sqlMs, poolWaitMs: item.poolWaitMs, externalCount: item.externalCount, externalMs: item.externalMs, otherMs: item.otherMs, responseBytes: item.responseBytes, wallMs: item.wallMs }, { route: '/api/partners/*', count: 1, sqlCount: 1, sqlMs: 3, poolWaitMs: 2, externalCount: 1, externalMs: 5, otherMs: 0, responseBytes: 5, wallMs: 10 });
+  assert.deepEqual({ route: snapshot.recent[0].route, sqlCount: snapshot.recent[0].sqlCount, otherMs: snapshot.recent[0].otherMs, responseBytes: snapshot.recent[0].responseBytes }, { route: '/api/partners/*', sqlCount: 1, otherMs: 0, responseBytes: 5 });
   assert.deepEqual({ total: snapshot.pools[0].total, inUse: snapshot.pools[0].inUse, waiting: snapshot.pools[0].waiting }, { total: 0, inUse: 0, waiting: 0 });
   assert.equal(JSON.stringify(snapshot).includes('secret'), false);
 });
@@ -30,6 +30,20 @@ test('recent request buffer is bounded and pool gauges expose counts without con
   assert.deepEqual(snap.recent.map(item => item.route), ['/api/b', '/api/c']);
   assert.deepEqual(snap.pools, [{ name: 'pult_ui', max: 3, total: 3, idle: 1, inUse: 2, waiting: 2 }]);
   assert.equal(JSON.stringify(snap).includes('private'), false);
+});
+
+test('analytics pool is named in runtime metrics and unknown connection labels remain hidden', () => {
+  const metrics = createRequestMetrics();
+  for (const name of ['pult_analytics', 'private-connection-label']) metrics.instrumentPool({
+    options: { application_name: name, max: 2, password: 'private-password' }, totalCount: 2, idleCount: 0, waitingCount: 1,
+    async connect() { return { async query() { return { rows: [] }; } }; }
+  });
+  const snapshot = metrics.snapshot();
+  assert.deepEqual(snapshot.pools, [
+    { name: 'pult_analytics', max: 2, total: 2, idle: 0, inUse: 2, waiting: 1 },
+    { name: 'pool-2', max: 2, total: 2, idle: 0, inUse: 2, waiting: 1 }
+  ]);
+  assert.equal(JSON.stringify(snapshot).includes('private'), false);
 });
 
 test('series cardinality is bounded and overflow is aggregated', async () => {
