@@ -22,7 +22,7 @@ function identity(input) {
   if (!DOMAINS.includes(domain)) fail('INVALID_ARGUMENT');
   return { storeId, domain };
 }
-const entityType = value => textId(value, 128, /^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/u);
+const entityType = value => value === '_sqlAcquisition.targets' ? value : textId(value, 128, /^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/u);
 function integer(value, max = Number.MAX_SAFE_INTEGER) {
   if (!Number.isSafeInteger(value) || value < 0 || value > max) fail('INVALID_ARGUMENT');
   return value;

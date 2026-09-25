@@ -270,3 +270,11 @@ test('native repository uses a disposable PostgreSQL database', { skip: !process
     } finally { await restricted.end(); }
   });
 });
+
+test('buyer acquisition receipt collection passes validation before SQL', async () => {
+ let connects=0; const repo=createPostgresLiveRepository({pool:{async connect(){connects++;throw Error('offline')}}});
+ await assert.rejects(repo.publish(command({...id(),domain:'buyers'},'buyer-pending',0,[all([record('target',null,{storeId:'1'})],'_sqlAcquisition.targets')])),code('DATABASE_ERROR'));
+ assert.equal(connects,1);
+ await assert.rejects(repo.publish(command(id(),'bad',0,[all([],'_unknown')])),code('INVALID_ARGUMENT'));
+ assert.equal(connects,1);
+});

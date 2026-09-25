@@ -102,3 +102,12 @@ test('FBS product time remains unavailable when created_at is absent', () => {
   const rows = projectOzonProductOrders({ posting_number: 'p', order_number: 'o', in_process_at: '2026-09-20T10:00:00Z', products: [{ sku: 1, quantity: 1 }] }, { scheme: 'FBS', storeId: 'one' });
   assert.equal(rows[0].orderedAt, null);
 });
+
+test('new Ozon price amount/currency objects retain confirmed rubles without guessing missing currency', () => {
+ const {projectOzonProductOrders}=require('../buyer-order-segments.cjs');
+ const base={posting_number:'new-price',order_number:'order',created_at:'2026-09-24T10:00:00Z',products:[]};
+ const amount=price=>projectOzonProductOrders({...base,products:[{sku:1,quantity:2,price}]},{scheme:'FBO',storeId:'1'})[0].amountRub;
+ assert.equal(amount({amount:'10.50',currency:'RUB'}),21);
+ assert.equal(amount({amount:0,currency:'RUB'}),0);
+ for(const price of [{amount:'10.50'},{amount:'10.50',currency:'USD'},{amount:'oops',currency:'RUB'},{amount:-1,currency:'RUB'}])assert.equal(amount(price),null);
+});

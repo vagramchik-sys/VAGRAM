@@ -4,14 +4,14 @@
  const moscowDay=value=>new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(value),shift=(date,days)=>new Date(Date.parse(date+'T12:00:00Z')+days*86400000).toISOString().slice(0,10);
  const money=(value,currency)=>{if(typeof value!=='number'||!Number.isFinite(value)||typeof currency!=='string'||!/^[A-Z]{3}$/.test(currency))return '—';try{return new Intl.NumberFormat('ru-RU',{style:'currency',currency,maximumFractionDigits:2}).format(value)}catch{return '—'}};
  function createPultBuyerOrderSegments({api=async url=>{const response=await fetch(url,{headers:{Accept:'application/json'},cache:'no-store'}),value=await response.json();if(!response.ok)throw Error(value.error||'Не удалось загрузить данные о покупателях.');return value}}={}){
-  if(!$('buyer-order-segments'))return {load:async()=>{},destroy(){}};let generation=0,buyerType='legal',active=false,destroyed=false,displayedScope=null,inFlightScope=null,inFlightGeneration=0;
+  if(!$('buyer-order-segments'))return {load:async()=>{},destroy(){}};let generation=0,buyerType='legal',active=false,destroyed=false,displayedScope=null,inFlightScope=null,inFlightGeneration=0,requested=false,reloadQueued=false;
   const scope=()=>({from:$('buyer-segment-from').value,to:$('buyer-segment-to').value,market:$('market')?.value||'',store:$('store')?.value||'',buyerType});
   const scopeKey=request=>JSON.stringify(request);
   const same=request=>{const current=scope();return Object.keys(request).every(key=>current[key]===request[key])};
   function clear(message,kind='muted'){$('buyer-segment-cards').innerHTML=keys.map(key=>'<article><span>'+labels[key]+'</span><strong>—</strong><small>'+esc(message)+'</small></article>').join('');$('buyer-segment-markets').innerHTML='<tr><td colspan="5" class="empty">'+esc(message)+'</td></tr>';$('buyer-segment-state').className='mini-badge '+kind;$('buyer-segment-state').textContent=message;$('buyer-segment-source').textContent='';}
   function clearProducts(message,kind='muted'){$('buyer-product-rows').innerHTML='<tr><td colspan="6" class="empty">'+esc(message)+'</td></tr>';$('buyer-product-state').className='mini-badge '+kind;$('buyer-product-state').textContent=message;$('buyer-product-source').textContent='';}
   function setButton(loading=false){const button=$('buyer-segment-load');if(!button)return;button.disabled=loading;button.textContent=loading?'Загрузка…':displayedScope===scopeKey(scope())?'Обновить отчёт':'Показать отчёт'}
-  function requestReport(){generation++;inFlightScope=null;$('buyer-segment-period').textContent=scope().from&&scope().to?scope().from+' — '+scope().to:'';clear('Нажмите «Показать отчёт».');clearProducts('Нажмите «Показать отчёт».');setButton()}
+  function requestReport(reload=true){generation++;inFlightScope=null;$('buyer-segment-period').textContent=scope().from&&scope().to?scope().from+' — '+scope().to:'';clear('Нажмите «Показать отчёт».');clearProducts('Нажмите «Показать отчёт».');setButton();if(reload&&requested&&!reloadQueued){reloadQueued=true;Promise.resolve().then(()=>{reloadQueued=false;if(!inFlightScope)void load()})}}
   function marketTotals(data,market){const rows=(data.byStore||[]).filter(row=>row.market===market),totals=Object.fromEntries(keys.map(key=>[key,{units:0,orders:0,cancelledUnits:0}]));for(const row of rows)for(const key of keys){const value=row.totals?.[key];if(Number.isSafeInteger(value?.units)){totals[key].units+=value.units;totals[key].orders+=Number.isSafeInteger(value.orders)?value.orders:0;totals[key].cancelledUnits+=Number.isSafeInteger(value.cancelledUnits)?value.cancelledUnits:0}}return {rows,totals}}
   function render(data,request,productData){
    const ready=data&&data.period?.from===request.from&&data.period?.to===request.to&&data.status!=='pending'&&data.status!=='error'&&data.status!=='unavailable'&&data.totals;if(!ready){clear(data?.error||'Данные за этот период ещё не готовы.','warn');return}
@@ -43,7 +43,7 @@
    $('buyer-segment-source').textContent='Итоги по заказам недоступны. Значения выше рассчитаны только по загруженным товарным строкам и не подтверждают выкуп или выручку.';return true;
   }
   async function load(){
-   if(destroyed||!active||document.hidden)return;const request=scope(),key=scopeKey(request);if(inFlightScope===key)return;const seq=++generation;inFlightScope=key;inFlightGeneration=seq;$('buyer-segment-period').textContent=request.from&&request.to?request.from+' — '+request.to:'';
+   if(destroyed||!active||document.hidden)return;requested=true;const request=scope(),key=scopeKey(request);if(inFlightScope===key)return;const seq=++generation;inFlightScope=key;inFlightGeneration=seq;$('buyer-segment-period').textContent=request.from&&request.to?request.from+' — '+request.to:'';
    if(!/^\d{4}-\d{2}-\d{2}$/.test(request.from)||!/^\d{4}-\d{2}-\d{2}$/.test(request.to)||request.from>request.to){inFlightScope=null;clear('Проверьте период.','warn');clearProducts('Проверьте период.','warn');setButton();return}
    clear('Загружаем…');clearProducts('Загружаем…');setButton(true);const query=new URLSearchParams({from:request.from,to:request.to,market:request.market||'all'});if(request.store)query.set('store',request.store);const productQuery=new URLSearchParams(query);productQuery.set('buyerType',request.buyerType);
    let segments=null,products=null;const current=()=>seq===generation&&active&&!document.hidden&&same(request),segmentReady=()=>segments?.status==='fulfilled'&&segments.value?.period?.from===request.from&&segments.value?.period?.to===request.to&&segments.value?.totals&&!['pending','error','unavailable'].includes(segments.value?.status),productsReady=()=>products?.status==='fulfilled'&&products.value?.period?.from===request.from&&products.value?.period?.to===request.to&&products.value?.buyerType===request.buyerType&&['ready','partial'].includes(products.value?.status)&&Array.isArray(products.value?.products);
@@ -62,9 +62,9 @@
   for(const id of ['market','store'])$(id)?.addEventListener('change',requestReport);$('buyer-segment-load').addEventListener('click',()=>void load());
   const routeView=()=>document.body?.dataset?.pultView||new URLSearchParams(window.location?.search||'').get('view')||(window.location?.hash==='#buyer-order-segments'?'buyers':'overview');
   function pause(){generation++;inFlightScope=null;setButton()}
-  function onViewChange(event){const view=event?.detail?.view||routeView();if(view==='buyers')active=true;else{active=false;pause()}}
+  function onViewChange(event){const view=event?.detail?.view||routeView();if($('freshness'))$('freshness').hidden=view==='buyers';if(view==='buyers')active=true;else{active=false;pause()}}
   function onVisibilityChange(){if(document.hidden)pause()}
-  window.addEventListener('pult:view-change',onViewChange);document.addEventListener('visibilitychange',onVisibilityChange);active=routeView()==='buyers';requestReport();
+  window.addEventListener('pult:view-change',onViewChange);document.addEventListener('visibilitychange',onVisibilityChange);active=routeView()==='buyers';if($('freshness'))$('freshness').hidden=active;requestReport(false);
   return {load,destroy(){destroyed=true;active=false;pause();window.removeEventListener('pult:view-change',onViewChange);document.removeEventListener('visibilitychange',onVisibilityChange)}};
  }
  window.createPultBuyerOrderSegments=createPultBuyerOrderSegments;window.pultBuyerOrderSegments=createPultBuyerOrderSegments();

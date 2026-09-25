@@ -120,6 +120,11 @@ function projectOzonPosting(posting, { scheme = 'FBO' } = {}) {
 
 function rubUnitPrice(product) {
   const price = product?.price;
+  if (price && typeof price === 'object' && Object.hasOwn(price, 'amount')) {
+    if (price.currency !== 'RUB' || (typeof price.amount !== 'number' && (typeof price.amount !== 'string' || !/^\d+(?:\.\d+)?$/.test(price.amount)))) return null;
+    const value = Number(price.amount);
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  }
   if (price && typeof price === 'object' && price.currency_code === 'RUB' && /^-?\d+$/.test(String(price.units ?? '')) && Number.isInteger(Number(price.nanos || 0))) {
     const value = Number(price.units) + Number(price.nanos || 0) / 1e9;
     return Number.isFinite(value) && value >= 0 ? value : null;
