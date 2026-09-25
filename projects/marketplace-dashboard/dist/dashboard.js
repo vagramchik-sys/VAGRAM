@@ -6,7 +6,7 @@ const date=v=>v?new Date(v).toLocaleString('ru-RU',{day:'2-digit',month:'short',
 const shortDate=v=>new Date(v+'T12:00:00Z').toLocaleDateString('ru-RU',{day:'numeric',month:'short'});
 let stores=[],snapshots=new Map(),versions=new Map(),failures=new Map(),rows=[],filtered=[],page=1,busy=false,activeSnapshots=false,activeForce=false,pendingRefresh=false,pendingSnapshots=false,pendingForce=false,snapshotsRequested=false;
 const size=50;
-async function api(url,body){const response=await fetch(url,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{});const value=await response.json();if(!response.ok)throw Error(value.error||'Не удалось загрузить данные');return value}
+async function api(url,body,options){const response=await fetch(url,body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:(options||{}));const value=await response.json();if(!response.ok)throw Error(value.error||'Не удалось загрузить данные');return value}
 function selectedStores(){return stores.filter(s=>(!$('store').value||s.id===$('store').value)&&(!$('market').value||(s.id.startsWith('wb-')?'WB':'Ozon')===$('market').value))}
 function filters(){return {store:$('store').value,market:$('market').value,query:$('search').value,issue:$('issue').value,sort:$('sort').value,hideInactive:$('hide-inactive').checked}}
 function buildStoreSelect(){const old=$('store').value,market=$('market').value;$('store').innerHTML='<option value="">Все магазины</option>'+stores.filter(s=>!market||(s.id.startsWith('wb-')?'WB':'Ozon')===market).map(s=>`<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');if([...$('store').options].some(o=>o.value===old))$('store').value=old}
@@ -20,7 +20,7 @@ async function refresh(force=false,loadSnapshots=force||snapshotSection()){
   return
  }
  busy=true;activeSnapshots=loadSnapshots;activeForce=force;if(loadSnapshots)snapshotsRequested=true;$('refresh-view').disabled=true;
- try{stores=await api('/api/stores');buildStoreSelect();const need=loadSnapshots?stores.filter(s=>force||!snapshots.has(s.id)||versions.get(s.id)!==(s.revision||s.updatedAt)):[];
+ try{stores=await api('/api/stores',null,force?{cache:'reload'}:undefined);buildStoreSelect();const need=loadSnapshots?stores.filter(s=>force||!snapshots.has(s.id)||versions.get(s.id)!==(s.revision||s.updatedAt)):[];
   const results=await Promise.allSettled(need.map(async s=>{const d=await api('/api/data?id='+encodeURIComponent(s.id));snapshots.set(s.id,d);versions.set(s.id,s.revision||s.updatedAt);failures.delete(s.id)}));
   results.forEach((r,i)=>{if(r.status==='rejected')failures.set(need[i].id,r.reason.message)});
   const failed=stores.filter(s=>failures.has(s.id));$('notice').className=failed.length?'error':'';$('notice').textContent=failed.length?'Не удалось обновить: '+failed.map(s=>s.name).join(', ')+'. Показаны последние доступные снимки.':'';

@@ -1,19 +1,65 @@
 (function (scope) {
   'use strict';
   const STORAGE_KEY = 'pult.pending-commands.v1';
+  const STORE_CACHE_KEY = 'pult.store-registry-cache.v1';
+  const STORE_CACHE_MAX_AGE_MS = 1000;
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
   const REVISION = /^(0|[1-9][0-9]*)$/;
   const STORE_ACTIONS = new Set(['/api/connect', '/api/connect-wb', '/api/disconnect', '/api/sync']);
   const pendingMessage = 'Предыдущее сохранение ещё не подтверждено. Повторите то же действие с прежними данными.';
-  function createTransport({ fetch: nativeFetch, baseURL, crypto, storage, now = () => new Date(), enabled = null }) {
+  function createTransport({ fetch: nativeFetch, baseURL, crypto, storage, sharedStorage = null, now = () => new Date(), enabled = null }) {
     const origin = new URL(baseURL).origin;
     const inFlight = new Map();
+    const readInFlight = new Map();
     let registryRevision = null;
     let protocolEnabled = enabled;
     function rememberRevision(response) {
       const value = response.headers.get('x-pult-registry-revision') ?? response.headers.get('x-pult-expected-revision');
       if (response.ok && REVISION.test(value || '')) { registryRevision = value; protocolEnabled = true; }
       return response;
+    }
+    function clearStoreCache() {
+      try { sharedStorage?.removeItem(STORE_CACHE_KEY); } catch {}
+    }
+    function readStoreCache() {
+      if (!sharedStorage) return null;
+      try {
+        const raw = sharedStorage.getItem(STORE_CACHE_KEY);
+        if (!raw || raw.length > 100000) return null;
+        const cached = JSON.parse(raw), age = now().getTime() - cached.at;
+        if (!Number.isFinite(cached.at) || age < 0 || age > STORE_CACHE_MAX_AGE_MS || typeof cached.body !== 'string') return null;
+        const value = JSON.parse(cached.body);
+        if (!Array.isArray(value)) return null;
+        return new Response(cached.body, { status: 200, headers: {
+          'Content-Type': 'application/json; charset=utf-8',
+          ...(REVISION.test(cached.revision || '') ? { 'X-Pult-Registry-Revision': cached.revision } : {})
+        } });
+      } catch { return null; }
+    }
+    async function cacheStoreResponse(response) {
+      rememberRevision(response);
+      if (!sharedStorage || !response.ok) return response;
+      try {
+        const body = await response.clone().text();
+        if (body.length <= 90000 && Array.isArray(JSON.parse(body))) sharedStorage.setItem(STORE_CACHE_KEY, JSON.stringify({
+          at: now().getTime(), body, revision: registryRevision
+        }));
+      } catch {}
+      return response;
+    }
+    async function readStores(input, init) {
+      const bypass = init?.cache === 'no-store' || init?.cache === 'reload' || (input instanceof Request && ['no-store', 'reload'].includes(input.cache));
+      if (!bypass) {
+        const cached = readStoreCache();
+        if (cached) return rememberRevision(cached);
+      }
+      const key = '/api/stores';
+      const running = readInFlight.get(key);
+      if (running && !bypass) return (await running).clone();
+      const task = nativeFetch(input, init).then(cacheStoreResponse);
+      if (!bypass) readInFlight.set(key, task);
+      try { return (await task).clone(); }
+      finally { if (readInFlight.get(key) === task) readInFlight.delete(key); }
     }
     async function readRegistry() {
       const response = await nativeFetch(new Request(origin + '/api/stores', { credentials: 'same-origin' }));
@@ -66,8 +112,8 @@
       const method = String(init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
       if (url.origin !== origin || !url.pathname.startsWith('/api/')) return nativeFetch(input, init);
       if (method !== 'POST') {
+        if (method === 'GET' && url.pathname === '/api/stores') return readStores(input, init);
         const response = await nativeFetch(input, init);
-        if (method === 'GET' && url.pathname === '/api/stores') rememberRevision(response);
         return response;
       }
       if (protocolEnabled === null) await readRegistry();
@@ -122,7 +168,7 @@
         }
         // A clear success or a definitive rejection permits a new user action.
         clear(action, command.commandId);
-        if (STORE_ACTIONS.has(url.pathname)) registryRevision = null;
+        if (STORE_ACTIONS.has(url.pathname)) { registryRevision = null; clearStoreCache(); }
         rememberRevision(response);
         return response;
       })();
@@ -131,11 +177,13 @@
       finally { if (inFlight.get(action) === task) inFlight.delete(action); }
     };
   }
-  if (typeof module === 'object' && module.exports) module.exports = { createTransport, STORAGE_KEY };
+  if (typeof module === 'object' && module.exports) module.exports = { createTransport, STORAGE_KEY, STORE_CACHE_KEY };
   else if (scope && !scope.PultCommands) {
     // Lazily access storage: read-only pages still work if storage is unavailable.
     const storage = { getItem: key => scope.sessionStorage.getItem(key), setItem: (key, value) => scope.sessionStorage.setItem(key, value) };
-    scope.fetch = createTransport({ fetch: scope.fetch.bind(scope), baseURL: scope.location.href, crypto: scope.crypto, storage });
+    let sharedStorage = null;
+    try { sharedStorage = scope.localStorage; } catch {}
+    scope.fetch = createTransport({ fetch: scope.fetch.bind(scope), baseURL: scope.location.href, crypto: scope.crypto, storage, sharedStorage });
     scope.PultCommands = Object.freeze({ installed: true });
   }
 })(typeof window === 'undefined' ? null : window);

@@ -2,13 +2,13 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
-const { createTransport, STORAGE_KEY } = require('../dist/command-transport.js');
+const { createTransport, STORAGE_KEY, STORE_CACHE_KEY } = require('../dist/command-transport.js');
 const baseURL = 'http://127.0.0.1:4317/';
 const ok = value => Response.json(value || { ok: true });
 const post = body => ({ method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
 function memoryStorage() {
   const entries = new Map();
-  return { getItem: key => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, value) };
+  return { getItem: key => entries.get(key) ?? null, setItem: (key, value) => entries.set(key, value), removeItem: key => entries.delete(key) };
 }
 function setup(fetch, storage = memoryStorage()) {
   return { storage, run: createTransport({ fetch, baseURL, crypto: crypto.webcrypto, storage, enabled: true, now: () => new Date('2026-09-22T12:00:00.000Z') }) };
@@ -29,6 +29,43 @@ test('ordinary GET and other origins keep their original request options', async
   const options = post({ value: 1 });
   await run('/api/ideas'); await run('https://example.invalid/api/ideas', options);
   assert.deepEqual(calls, [['/api/ideas', undefined], ['https://example.invalid/api/ideas', options]]);
+});
+test('concurrent store registry reads share one request and return separately readable responses', async () => {
+  let release, calls = 0;
+  const pending = new Promise(resolve => { release = resolve; });
+  const { run } = setup(async () => { calls++; return pending; });
+  const first = run('/api/stores'), second = run('/api/stores');
+  release(Response.json([{ id: 'one' }], { headers: { 'X-Pult-Registry-Revision': '4' } }));
+  assert.equal(calls, 1);
+  assert.deepEqual(await (await first).json(), [{ id: 'one' }]);
+  assert.deepEqual(await (await second).json(), [{ id: 'one' }]);
+});
+test('very recent store registry response is reused across tabs and explicit reload bypasses it', async () => {
+  const sharedStorage = memoryStorage(); let calls = 0, clock = Date.parse('2026-09-22T12:00:00.000Z');
+  const make = () => createTransport({ baseURL, crypto: crypto.webcrypto, storage: memoryStorage(), sharedStorage, enabled: true,
+    now: () => new Date(clock), fetch: async () => { calls++; return Response.json([{ id: String(calls) }]); } });
+  const first = make(), second = make();
+  assert.deepEqual(await (await first('/api/stores')).json(), [{ id: '1' }]);
+  assert.deepEqual(await (await second('/api/stores')).json(), [{ id: '1' }]);
+  clock += 1001;
+  assert.deepEqual(await (await second('/api/stores')).json(), [{ id: '2' }]);
+  assert.deepEqual(await (await second('/api/stores', { cache: 'reload' })).json(), [{ id: '3' }]);
+  assert.equal(calls, 3);
+  assert.ok(sharedStorage.getItem(STORE_CACHE_KEY));
+});
+test('successful store mutation invalidates the shared registry cache', async () => {
+  const sharedStorage = memoryStorage(); let reads = 0;
+  const run = createTransport({ baseURL, crypto: crypto.webcrypto, storage: memoryStorage(), sharedStorage, enabled: true,
+    now: () => new Date('2026-09-22T12:00:00.000Z'), fetch: async request => {
+      if (!(request instanceof Request) || request.method === 'GET') { reads++; return Response.json([{ id: String(reads) }], { headers: { 'X-Pult-Registry-Revision': String(reads) } }); }
+      return ok();
+    } });
+  await run('/api/stores');
+  assert.ok(sharedStorage.getItem(STORE_CACHE_KEY));
+  await run('/api/sync', post({ id: 'one' }));
+  assert.equal(sharedStorage.getItem(STORE_CACHE_KEY), null);
+  await run('/api/stores');
+  assert.equal(reads, 2);
 });
 test('JSON writes get canonical command headers while the payload is unchanged', async () => {
   let request;

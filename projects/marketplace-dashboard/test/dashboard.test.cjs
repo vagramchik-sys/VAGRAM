@@ -109,6 +109,7 @@ test('dashboard defers full store snapshots outside catalog, finance and store s
  assert.match(source,/Каталог загружается только при открытии этого раздела/);
  assert.match(source,/Загрузятся при открытии финансов/);
  assert.doesNotMatch(source,/setInterval\(\(\)=>\{if\(!document\.hidden\)void refresh\(\)\}/);
+ assert.match(source,/api\('\/api\/stores',null,force\?\{cache:'reload'\}:undefined\)/);
 });
 
 test('dashboard coalesces duplicate navigation refreshes',async()=>{
