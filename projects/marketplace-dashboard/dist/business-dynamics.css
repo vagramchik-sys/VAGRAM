@@ -717,6 +717,19 @@ body.pult-seller-workspace.pult-seller-shell[data-pult-section="business-chart"]
   font-weight:700;
   cursor:pointer;
 }
+.business-dynamics.bd-executive .bd-categories__summary {display:flex;align-items:baseline;gap:8px;margin:10px 0;color:#182434}
+.business-dynamics.bd-executive .bd-categories__summary strong {font-size:18px;font-weight:700}
+.business-dynamics.bd-executive .bd-categories__summary small,.business-dynamics.bd-executive .bd-live__mix-note {font-size:11px;color:#667085}
+.business-dynamics.bd-executive .bd-live__mix-note {display:block;margin-top:5px;line-height:1.4}
+.business-dynamics.bd-executive .bd-categories__rows > div {display:grid;grid-template-columns:minmax(0,1fr) auto auto;gap:8px;padding:6px 0;border-top:1px solid #edf0f4;font-size:11px}
+.business-dynamics.bd-executive .bd-categories__rows span {overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.business-dynamics.bd-executive .bd-categories__rows small {color:#667085}
+.business-dynamics.bd-executive .bd-categories__open {margin-top:10px;padding:0;border:0;background:none;color:#1c65ca;font-size:11px;font-weight:700;cursor:pointer}
+.business-dynamics.bd-executive .bd-target-form {display:flex;align-items:end;gap:8px;margin-top:9px;font-size:11px}
+.business-dynamics.bd-executive .bd-target-form label {display:flex;align-items:center;gap:8px;color:#667085}
+.business-dynamics.bd-executive .bd-target-form input {width:145px;padding:6px 8px;border:1px solid #dce5f1;border-radius:7px;color:#182434}
+.business-dynamics.bd-executive .bd-target-form button {padding:7px 10px;border:1px solid #cddcf5;border-radius:7px;background:#f1f6ff;color:#1c65ca;font-weight:700;cursor:pointer}
+.business-dynamics.bd-executive .bd-target-form small {color:#98621d}
 .business-dynamics.bd-executive .bd-recent__rows,
 .business-dynamics.bd-executive .bd-marketplaces__rows {
   margin-top:10px;
@@ -1047,4 +1060,23 @@ body.pult-seller-workspace.pult-seller-shell[data-pult-section="business-chart"]
   body.pult-seller-workspace.pult-seller-shell[data-pult-section="business-chart"] :is(.seller-nav-link, .seller-nav-toggle, .seller-nav-menu a, .brand, .seller-company, .pult-shell-search):focus-visible {
     outline-color: #8ab5ff;
   }
+}
+
+.business-dynamics.bd-executive .bd-quality-panel ul.bd-quality-panel__sources {
+  margin-bottom: 22px;
+  padding-left: 0;
+  list-style: none;
+}
+.business-dynamics.bd-executive .bd-quality-panel__sources li {
+  padding: 10px 12px;
+  border: 1px solid #e6ecf5;
+  border-radius: 10px;
+}
+.business-dynamics.bd-executive .bd-quality-panel__sources b,
+.business-dynamics.bd-executive .bd-quality-panel__sources small {
+  display: block;
+}
+.business-dynamics.bd-executive .bd-quality-panel__sources small {
+  color: #6a788b;
+  line-height: 1.45;
 }

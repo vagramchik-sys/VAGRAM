@@ -5,6 +5,7 @@ const createTrueStats = require('./domains/postgres-truestats.cjs');
 const { createPostgresSourceProviders } = require('./postgres-source-providers.cjs');
 const createAnalytics = require('./domains/postgres-analytics-composition.cjs');
 const { createPostgresRuntime } = require('./postgres-runtime-composition.cjs');
+const { summarize: summarizeBusinessCategories } = require('../business-category-summary.cjs');
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
 const READ_ROUTES = Object.freeze({
@@ -14,6 +15,7 @@ const READ_ROUTES = Object.freeze({
   '/api/category-sales': ['categorySales', value => ({ category: value.get('category') || undefined, from: value.get('from') || undefined, to: value.get('to') || undefined, market: value.get('market') || 'all', store: value.get('store') || undefined, days: Number(value.get('days') || 7) })],
   '/api/conversion': ['conversion', value => ({ storeId: value.get('store') || undefined, market: value.get('market') || 'all' })],
   '/api/order-category-daily': ['orderCategoryDaily', value => ({ from: value.get('from'), to: value.get('to'), market: value.get('market') || 'all', store: value.get('store') || undefined })],
+  '/api/business-dynamics/categories': ['orderCategoryDaily', value => ({ from: value.get('date'), to: value.get('date'), market: value.get('market') || 'all', store: value.get('store') || undefined }), (report, value) => summarizeBusinessCategories(report, value.get('date'))],
   '/api/profit-series': ['profitSeries', value => ({ from: value.get('from'), to: value.get('to'), storeId: value.get('store') || undefined, market: value.get('market') || 'all' })],
   '/api/wb/economics': ['wbEconomics', value => ({ from: value.get('from'), to: value.get('to'), storeId: value.get('store') || undefined })]
 });
@@ -28,7 +30,7 @@ const ROUTE_CAPABILITIES = Object.freeze({
   ...Object.fromEntries(Object.entries(READ_ROUTES).map(([route, [slot]]) => [route, `analytics.${slot}`])),
   '/api/truestats/status': 'truestats', '/api/truestats/connect': 'truestats',
   '/api/connect': 'store-commands', '/api/connect-wb': 'store-commands', '/api/disconnect': 'store-commands', '/api/sync': 'store-commands',
-  '/api/business-dynamics': 'insights-api', '/api/insights': 'insights-api', '/api/insights/sources': 'insights-api', '/api/insights/refresh': 'insights-refresh',
+  '/api/business-dynamics': 'insights-api', '/api/business-dynamics/target': 'insights-api', '/api/insights': 'insights-api', '/api/insights/sources': 'insights-api', '/api/insights/refresh': 'insights-refresh',
   '/api/manage/refresh-prices': 'pricing-refresh', '/api/wb/orders': 'wb-orders-report', '/api/order-categories': 'order-categories',
   '/api/economics/compare': 'economics-compare', '/api/impact': 'impact', '/api/changes': 'release-notes',
   '/api/finance/contracts': 'finance-documents', '/api/partners/*': 'partner-tools', '/api/charity/*': 'charity-tools'
@@ -56,7 +58,7 @@ function createAnalyticsHandler({ analytics, trueStats }) {
   async function body(req) { const chunks = []; let size = 0; for await (const part of req) { const chunk = Buffer.from(part); size += chunk.length; if (size > 64 * 1024) throw Object.assign(Error(), { code: 'INVALID_ARGUMENT' }); chunks.push(chunk); } let value; try { value = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}'); } catch { throw Object.assign(Error(), { code: 'INVALID_ARGUMENT' }); } if (!object(value)) throw Object.assign(Error(), { code: 'INVALID_ARGUMENT' }); return value; }
   async function handle(req, res, url) {
     const route = READ_ROUTES[url.pathname];
-    if (route) { if (req.method !== 'GET') { reply(res, 405, { error: 'Метод не поддерживается.' }); return true; } try { reply(res, 200, await analytics[route[0]].read(route[1](url.searchParams))); } catch (error) { const invalid = !error?.code || /^INVALID_/u.test(error.code); reply(res, invalid ? 400 : 503, { error: invalid ? 'Проверьте параметры аналитики.' : 'SQL-аналитика временно недоступна.' }); } return true; }
+    if (route) { if (req.method !== 'GET') { reply(res, 405, { error: 'Метод не поддерживается.' }); return true; } try { const report = await analytics[route[0]].read(route[1](url.searchParams)); reply(res, 200, route[2] ? route[2](report, url.searchParams) : report); } catch (error) { const invalid = !error?.code || /^INVALID_/u.test(error.code); reply(res, invalid ? 400 : 503, { error: invalid ? 'Проверьте параметры аналитики.' : 'SQL-аналитика временно недоступна.' }); } return true; }
     if (url.pathname === '/api/truestats/status') { if (req.method !== 'GET') reply(res, 405, { error: 'Метод не поддерживается.' }); else try { reply(res, 200, await trueStats.status()); } catch { reply(res, 503, { error: 'TrueStats временно недоступен.' }); } return true; }
     if (url.pathname !== '/api/truestats/connect') return false;
     if (req.method !== 'POST') { reply(res, 405, { error: 'Метод не поддерживается.' }); return true; }

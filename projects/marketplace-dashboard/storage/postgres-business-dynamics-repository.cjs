@@ -1,8 +1,9 @@
 'use strict';
 
 // A single MVCC statement reads small heads and date-scoped normalized facts.
-// Existing live_facts_day_idx/entity_order_idx cover these access paths. Historical
-// WB events are deliberately not joined: they lack a snapshot-leading index.
+// Existing live_facts_day_idx/entity_order_idx cover the live access paths.
+// Historical WB order timestamps come from one latest normalized snapshot per day;
+// older snapshots of the same day must never be added together.
 const SQL = `WITH heads AS MATERIALIZED (
  SELECT store_id,domain,metadata,entity_counts FROM pult_live.heads
  WHERE store_id=ANY($1::text[]) AND domain IN ('insights','intraday','wb-orders')
@@ -26,6 +27,27 @@ const SQL = `WITH heads AS MATERIALIZED (
  WHERE h.domain='wb-orders' AND f.entity_type='orders'
   AND h.metadata->>'day' BETWEEN $2::text AND $3::text
  GROUP BY f.store_id,bucket
+), wb_history AS MATERIALIZED (
+ SELECT DISTINCT ON (s.store_id,s.day)
+  s.id,s.store_id,s.day,s.source_actual_at
+ FROM pult_history.snapshots s
+ WHERE s.market='WB' AND s.source_kind='wb-orders'
+  AND s.store_id=ANY($1::text[]) AND s.day BETWEEN $2::date AND $3::date
+ ORDER BY s.store_id,s.day,s.source_actual_at DESC,s.id DESC
+), wb_history_intervals AS MATERIALIZED (
+ SELECT s.id,s.store_id,s.day,
+  floor(extract(epoch FROM e.occurred_at)/900)*900 AS bucket,
+  count(*)::integer AS units,
+  round(sum(e.amount)::numeric,2) AS revenue,
+  min(e.occurred_at) AS first_at,max(e.occurred_at) AS last_at
+ FROM wb_history s JOIN pult_history.order_events e ON e.snapshot_id=s.id
+ GROUP BY s.id,s.store_id,s.day,bucket
+), wb_history_totals AS (
+ SELECT s.id,s.store_id,s.day,s.source_actual_at,
+  coalesce(sum(i.units),0)::integer AS units,
+  coalesce(sum(i.revenue),0)::numeric AS revenue
+ FROM wb_history s LEFT JOIN wb_history_intervals i ON i.id=s.id
+ GROUP BY s.id,s.store_id,s.day,s.source_actual_at
 )
 SELECT 'head' AS kind,store_id,domain,jsonb_build_object(
  'orders',CASE WHEN domain='insights' THEN metadata->'orders' ELSE NULL END,
@@ -42,13 +64,27 @@ SELECT 'daily',f.store_id,f.domain,f.value FROM heads h
 UNION ALL SELECT 'observation',store_id,'intraday',value FROM observations
 UNION ALL SELECT 'wb-interval',store_id,'wb-orders',jsonb_build_object(
  'from',to_char(to_timestamp(bucket) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS".000Z"'),
- 'orderedUnits',units,'orderedRevenue',revenue,'firstAt',first_at,'lastAt',last_at) FROM wb`;
+ 'orderedUnits',units,'orderedRevenue',revenue,'firstAt',first_at,'lastAt',last_at) FROM wb
+UNION ALL SELECT 'wb-history-head',store_id,'wb-orders',jsonb_build_object(
+ 'day',day,'fetchedAt',source_actual_at,'complete',true,
+ 'orderedRevenue',revenue,'orderedUnits',units,
+ 'orderRowsPresent',true,'orderRowsCount',units) FROM wb_history_totals
+UNION ALL SELECT 'wb-history-interval',store_id,'wb-orders',jsonb_build_object(
+ 'day',day,
+ 'from',to_char(to_timestamp(bucket) AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS".000Z"'),
+ 'orderedUnits',units,'orderedRevenue',revenue,
+ 'firstAt',first_at,'lastAt',last_at) FROM wb_history_intervals`;
 
 const TARGET_SQL = `SELECT business_day::text,scope_type,scope_id,amount_cents::text,currency,time_zone,updated_at
  FROM pult_live.daily_sales_targets
  WHERE business_day=$1::date AND scope_type=$2 AND scope_id=$3`;
+const SAVE_TARGET_SQL = `INSERT INTO pult_live.daily_sales_targets(business_day,scope_type,scope_id,amount_cents,currency,time_zone,updated_at)
+ VALUES ($1::date,'all','',$2::bigint,'RUB','Europe/Moscow',clock_timestamp())
+ ON CONFLICT (business_day,scope_type,scope_id) DO UPDATE
+ SET amount_cents=EXCLUDED.amount_cents,updated_at=clock_timestamp()
+ RETURNING business_day::text,scope_type,scope_id,amount_cents::text,currency,time_zone,updated_at`;
 
-function createBusinessDynamicsRepository({pool}={}) {
+function createBusinessDynamicsRepository({pool,writePool=pool}={}) {
  if(typeof pool?.query!=='function')throw new TypeError('SQL read pool is required');
  const validDate=d=>typeof d==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(d)&&Number.isFinite(Date.parse(d))&&new Date(d).toISOString().slice(0,10)===d;
  return Object.freeze({async read({storeIds,from,to}) {
@@ -72,6 +108,12 @@ function createBusinessDynamicsRepository({pool}={}) {
   if(!Number.isSafeInteger(amount)||amount<0||row.currency!=='RUB'||row.time_zone!=='Europe/Moscow'||!Number.isFinite(updated))throw new TypeError('Invalid sales target row');
   const scope=scopeType==='all'?{type:'all'}:scopeType==='marketplace'?{type:'marketplace',marketplace:scopeId}:{type:'store',storeId:scopeId};
   return {date:row.business_day,scope,amountCents:amount,currency:'RUB',timeZone:'Europe/Moscow',updatedAt:new Date(updated).toISOString()};
+ },async saveTarget({date,amountCents}) {
+  if(!validDate(date)||!Number.isSafeInteger(amountCents)||amountCents<=0||typeof writePool?.query!=='function')throw new TypeError('Invalid sales target');
+  const rows=(await writePool.query(SAVE_TARGET_SQL,[date,String(amountCents)])).rows;
+  if(rows.length!==1)throw new TypeError('Sales target write returned no row');
+  const row=rows[0];
+  return {date:row.business_day,scope:{type:'all'},amountCents:Number(row.amount_cents),currency:row.currency,timeZone:row.time_zone,updatedAt:new Date(row.updated_at).toISOString()};
  }});
 }
-module.exports={createBusinessDynamicsRepository,SQL,TARGET_SQL};
+module.exports={createBusinessDynamicsRepository,SQL,TARGET_SQL,SAVE_TARGET_SQL};

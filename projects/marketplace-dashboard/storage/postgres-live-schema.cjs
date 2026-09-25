@@ -99,7 +99,7 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA pult_live FROM PUBLIC;
 REVOKE ALL ON FUNCTION pult_live.reject_event_mutation() FROM PUBLIC;
 DO $body$ BEGIN
  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='pult_app') THEN
-  EXECUTE 'GRANT SELECT ON pult_live.daily_sales_targets TO pult_app';
+  EXECUTE 'GRANT SELECT,INSERT,UPDATE ON pult_live.daily_sales_targets TO pult_app';
  END IF;
  IF EXISTS(SELECT 1 FROM pg_roles WHERE rolname='pult_importer') THEN
   EXECUTE 'GRANT SELECT,INSERT,UPDATE,DELETE ON pult_live.daily_sales_targets TO pult_importer';
