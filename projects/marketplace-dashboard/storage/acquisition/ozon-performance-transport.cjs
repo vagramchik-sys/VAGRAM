@@ -32,6 +32,11 @@ const credentials = value => {
   return { storeId: String(value.storeId), clientId: value.clientId, clientSecret: value.clientSecret };
 };
 const chunks = (values, size) => Array.from({ length: Math.ceil(values.length / size) }, (_, index) => values.slice(index * size, (index + 1) * size));
+const calendarDay = value => {
+  if (!DAY.test(value || '')) return null;
+  const timestamp = Date.parse(`${value}T00:00:00.000Z`);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString().slice(0, 10) === value ? timestamp : null;
+};
 function retryAfter(response, now) {
   const raw = response.headers?.get?.('Retry-After');
   if (raw === undefined || raw === null || raw === '') return null;
@@ -168,13 +173,17 @@ function createOzonPerformanceTransport({ fetchFn = globalThis.fetch, sleep = sl
     return result;
   }
   async function getSkuStatistics(input, campaignIds, { dateFrom, dateTo } = {}) {
-    if (!Array.isArray(campaignIds) || !DAY.test(dateFrom || '') || !DAY.test(dateTo || '') || dateFrom > dateTo) throw new OzonPerformanceError('INVALID_ARGUMENT', 'Statistics period or campaigns are invalid');
+    const from = calendarDay(dateFrom), to = calendarDay(dateTo);
+    if (!Array.isArray(campaignIds) || from === null || to === null || from > to) throw new OzonPerformanceError('INVALID_ARGUMENT', 'Statistics period or campaigns are invalid');
     const unique = [...new Set(campaignIds.map(value => textId(value, 'campaignId')))];
-    const result = [];
-    for (const part of chunks(unique, MAX_STAT_CAMPAIGNS)) {
-      const body = await request(input, '/api/client/statistics/products/sku', { method: 'POST', body: { campaignIds: part, dateFrom, dateTo } });
-      if (!Array.isArray(body.rows)) throw new OzonPerformanceError('MALFORMED_RESPONSE', 'Ozon Performance statistics are invalid');
-      result.push(...body.rows);
+    const result = [], parts = chunks(unique, MAX_STAT_CAMPAIGNS);
+    for (let timestamp = from; timestamp <= to; timestamp += 86400000) {
+      const date = new Date(timestamp).toISOString().slice(0, 10);
+      for (const part of parts) {
+        const body = await request(input, '/api/client/statistics/products/sku', { method: 'POST', body: { campaignIds: part, dateFrom: date, dateTo: date } });
+        if (!Array.isArray(body.rows)) throw new OzonPerformanceError('MALFORMED_RESPONSE', 'Ozon Performance statistics are invalid');
+        result.push(...body.rows);
+      }
     }
     return result;
   }

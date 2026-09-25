@@ -120,7 +120,7 @@ test('begin fences overlapping refreshes and failure metadata is tied to command
   assert.deepEqual(update.args.slice(4), [COMMAND, '0', VERSION]);
 });
 
-test('all statistics reads preserve unknown sums, requested coverage, source revision and oldest observation', async () => {
+test('all statistics reads preserve unknown sums and require explicit daily coverage', async () => {
   const db = database(); const options = {storeId: '1', from: '2026-09-10', to: '2026-09-23'};
   await db.repository.readAds(options);
   await db.repository.readAdsForProducts([{storeId: '1', productId: '42'}], options);
@@ -130,13 +130,35 @@ test('all statistics reads preserve unknown sums, requested coverage, source rev
   for (const {sql, args} of reads) {
     assert.match(sql, /CASE WHEN COUNT\(spend\)=COUNT\(\*\) THEN SUM\(spend\) END spend/);
     assert.match(sql, /MIN\(observed_at\) statistics_observed_at/);
-    assert.match(sql, /MIN\(source_revision\)=MAX\(source_revision\)/);
     assert.match(sql, /COUNT\(\*\)=\(\$\d+::date-\$\d+::date\+1\)/);
+    assert.match(sql, /FROM "pult_optimizer"\."statistics_coverage" cv/);
+    assert.match(sql, /cv\.status='complete'/);
+    assert.doesNotMatch(sql, /MIN\(source_revision\)=MAX\(source_revision\)/);
     assert.match(sql, /WHERE .*store_id(?:=| IN)/);
     assert.ok(args.includes(options.from)); assert.ok(args.includes(options.to));
   }
   assert.match(reads[0].sql, /p\.current_bid_raw,p\.competitive_bid_raw,p\.minimum_bid_raw/);
   assert.match(reads[0].sql, /CASE WHEN COUNT\(current_bid\)OVER\(\)=COUNT\(\*\)OVER\(\)/);
+});
+
+test('refresh stores explicit daily coverage and never prunes acquired statistics history', async () => {
+  const db = database(); db.state.credentials.set('1', {credential_version: VERSION});
+  await db.repository.commitRefresh(snapshot({
+    statistics: [{campaign_id: '7', sku: '101', stat_date: '2024-01-01', impressions: '1', clicks: '1', orders: '1', spend: '1', revenue: '1', order_basis: 'ATTRIBUTED_ORDERS', complete: true}],
+    statisticsCoverage: [{date: '2026-09-23', status: 'complete'}],
+  }));
+  const coverage = db.queries.find(query => query.sql.startsWith('INSERT INTO "pult_optimizer"."statistics_coverage"'));
+  assert.ok(coverage); assert.deepEqual(JSON.parse(coverage.args[1]), [{date: '2026-09-23', status: 'complete', error_code: null}]);
+  assert.match(coverage.sql, /ON CONFLICT\(store_id,stat_date\)/);
+  assert.equal(db.queries.some(query => query.sql.startsWith('DELETE FROM "pult_optimizer"."statistics"')), false);
+});
+
+test('daily coverage rejects malformed or duplicate dates before writing', async () => {
+  for (const statisticsCoverage of [[{date: '2026-02-30', status: 'complete'}], [{date: '2026-09-23', status: 'missing'}], [{date: '2026-09-23', status: 'complete'}, {date: '2026-09-23', status: 'complete'}]]) {
+    const db = database();
+    await assert.rejects(db.repository.commitRefresh(snapshot({statisticsCoverage})), {code: 'INVALID_ARGUMENT'});
+    assert.equal(db.queries.length, 0);
+  }
 });
 
 test('batched live reads carry actual ledger source period without changing the live schema', async () => {

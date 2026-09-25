@@ -21,6 +21,24 @@
   function count(value) { const amount = numeric(value); return amount === null ? '—' : countFormatter.format(amount); }
   function percent(value) { const amount = numeric(value); return amount === null ? '—' : percentFormatter.format(amount) + ' %'; }
   function dateTime(value) { const time = Date.parse(value); return Number.isFinite(time) ? new Intl.DateTimeFormat('ru-RU', { dateStyle: 'medium', timeStyle: 'short', timeZone: 'Europe/Moscow' }).format(time) + ' МСК' : '—'; }
+  function adsCoverage(payload) {
+    const items = safeItems(payload), statistics = items.map(item => item?.advertising).filter(ad => ad?.periodFrom && ad?.periodTo);
+    const observed = statistics.map(ad => Date.parse(ad.observedAt)).filter(Number.isFinite).sort((a, b) => a - b);
+    return {
+      hasLocalRows: Math.max(0, Number(payload?.total) || 0) > 0,
+      hasStatistics: statistics.length > 0,
+      complete: payload?.summary?.complete === true,
+      from: statistics.map(ad => ad.periodFrom).sort()[0] || null,
+      to: statistics.map(ad => ad.periodTo).sort().at(-1) || null,
+      observedAt: observed.length ? new Date(observed[0]).toISOString() : null
+    };
+  }
+  function adsPeriodText(payload) {
+    const requested = payload?.period?.from && payload?.period?.to ? `Запрошенный период: ${payload.period.from} — ${payload.period.to}` : 'Запрошенный период не указан';
+    const coverage = adsCoverage(payload);
+    if (coverage.hasStatistics) return `${requested} · доступная локальная статистика на этой странице: ${coverage.from} — ${coverage.to} · обновлена ${dateTime(coverage.observedAt)}`;
+    return `${requested} · статистика за период ещё не накоплена · экран сформирован ${dateTime(payload?.generatedAt)}`;
+  }
   function listParams(filters, offset) {
     const params = new URLSearchParams({ limit: String(LIMIT), offset: String(offset) });
     for (const name of ['store', 'campaign', 'search']) {
@@ -44,7 +62,7 @@
     });
   }
 
-  if (typeof module === 'object' && module.exports) module.exports = { LIMIT, numeric, money, bid, count, percent, dateTime, listParams, safeItems, filterPageItems };
+  if (typeof module === 'object' && module.exports) module.exports = { LIMIT, numeric, money, bid, count, percent, dateTime, adsCoverage, adsPeriodText, listParams, safeItems, filterPageItems };
   if (!scope?.document) return;
 
   const document = scope.document;
@@ -214,7 +232,9 @@
   function renderConnection(payload) {
     const connection = payload?.connection;
     const missing = connection?.status === 'not_connected' || (Array.isArray(connection?.stores) && connection.stores.length > 0 && connection.stores.every(store => store.configured === false));
-    if (missing) announce('Performance API не подключён. Рекламные показатели и рекомендации по ставкам пока недоступны.', 'warn', { href: '/connections.html#performance', text: 'Подключить рекламу →' });
+    const coverage = page === 'ads' ? adsCoverage(payload) : null;
+    if (missing) announce(coverage?.hasLocalRows ? 'Performance API не подключён. Показываем ранее сохранённые локально кампании и товары; новые рекламные показатели пока недоступны.' : 'Performance API не подключён. Рекламные показатели и рекомендации по ставкам пока недоступны.', 'warn', { href: '/connections.html#performance', text: 'Подключить рекламу →' });
+    else if (coverage && !coverage.complete) announce(coverage.hasStatistics ? 'Показаны сохранённые локально кампании и товары. Статистика покрывает часть выбранного периода; пропуски показаны знаком «—» и не считаются нулём. Полная история накопится постепенно при ежедневных загрузках.' : 'Показаны сохранённые локально кампании и товары. Статистика за выбранный период ещё не накоплена; пропуски показаны знаком «—» и не считаются нулём. Полная история накопится постепенно при ежедневных загрузках.', 'warn');
     else if (payload?.summary?.complete === false) announce('Данные загружены частично. Пропуски показаны знаком «—» и не считаются нулём.', 'warn');
     else announce('');
   }
@@ -243,7 +263,7 @@
       state.total = Math.max(0, Number(payload.total) || 0); state.payload = payload;
       renderKpis(payload.summary); renderRows(payload); renderFilters(payload); renderPager(); renderConnection(payload);
       const period = payload.period;
-      $('optimizer-period').textContent = period?.from && period?.to ? `Период: ${period.from} — ${period.to} · данные на ${dateTime(payload.generatedAt)}` : `Данные на ${dateTime(payload.generatedAt)}`;
+      $('optimizer-period').textContent = page === 'ads' ? adsPeriodText(payload) : period?.from && period?.to ? `Период: ${period.from} — ${period.to} · данные на ${dateTime(payload.generatedAt)}` : `Данные на ${dateTime(payload.generatedAt)}`;
       renderMode(state.settings, payload.capabilities);
     } catch (error) {
       if (error?.name === 'AbortError' || requestId !== state.requestId) return;

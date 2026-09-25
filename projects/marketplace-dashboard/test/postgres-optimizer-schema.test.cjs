@@ -6,6 +6,7 @@ const {apply,REQUIRED}=require('../scripts/migrate-price-ads-optimizer.cjs');
 const columnRows=()=>Object.entries(OPTIMIZER_REQUIRED_COLUMNS).flatMap(([table,columns])=>columns.map(column=>({table_name:table,column_name:column})));
 
 test('optimizer schema readiness requires every runtime column',async()=>{
+ assert.deepEqual(OPTIMIZER_REQUIRED_COLUMNS.statistics_coverage,['store_id','stat_date','status','error_code','observed_at','source_revision']);
  const ready=await optimizerSchemaReadiness({query:async()=>({rows:columnRows()})});
  assert.deepEqual(ready,{ready:true,code:null,missing:[]});
  const rows=columnRows().filter(row=>!(row.table_name==='settings'&&row.column_name==='revision'));

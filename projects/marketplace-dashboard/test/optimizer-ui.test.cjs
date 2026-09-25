@@ -20,6 +20,21 @@ test('отсутствующие суммы не превращаются в н�
   assert.match(ui.bid(12.5, '25000000'), /₽$/u);
 });
 
+test('экран рекламы отдельно показывает локальные строки, покрытие и свежесть статистики', () => {
+  const partial = { total: 2, period: { from: '2026-09-10', to: '2026-09-23' }, generatedAt: '2026-09-25T09:00:00Z', summary: { complete: false }, items: [
+    { advertising: { periodFrom: '2026-09-22', periodTo: '2026-09-23', observedAt: '2026-09-24T08:00:00Z' } },
+    { advertising: { periodFrom: null, periodTo: null, observedAt: null } }
+  ] };
+  assert.deepEqual(ui.adsCoverage(partial), { hasLocalRows: true, hasStatistics: true, complete: false, from: '2026-09-22', to: '2026-09-23', observedAt: '2026-09-24T08:00:00.000Z' });
+  assert.match(ui.adsPeriodText(partial), /Запрошенный период: 2026-09-10 — 2026-09-23/);
+  assert.match(ui.adsPeriodText(partial), /доступная локальная статистика на этой странице: 2026-09-22 — 2026-09-23/);
+  assert.doesNotMatch(ui.adsPeriodText(partial), /25 сент/u, 'время формирования ответа не должно выглядеть свежестью статистики');
+
+  const catalogOnly = { total: 3, period: partial.period, generatedAt: partial.generatedAt, summary: { complete: false }, items: [{ advertising: { periodFrom: null, periodTo: null } }] };
+  assert.deepEqual(ui.adsCoverage(catalogOnly), { hasLocalRows: true, hasStatistics: false, complete: false, from: null, to: null, observedAt: null });
+  assert.match(ui.adsPeriodText(catalogOnly), /статистика за период ещё не накоплена/);
+});
+
 test('список запрашивает одну ограниченную страницу, локальные фильтры честно действуют внутри неё', () => {
   const query = ui.listParams({ store: 'store-1', campaign: 'campaign-2', search: 'саморез', state: 'BLOCKED', confidence: 'LOW', onlyScalable: true, onlyBlocked: false }, 100);
   assert.equal(query.get('limit'), '50');
@@ -54,6 +69,8 @@ test('страницы показывают реальные API данные с
   }
   assert.match(js, /\/api\/optimizer\/sku\//);
   assert.match(js, /Performance API не подключён/);
+  assert.match(js, /Показаны сохранённые локально кампании и товары/);
+  assert.match(js, /Полная история накопится постепенно при ежедневных загрузках/);
   assert.match(js, /AUTO · недоступен/);
   assert.match(js, /AUTO · БЕЗОПАСНОСТЬ/);
   assert.match(js, /Аварийная блокировка: ВЫКЛ/);
