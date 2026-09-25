@@ -128,6 +128,7 @@ test('all statistics reads preserve unknown sums and require explicit daily cove
   const reads = db.queries.filter(query => query.sql.startsWith('WITH'));
   assert.equal(reads.length, 3);
   for (const {sql, args} of reads) {
+    assert.match(sql, /MIN\(stat_date\)::text AS period_from,MAX\(stat_date\)::text AS period_to/);
     assert.match(sql, /CASE WHEN COUNT\(spend\)=COUNT\(\*\) THEN SUM\(spend\) END spend/);
     assert.match(sql, /MIN\(observed_at\) statistics_observed_at/);
     assert.match(sql, /COUNT\(\*\)=\(\$\d+::date-\$\d+::date\+1\)/);
