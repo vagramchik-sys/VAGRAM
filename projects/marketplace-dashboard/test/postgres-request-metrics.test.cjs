@@ -39,3 +39,15 @@ test('series cardinality is bounded and overflow is aggregated', async () => {
   assert.equal(snapshot.series.length, 2);
   assert.equal(snapshot.series.find(item => item.route === 'OTHER').count, 3);
 });
+
+test('per-route percentiles use a bounded recent sample rather than lifetime averages', async () => {
+  let tick = 0;
+  const metrics = createRequestMetrics({ maxSamplesPerSeries: 3, now: () => BigInt(tick) * 1000000n });
+  for (const duration of [10, 20, 30, 40]) {
+    const res = response();
+    await metrics.run({ method: 'GET', url: '/api/slow' }, res, async () => { tick += duration; res.end(); });
+  }
+  const [route] = metrics.snapshot().series;
+  assert.deepEqual({ count: route.count, sampleCount: route.sampleCount, p50: route.p50Ms, p95: route.p95Ms, p99: route.p99Ms },
+    { count: 4, sampleCount: 3, p50: 30, p95: 40, p99: 40 });
+});
