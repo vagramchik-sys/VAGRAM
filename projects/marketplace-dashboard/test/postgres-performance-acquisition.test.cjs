@@ -36,3 +36,78 @@ test('historical SKU statistics survive removal from the current campaign produc
   await f.api.refresh({storeId:'1',expectedRevision:'0',commandId:COMMAND});
   assert.equal(f.calls.find(row=>row[0]==='commit')[1].statistics[0].sku,'999');
 });
+
+test('live PascalCase and legacy camelCase campaign types acquire the same CPC products and statistics', async t => {
+  for(const fields of [{PaymentType:'CPC',advObjectType:'SKU'},{paymentType:'CPC'},{paymentType:'CPC',PaymentType:'CPC',advObjectType:'SKU'},{paymentType:null,PaymentType:'CPC',advObjectType:'SKU'}]){
+    await t.test(JSON.stringify(fields), async () => {
+      const productRequests=[],competitiveRequests=[],minimumRequests=[];
+      const f=fixture({transport:{
+        listCampaigns:async()=>[{id:'7',title:'Campaign',state:'CAMPAIGN_STATE_RUNNING',...fields}],
+        listCampaignProducts:async(storeId,campaignId)=>{productRequests.push({storeId,campaignId});return[{sku:'101',bid:'12500000'}]},
+        getCompetitiveBids:async(storeId,campaignId,skus)=>{competitiveRequests.push({storeId,campaignId,skus});return[{sku:'101',bid:'13750000'}]},
+        getMinimumBids:async(storeId,skus,options)=>{minimumRequests.push({storeId,skus,options});return[{sku:'101',bid:3.5}]}
+      }});
+      await f.api.refresh({storeId:'1',expectedRevision:'0',commandId:COMMAND});
+      const saved=f.calls.find(row=>row[0]==='commit')[1];
+      assert.equal(saved.campaigns[0].payment_type,'CPC');
+      assert.deepEqual(productRequests,[{storeId:'1',campaignId:'7'}]);
+      assert.deepEqual(competitiveRequests,[{storeId:'1',campaignId:'7',skus:['101']}]);
+      assert.deepEqual(minimumRequests,[{storeId:'1',skus:['101'],options:{marketplaceId:'MARKETPLACE_ID_RU',paymentType:'CPC'}}]);
+      assert.equal(saved.products.length,1);assert.equal(saved.statistics.length,1);
+      assert.equal(saved.products[0].product_id,'42');assert.equal(saved.products[0].current_bid_raw,'12500000');
+      assert.equal(saved.products[0].current_bid,null);assert.equal(saved.products[0].status,'unsupported_bid_unit');
+      assert.deepEqual(f.calls.find(row=>row[0]==='stats')[1].campaignIds,['7']);
+    });
+  }
+});
+
+test('missing, conflicting and malformed campaign types cannot replace a prior snapshot', async t => {
+  const cases=[{}, {advObjectType:'SKU'}, {paymentType:null,PaymentType:null,advObjectType:'SKU'},
+    {paymentType:'CPC',PaymentType:'CPM'}, {paymentType:'CPM',PaymentType:'CPC'},
+    {paymentType:7,PaymentType:'CPC'}, {paymentType:'',PaymentType:'CPC'}, {PaymentType:'   '},
+    {PaymentType:'CPC',advObjectType:'BANNER'}, {PaymentType:'CPC',advObjectType:null}];
+  for(const fields of cases){
+    await t.test(JSON.stringify(fields), async () => {
+      let detailRequests=0;
+      const unexpected=async()=>{detailRequests++;return[]};
+      const f=fixture({transport:{listCampaigns:async()=>[{id:'7',PaymentType:'CPC',advObjectType:'SKU'},{id:'8',...fields}],listCampaignProducts:unexpected,getCompetitiveBids:unexpected,getMinimumBids:unexpected,getSkuStatistics:unexpected}});
+      await assert.rejects(f.api.refresh({storeId:'1',expectedRevision:'0',commandId:COMMAND}),{code:'PERFORMANCE_INVALID_RESPONSE'});
+      assert.equal(detailRequests,0);assert.equal(f.calls.some(row=>row[0]==='commit'),false);
+      assert.equal(f.calls.filter(row=>row[0]==='fail').length,1);
+    });
+  }
+});
+
+test('only normalized CPC campaigns enter product and statistics requests in a mixed response', async () => {
+  const productRequests=[];
+  const f=fixture({transport:{
+    listCampaigns:async()=>[{id:'7',PaymentType:'CPC',advObjectType:'SKU'},{id:'8',paymentType:'CPM',advObjectType:'SKU'},{id:'9',PaymentType:'CPO',advObjectType:'SKU'}],
+    listCampaignProducts:async(_store,campaignId)=>{productRequests.push(campaignId);return[{sku:'101',bid:'12500000'}]}
+  }});
+  await f.api.refresh({storeId:'1',expectedRevision:'0',commandId:COMMAND});
+  const saved=f.calls.find(row=>row[0]==='commit')[1];
+  assert.deepEqual(saved.campaigns.map(row=>row.payment_type),['CPC','CPM','CPO']);
+  assert.deepEqual(productRequests,['7']);assert.deepEqual(f.calls.find(row=>row[0]==='stats')[1].campaignIds,['7']);
+  assert.deepEqual(saved.products.map(row=>row.campaign_id),['7']);assert.deepEqual(saved.statistics.map(row=>row.campaign_id),['7']);
+});
+
+test('empty and explicitly non-CPC campaign lists make no CPC detail or statistics requests', async () => {
+  for(const campaigns of [[],[{id:'8',PaymentType:'CPM',advObjectType:'SKU'},{id:'9',paymentType:'CPO'}]]){
+    let detailRequests=0;
+    const unexpected=async()=>{detailRequests++;return[]};
+    const f=fixture({transport:{listCampaigns:async()=>campaigns,listCampaignProducts:unexpected,getCompetitiveBids:unexpected,getMinimumBids:unexpected,getSkuStatistics:unexpected}});
+    await f.api.refresh({storeId:'1',expectedRevision:'0',commandId:COMMAND});
+    const saved=f.calls.find(row=>row[0]==='commit')[1];
+    assert.equal(detailRequests,0);assert.equal(saved.campaigns.length,campaigns.length);
+    assert.deepEqual(saved.products,[]);assert.deepEqual(saved.statistics,[]);
+  }
+});
+
+test('statistics from an excluded non-CPC campaign fail the normalized scope check', async () => {
+  const f=fixture({transport:{
+    listCampaigns:async()=>[{id:'7',PaymentType:'CPC',advObjectType:'SKU'},{id:'8',PaymentType:'CPM',advObjectType:'SKU'}],
+    getSkuStatistics:async()=>[{campaignId:'8',sku:'101',date:'2026-09-23',views:'100',clicks:'10',orders:'2',expense:'25.50',sales:'200'}]
+  }});
+  await assert.rejects(f.api.refresh({storeId:'1',expectedRevision:'0',commandId:COMMAND}),{code:'PERFORMANCE_INVALID_RESPONSE'});
+  assert.equal(f.calls.some(row=>row[0]==='commit'),false);
+});
