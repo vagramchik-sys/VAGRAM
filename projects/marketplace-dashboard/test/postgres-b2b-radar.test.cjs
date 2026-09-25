@@ -7,19 +7,31 @@ const CURRENT={from:'2026-09-18',to:'2026-09-24'},PREVIOUS={from:'2026-09-11',to
 const amountFields={amountRub:'150.25',notCancelledAmountRub:'100.25',legalAmountRub:'100.25',individualAmountRub:'50',unknownAmountRub:'0',legalNotCancelledAmountRub:'100.25',individualNotCancelledAmountRub:null,unknownNotCancelledAmountRub:'0'};
 function product(period='current'){return {kind:'product',payload:{market:'Ozon',storeId:'1',productId:'10',sku:'sku-10',name:'Товар',category:'Категория',period,grossUnits:'5',notCancelledUnits:'4',legalUnits:'3',legalNotCancelledUnits:'3',individualUnits:'2',individualNotCancelledUnits:'1',unknownUnits:'0',unknownNotCancelledUnits:'0',orderCount:'2',legalOrderCount:'1',cancelledUnits:'1',cancellationUnknownUnits:'0',...amountFields,daily:[{date:period==='current'?'2026-09-18':'2026-09-11',grossUnits:'5',notCancelledUnits:'4',legalUnits:'3',legalNotCancelledUnits:'3',individualUnits:'2',individualNotCancelledUnits:'1',unknownUnits:'0',unknownNotCancelledUnits:'0',orderCount:'2',legalOrderCount:'1',cancelledUnits:'1',cancellationUnknownUnits:'0',...amountFields}],productCount:1}};}
 
-test('repository issues one read-only aggregate query and returns bounded SKU buckets instead of orders',async()=>{
- const calls=[],pool={async query(sql,values){calls.push({sql,values});return{rows:[product(),product('previous'),{kind:'summary',payload:{period:'current',orderCount:'2',legalOrderCount:'1',daily:[{date:'2026-09-18',grossUnits:'5',notCancelledUnits:'4',legalUnits:'3',legalNotCancelledUnits:'3',individualUnits:'2',individualNotCancelledUnits:'1',unknownUnits:'0',unknownNotCancelledUnits:'0',orderCount:'2',legalOrderCount:'1',cancelledUnits:'1',cancellationUnknownUnits:'0',...amountFields}]}},{kind:'summary',payload:{period:'previous',orderCount:'2',legalOrderCount:'1',daily:[]}},{kind:'count',payload:{productCount:1}}]}}};
- const value=await createPostgresB2BRadarRepository({pool}).read({currentPeriod:CURRENT,previousPeriod:PREVIOUS,market:'Ozon',storeId:'1'});
- assert.equal(calls.length,1);assert.equal(calls[0].values.length,9);assert.equal(calls[0].values[8],MAX_DAILY_PRODUCTS);assert.doesNotMatch(calls[0].sql,/\b(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/iu);
- assert.match(calls[0].sql,/DISTINCT ON \(p\.value->>'market',p\.value->>'storeId',p\.value->>'scheme',p\.value->>'orderId',p\.value->>'productId'/u);assert.match(calls[0].sql,/left\(f\.value->>'orderedAt',10\) BETWEEN/u);assert.doesNotMatch(calls[0].sql,/entity_type='records'/u);
- assert.match(calls[0].sql,/f\.domain='market' AND f\.entity_type='products'/u);assert.match(calls[0].sql,/category_nodes\(store_id,value\)/u);
+test('repository checks source revisions, aggregates bounded SKU buckets and reuses unchanged results',async()=>{
+ const calls=[],pool={async query(sql,values){calls.push({sql,values});if(sql.includes('revision_key'))return{rows:[{revision_key:'buyers/1/1|market/1/1'}]};return{rows:[product(),product('previous'),{kind:'summary',payload:{period:'current',orderCount:'2',legalOrderCount:'1',daily:[{date:'2026-09-18',grossUnits:'5',notCancelledUnits:'4',legalUnits:'3',legalNotCancelledUnits:'3',individualUnits:'2',individualNotCancelledUnits:'1',unknownUnits:'0',unknownNotCancelledUnits:'0',orderCount:'2',legalOrderCount:'1',cancelledUnits:'1',cancellationUnknownUnits:'0',...amountFields}]}},{kind:'summary',payload:{period:'previous',orderCount:'2',legalOrderCount:'1',daily:[]}},{kind:'count',payload:{productCount:1}}]}}};
+ const repository=createPostgresB2BRadarRepository({pool}),options={currentPeriod:CURRENT,previousPeriod:PREVIOUS,market:'Ozon',storeId:'1'};
+ const value=await repository.read(options);
+ assert.equal(calls.length,2);assert.equal(calls[1].values.length,9);assert.equal(calls[1].values[8],MAX_DAILY_PRODUCTS);assert.doesNotMatch(calls[1].sql,/\b(?:INSERT|UPDATE|DELETE|ALTER|CREATE|DROP|TRUNCATE)\b/iu);
+ assert.match(calls[1].sql,/DISTINCT ON \(p\.market,p\.store_id,p\.scheme,p\.order_id,p\.product_id\)/u);assert.match(calls[1].sql,/left\(f\.value->>'orderedAt',10\) BETWEEN/u);assert.doesNotMatch(calls[1].sql,/entity_type='records'/u);
+ assert.match(calls[1].sql,/f\.value->>'orderedAt' AS ordered_at/u);assert.doesNotMatch(calls[1].sql,/SELECT f\.value,s\.source_path/u);assert.match(calls[1].sql,/GROUP BY GROUPING SETS \(\(period,order_day\),\(period\)\)/u);
+ assert.match(calls[1].sql,/f\.domain='market' AND f\.entity_type='products'/u);assert.match(calls[1].sql,/category_nodes\(store_id,value\)/u);
  assert.equal(value.rows.length,1);assert.equal(value.rows[0].metrics.current.totalUnits,5);assert.equal(value.rows[0].metrics.current.notCancelledUnits,4);assert.equal(value.rows[0].metrics.current.individualUnits,2);assert.equal(value.rows[0].metrics.current.individualNotCancelledUnits,1);assert.equal(value.rows[0].metrics.current.legalAmountRub,100.25);assert.equal(value.rows[0].metrics.current.individualNotCancelledAmountRub,null);assert.equal(value.rows[0].metrics.current.daily.length,1);assert.equal(value.summary.current.legalOrderCount,1);assert.equal(value.summary.current.daily[0].orderCount,2);assert.equal(value.summary.current.daily[0].individualNotCancelledUnits,1);
- assert.match(calls[0].sql,/count\(DISTINCT \(market,store_id,scheme,order_id\)\) FILTER\(WHERE cancelled=false\)/u);
+ assert.match(calls[1].sql,/count\(DISTINCT \(market,store_id,scheme,order_id\)\) FILTER\(WHERE cancelled=false\)/u);
+ assert.strictEqual(await repository.read(options),value);assert.equal(calls.length,3);
 });
 
 test('repository exposes product cardinality above its bounded analyzed rows',async()=>{
- const pool={async query(){return{rows:[product(),{kind:'count',payload:{productCount:2}}]}}};
+ const pool={async query(sql){return sql.includes('revision_key')?{rows:[{revision_key:'1'}]}:{rows:[product(),{kind:'count',payload:{productCount:2}}]}}};
  const result=await createPostgresB2BRadarRepository({pool,maxProducts:1}).read({currentPeriod:CURRENT,previousPeriod:PREVIOUS});assert.equal(result.productCount,2);assert.equal(result.rows.length,1);
+});
+
+test('repository invalidates its report when a buyer or catalog revision changes',async()=>{
+ let revision='buyers/1/1|market/1/1',aggregateQueries=0;
+ const pool={async query(sql){if(sql.includes('revision_key'))return{rows:[{revision_key:revision}]};aggregateQueries++;return{rows:[product(),{kind:'count',payload:{productCount:1}}]}}};
+ const repository=createPostgresB2BRadarRepository({pool}),options={currentPeriod:CURRENT,previousPeriod:PREVIOUS};
+ await repository.read(options);await repository.read(options);assert.equal(aggregateQueries,1);
+ revision='buyers/1/2|market/1/1';await repository.read(options);assert.equal(aggregateQueries,2);
+ revision='buyers/1/2|market/1/2';await repository.read(options);assert.equal(aggregateQueries,3);
 });
 
 test('domain computes equal previous period, conservative coverage and bounded output',async()=>{

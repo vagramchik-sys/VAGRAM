@@ -16,3 +16,14 @@ test('fallback keeps known partial products, deduplicates retries and exposes a 
 });
 test('compact SQL product documents bypass full order snapshots and honor buyer filter',async()=>{let orderReads=0,aggregateOptions;const order={generatedAt:'2026-09-08T00:00:00Z',records:[{market:'Ozon',storeId:'1',scheme:'FBO'}],productOrders:[{market:'Ozon',storeId:'1',scheme:'FBO',orderId:'sql:101:legal:false',productId:'101',orderedAt:'2026-09-03T10:00:00Z',units:5,amountRub:500,buyerType:'legal',cancelled:false},{market:'Ozon',storeId:'1',scheme:'FBO',orderId:'sql:101:individual:true',productId:'101',orderedAt:'2026-09-03T10:00:00Z',units:2,amountRub:200,buyerType:'individual',cancelled:true}],report:{coverage:{sources:[{market:'Ozon',scheme:'FBO',storeId:'1',name:'Первый',available:true,complete:true,from:FROM,to:TO}]}}};const result=await service({getSnapshot:async()=>null,getOrderSnapshots:async()=>{orderReads++;return[]},getAggregate:async options=>{aggregateOptions=options;return{documents:[order]}}}).read({from:FROM,to:TO,market:'Ozon',storeId:'1',buyerType:'individual'});assert.equal(orderReads,0);assert.deepEqual(aggregateOptions,{from:FROM,to:TO,market:'Ozon',storeId:'1'});assert.equal(result.products[0].orderedUnits,2);assert.equal(result.products[0].cancelledUnits,2);assert.equal(result.products[0].name,'Первый товар');});
 test('invalid filters and provider contracts fail closed',async()=>{await assert.rejects(service().read({from:FROM,to:TO,buyerType:'company'}),/тип покупателя/u);await assert.rejects(service({getStores:async()=>null}).read({from:FROM,to:TO}),/каталог магазинов/u);});
+test('revision-keyed projection cache skips repeated heavy reads and invalidates exactly on source change',async()=>{
+ let revision='1',snapshotReads=0,aggregateReads=0,catalogReads=0;
+ const aggregate=async()=>{aggregateReads++;return{documents:[]}};
+ aggregate.revision=async()=>revision;
+ aggregate.catalogs=async()=>{catalogReads++;return new Map(Object.entries(catalogs))};
+ const value=service({getSnapshot:async()=>{snapshotReads++;return prepared()},getAggregate:aggregate,getCatalog:async()=>{throw Error('per-store catalog path must not run')}});
+ const first=await value.read({from:FROM,to:TO,market:'Ozon'}),second=await value.read({from:FROM,to:TO,market:'Ozon'});
+ assert.deepEqual(second,first);assert.equal(snapshotReads,1);assert.equal(aggregateReads,0);assert.equal(catalogReads,1);
+ revision='2';await value.read({from:FROM,to:TO,market:'Ozon'});
+ assert.equal(snapshotReads,2);assert.equal(catalogReads,2);
+});

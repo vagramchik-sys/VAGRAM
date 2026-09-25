@@ -183,6 +183,22 @@ test('order chart projection requests daily totals only, leaving SKU detail and 
  assert.equal(calls.filter(call=>call[0]==='record').length,1);
 });
 
+test('report inputs batch known stores without catalog scans or per-source reads',async()=>{
+ const requests=[],values={
+  'insights-3.json':data(4,{orders:{daily:[{date:'2026-09-20',revenue:20,units:2}]},types:[],errors:[]}),
+  'data-3.json':data(5,{completedAt:'2026-09-20T10:00:00Z',products:[{product_id:1}],stocks:[]}),
+  'ledger-3.json':data(6,{version:3,daily:[],skuDaily:[],fees:[],currencies:[]}),
+  'costs-3.json':data(7,{items:[{product_id:1}]})
+ };
+ const providers=createLiveSourceProviders({sources:{identity(){return{}},async listSources(){throw Error('catalog must stay cold')},async record(){throw Error('individual reads must stay cold')},async records(input){requests.push(input);return input.map(request=>values[request.sourcePath]||null)}}});
+ const report=await providers.getReportInputs(['3']);
+ assert.equal(report.length,1);assert.equal(report[0].storeId,'3');assert.equal(report[0].catalog.products[0].product_id,1);assert.equal(report[0].extra.orders.daily[0].revenue,20);assert.equal(report[0].ledger.version,3);assert.equal(report[0].costs.items[0].product_id,1);
+ assert.deepEqual(requests[0].map(row=>[row.sourcePath,row.entities]),[
+  ['insights-3.json',['orders.daily','orders.skuDaily','orders.skuCoverage','types','errors']],['data-3.json',['products','stocks']],['ledger-3.json',['data.daily','data.skuDaily','data.fees','data.currencies']],['costs-3.json',['items']]
+ ]);
+ const orders=await providers.getOrderInsightsForStores(['3']);assert.equal(orders[0].value.orders.daily[0].units,2);assert.deepEqual(requests[1],[{sourcePath:'insights-3.json',entities:['orders.daily','errors']}]);
+});
+
 test('category chart projection requests SKU orders only, leaving daily totals and finance cold',async()=>{
  const insight={orders:{skuDailyCoverage:true,skuUpdatedAt:'2026-09-20T10:00:00Z',skuDaily:[{date:'2026-09-20',sku:'1',revenue:20,units:2}]}};
  const {providers,calls}=fixture({'insights-3.json':data(1,insight)});

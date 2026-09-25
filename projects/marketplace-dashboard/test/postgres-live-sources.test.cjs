@@ -61,6 +61,22 @@ test('current projected collections share one repository read and preserve decod
   assert.deepEqual(calls, [['current', ['records', 'productOrders', 'report.coverage.sources']]]);
 });
 
+test('batched current projections share one repository bundle and preserve source order', async () => {
+  const values=[{sourcePath:'costs-1.json',value:{items:[{product_id:1}]}},{sourcePath:'insights-1.json',value:{orders:{daily:[{date:'2026-09-22',revenue:10,units:1}]},errors:[]}}];
+  const encoded=values.map(row=>({...row,encoded:codecs.encode(row.sourcePath,row.value)})),calls=[];
+  const methods=Object.fromEntries(['publishWithStatus','listRows','readAtRevision','readCommand','getHead','listHeads'].map(name=>[name,async()=>{throw Error('unexpected')}])) ;
+  methods.readCurrentBundles=async requests=>{
+    calls.push(requests);
+    return requests.map((request,index)=>{
+      const item=encoded[index],head={revision:index+1,metadata:item.encoded.metadata,sourceMetadata:{sourcePath:item.sourcePath,logicalKey:sourceKey(item.sourcePath)},entityCounts:Object.fromEntries(Object.entries(item.encoded.collections).map(([type,rows])=>[type,rows.length]))};
+      return {head,collections:Object.fromEntries(request.entityTypes.map(type=>[type,(item.encoded.collections[type]||[]).map(row=>({entityType:type,entityKey:row.key,occurrence:0,businessDay:row.day,sourceOrder:row.ordinal,value:row.value,revision:index+1}))]))};
+    });
+  };
+  const sources=createLiveSources({repository:methods}),result=await sources.records([{sourcePath:'costs-1.json',entities:['items']},{sourcePath:'insights-1.json',entities:['orders.daily','errors']}]);
+  assert.deepEqual(result.map(row=>row.value),values.map(row=>row.value));
+  assert.deepEqual(calls,[[{storeId:'1',domain:'costs',entityTypes:['items']},{storeId:'1',domain:'insights',entityTypes:['orders.daily','errors']}]]);
+});
+
 test('live source bridge PostgreSQL CAS and journal compatibility', { skip: !process.env.PULT_TEST_DATABASE_URL }, async t => {
   const { Pool } = require('pg'), pool = new Pool({ connectionString: process.env.PULT_TEST_DATABASE_URL, max: 5 });
   t.after(() => pool.end()); await ensurePostgresLiveSchema(pool);

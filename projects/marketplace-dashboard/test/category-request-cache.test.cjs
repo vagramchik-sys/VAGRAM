@@ -13,7 +13,7 @@ function runtime(load,options={}){
  const dynamics=options.dynamicsPayloads&&{PultBusinessDynamicsClient:{create:()=>({read:({store})=>Promise.resolve(options.dynamicsPayloads[store]||options.dynamicsPayloads[''])})},PultBusinessDynamicsModel:require('../dist/business-dynamics-model.js'),PultBusinessDynamicsView:{clear(){},loading(){},error(){},render(_host,model){renderedModels.push(model)}}};
  const context={document:{getElementById:node},window:{...dynamics},PultStoreChart:require('../dist/turnover-chart-model.js'),Intl,Date:Clock,URLSearchParams,Promise,Map,Set,setTimeout,clearTimeout,console};
  vm.runInNewContext(source,context);
- const chart=context.window.createPultStoreChart({api:url=>url==='/api/stores'?Promise.resolve(options.stores||[]):(calls++,load(url)),metricTitle:()=> 'Сумма',requestTimeoutMs:options.requestTimeoutMs||15000});
+ const chart=context.window.createPultStoreChart({api:url=>url==='/api/stores'?Promise.resolve(options.stores||[]):(calls++,load(url)),metricTitle:()=> 'Сумма',requestTimeoutMs:options.requestTimeoutMs||15000,reportCacheTtlMs:options.reportCacheTtlMs??30000});
  if(options.from)node('ins-from').value=options.from;if(options.to)node('ins-to').value=options.to;
  if(options.categoryMode!==false)node('chart-mode-categories').onclick();
  return {chart,node,renderedModels,calls:()=>calls,update:date=>chart.update({days:1,current:{from:date,to:date}})};
@@ -40,6 +40,15 @@ test('store orders and forecast use the light report; financial selection cannot
  assert.equal(urls.length,1);assert.match(urls[0],/scope=full/);
  app.node('ins-chart-metric').value='orderedRevenue';await app.chart.render();
  assert.equal(urls.length,1,'switching back retains the separate light cache');
+});
+test('supplied total is reused only for an unfiltered matching scope and fetched cache expires',async()=>{
+ const urls=[],current={from:'2026-09-01',to:'2026-09-28'},report={scope:'orders',days:28,current,metrics:{},daily:[],coverage:{orders:true}};
+ const filtered=runtime(url=>{urls.push(url);return Promise.resolve(report)},{categoryMode:false});
+ filtered.chart.update(report,'store-1');await flush();
+ assert.equal(urls.length,1);assert.match(urls[0],/scope=orders/);
+ const expiringUrls=[],expiring=runtime(url=>{expiringUrls.push(url);return Promise.resolve(report)},{categoryMode:false,reportCacheTtlMs:0});
+ expiring.chart.update(report);await flush();assert.equal(expiringUrls.length,1,'expired supplied report is refreshed');
+ await expiring.chart.render();assert.equal(expiringUrls.length,2,'expired fetched report is not retained forever');
 });
 test('default total requests WB even when its individual line is unchecked and combines it once',async()=>{
  const urls=[],current={from:'2026-09-20',to:'2026-09-20'},ozon={scope:'orders',days:1,current,metrics:{orderedRevenue:{current:100},orderedUnits:{current:2}},intraday:{orders:[{at:'2026-09-20T09:00:00Z',orderedRevenue:100,orderedUnits:2}]},coverage:{orders:true}},wb={days:1,current,metrics:{orderedRevenue:{current:20},orderedUnits:{current:1}},intraday:{orders:[{at:'2026-09-20T09:00:00Z',orderedRevenue:20,orderedUnits:1}]},coverage:{orders:true}};

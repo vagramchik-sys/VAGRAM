@@ -73,6 +73,18 @@ test('orders-only report leaves ledger, catalog, costs and full SKU insights col
  assert.equal(result.intraday.orders[0].sourceFromAt,result.intraday.orders[0].at);
 });
 
+test('insights uses bounded report bundles and scopes order projections to selected stores',async()=>{
+ const forbidden=async()=>{throw Error('per-source report read must stay cold')},calls=[];
+ const orderValue={orders:{period:{from:'2026-09-19',to:TO},updatedAt:'2026-09-20T11:55:00Z',daily:[{date:DAY,revenue:120,units:2}]},errors:[]};
+ const service=fixture({sourceOverrides:{getInsights:forbidden,getOrderInsights:forbidden,getReportCatalog:forbidden,getOzonLedger:forbidden,exact:forbidden,
+  async getReportInputs(ids){calls.push(['full',ids]);return ids.map(storeId=>({storeId,extra:orderValue,catalog:null,ledger:null,costs:null}))},
+  async getOrderInsightsForStores(ids){calls.push(['orders',ids]);return ids.map(storeId=>({storeId,value:orderValue}))}
+ }});
+ const full=await service.insights(params({store:'1',from:FROM,to:TO}));assert.equal(full.metrics.orderedRevenue.current,120);assert.equal(full.coverage.finance,false);
+ const orders=await service.insights(params({store:'1',from:FROM,to:TO,scope:'orders'}));assert.equal(orders.metrics.orderedRevenue.current,120);assert.equal(orders.metrics.net.current,null);
+ assert.deepEqual(calls,[['full',['1']],['orders',['1']]]);
+});
+
 test('live chart observations never invent current time or use a stale or future source day',async()=>{
  for(const updatedAt of ['2026-09-19T11:00:00Z','2026-09-20T12:01:00Z',null]){
   const service=fixture({sourceOverrides:{async getOrderInsights(){return [{storeId:'1',value:{orders:{period:{from:FROM,to:TO},updatedAt,daily:[{date:DAY,revenue:120,units:2}]},errors:[]}}]}}});

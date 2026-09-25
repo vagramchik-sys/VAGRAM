@@ -103,3 +103,17 @@ test('completed report cache is bounded to four entries', async () => {
   for(let day=1;day<=5;day++){const date=`2026-09-0${day}`;await reader.read({from:date,to:date});}
   await reader.read({from:'2026-09-01',to:'2026-09-01'});assert.equal(snapshots,6);
 });
+
+test('category calculation admission is bounded and an occupied queue recovers', async () => {
+  const releases=[];
+  const p=providers({getSnapshots:()=>new Promise(resolve=>releases.push(resolve))});
+  const reader=create(p.options),options={from:'2026-09-22',to:'2026-09-22'};
+  const active=[reader.read(options),reader.read({...options,market:'Ozon'}),reader.read({...options,market:'WB'})];
+  const duplicate=reader.read(options);
+  await assert.rejects(reader.read({...options,store:'s1'}),error=>error.code==='CATEGORY_REPORT_BUSY'&&error.statusCode===503);
+  assert.equal(releases.length,3);
+  releases.forEach(resolve=>resolve([]));
+  const results=await Promise.all([...active,duplicate]);
+  assert.deepEqual(results[0],results[3]);
+  const next=reader.read({...options,store:'s1'});releases.at(-1)([]);await next;
+});

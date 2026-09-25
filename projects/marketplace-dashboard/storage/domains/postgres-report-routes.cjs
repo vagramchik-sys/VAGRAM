@@ -17,6 +17,8 @@ module.exports=function createPostgresReportRoutes({storesRepository,sourceProvi
  const getReportCatalog=source('getReportCatalog'),getOzonLedger=source('getOzonLedger'),exact=source('exact'),getInsights=source('getInsights'),getWbOrders=source('getWbOrders'),getCatalogs=source('getCatalogs');
  const getOrderInsights=typeof sourceProviders.getOrderInsights==='function'?source('getOrderInsights'):getInsights;
  const getCategoryInsights=typeof sourceProviders.getCategoryInsights==='function'?source('getCategoryInsights'):getInsights;
+ const getReportInputRows=typeof sourceProviders.getReportInputs==='function'?source('getReportInputs'):null;
+ const getOrderInsightsForStores=typeof sourceProviders.getOrderInsightsForStores==='function'?source('getOrderInsightsForStores'):null;
  async function directory(){const value=await storesRepository.read();if(!value||typeof value!=='object'||Array.isArray(value))throw Error('Некорректный каталог магазинов SQL');return value}
  const publicStores=stores=>Object.entries(stores).map(([id,value])=>({id,name:value.name,clientId:value.clientId,connectedAt:value.connectedAt,job:null,updatedAt:value.updatedAt||null,revision:value.updatedAt||''}));
  async function insightData(){return new Map((await getInsights()).map(row=>[row.storeId,row.value]))}
@@ -24,12 +26,15 @@ module.exports=function createPostgresReportRoutes({storesRepository,sourceProvi
  async function jobs(){return schedules.status()}
  async function selectedOzon(params,missingStatus=404){const stores=await directory(),id=params.get('store')||'';if(id&&(!Object.hasOwn(stores,id)||stores[id].market==='WB'))routeFail(missingStatus===400?'Выберите магазин Ozon':'Магазин не подключён',missingStatus);return {stores,selected:publicStores(stores).filter(store=>!store.id.startsWith('wb-')&&(!id||store.id===id))}}
  function currentLedger(saved,catalog,extra){const value=saved?.version===3?saved:saved?.data?.version===3?saved.data:null;if(!value||!catalog||value.completedAt!==catalog.completedAt||value.period?.from!==catalog.period?.from||value.period?.to!==catalog.period?.to)return null;if(!saved?.source)return value;const source=saved.source,current=catalog._source;return current&&source.snapshotId===current.snapshotId&&source.marketRevision===current.marketRevision&&source.marketSha256===current.marketSha256&&source.typesSha256===typesHash(extra?.types||[])?value:null}
- async function reportInputs(selected){const extras=await insightData();return Promise.all(selected.map(async store=>{const [catalog,saved,costs,prices]=await Promise.all([getReportCatalog(store.id),getOzonLedger(store.id),exact(`costs-${store.id}.json`),exact(`prices-${store.id}.json`)]),extra=extras.get(store.id)||null,ledger=currentLedger(saved,catalog,extra),snapshot=catalog?summary.summarize(catalog,costs,prices):null;return {id:store.id,name:store.name,ledger,extra,products:model.rowsFor([store],new Map([[store.id,snapshot]]))}}))}
+ async function reportInputs(selected){
+  if(getReportInputRows){const rows=new Map((await getReportInputRows(selected.map(store=>store.id))).map(row=>[row.storeId,row]));return selected.map(store=>{const row=rows.get(store.id)||{},catalog=row.catalog||null,extra=row.extra||null,ledger=currentLedger(row.ledger||null,catalog,extra),snapshot=catalog?summary.summarize(catalog,row.costs||null,null):null;return{id:store.id,name:store.name,ledger,extra,products:model.rowsFor([store],new Map([[store.id,snapshot]]))}})}
+  const extras=await insightData();return Promise.all(selected.map(async store=>{const [catalog,saved,costs,prices]=await Promise.all([getReportCatalog(store.id),getOzonLedger(store.id),exact(`costs-${store.id}.json`),exact(`prices-${store.id}.json`)]),extra=extras.get(store.id)||null,ledger=currentLedger(saved,catalog,extra),snapshot=catalog?summary.summarize(catalog,costs,prices):null;return {id:store.id,name:store.name,ledger,extra,products:model.rowsFor([store],new Map([[store.id,snapshot]]))}}))
+ }
  async function insights(params){
   const scope=params.get('scope')||'full';if(!['orders','full'].includes(scope))routeFail('Некорректный состав отчёта.');
   const {selected}=await selectedOzon(params);let values;
   if(scope==='orders'){
-   const extras=new Map((await getOrderInsights()).map(row=>[row.storeId,row.value]));
+   const extras=new Map((await (getOrderInsightsForStores?getOrderInsightsForStores(selected.map(store=>store.id)):getOrderInsights())).map(row=>[row.storeId,row.value]));
    values=selected.map(store=>({id:store.id,name:store.name,extra:extras.get(store.id)||null,ledger:null,products:[]}));
   }else values=await reportInputs(selected);
   const report=insightsPure.report(values,{from:params.get('from'),to:params.get('to'),hideInactive:params.get('hideInactive')!=='false'},new Date(now()));

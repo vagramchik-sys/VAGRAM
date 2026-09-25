@@ -13,6 +13,16 @@ function sum(values) {
   const result = values.reduce((a, b) => ({ sold: a.sold + b.sold, returned: a.returned + b.returned, net: a.net + b.net }), zero());
   return Object.values(result).every(Number.isSafeInteger) ? result : null;
 }
+function resolvePeriod(options = {}) {
+  const now = new Date(options.now || Date.now());
+  if (!Number.isFinite(now.getTime())) throw Error('Некорректная текущая дата');
+  const today = new Date(now.getTime() + 3 * 3600000).toISOString().slice(0, 10);
+  const count = Number(options.days || 14);
+  if (!Number.isInteger(count) || count < 1 || count > 366) throw Error('Некорректная длительность периода');
+  const from = options.from || shift(today, -count), to = options.to || shift(today, -1);
+  if (!validDate(from) || !validDate(to) || from > to || to >= today || (Date.parse(to) - Date.parse(from)) / DAY > 365) throw Error('Выберите до 366 завершённых дней; сегодняшний день не включается');
+  return {from, to, today, count};
+}
 function units(value) {
   if (typeof value !== 'number' && !(typeof value === 'string' && /^\d+(?:\.0+)?$/.test(value.trim()))) return null;
   const n = Number(value);
@@ -43,6 +53,7 @@ function taxonomyCategories(stores, manual, registry) {
     return { id: 'type:' + type.id, parentId: type.parentId === null ? null : 'type:' + type.parentId, name: type.name, path, depth: path.length, origin: 'taxonomy', productKeys: [] };
   });
   const categoryByType = new Map(value.types.map((type, index) => [type.id, hierarchy[index]]));
+  const keysByType = new Map(value.types.map(type => [type.id, new Set()]));
   const unmatched = [];
   for (const product of stores.flatMap(store => store.products || [])) {
     if (!product.key || assigned.has(product.key)) continue;
@@ -50,8 +61,8 @@ function taxonomyCategories(stores, manual, registry) {
     if (!classification || !categoryByType.has(classification.typeId)) { unmatched.push(product.key); continue; }
     let current = byId.get(classification.typeId);
     while (current) {
-      const keys = categoryByType.get(current.id).productKeys;
-      if (!keys.includes(product.key)) keys.push(product.key);
+      const keys = keysByType.get(current.id);
+      if (!keys.has(product.key)) { keys.add(product.key); categoryByType.get(current.id).productKeys.push(product.key); }
       current = current.parentId === null ? null : byId.get(current.parentId);
     }
   }
@@ -81,7 +92,11 @@ function sourceSeries(store, keys, days, allProducts = false) {
   let valid = validDate(imported.from) && validDate(imported.to) && imported.from <= imported.to;
   valid = valid && (wb ? source?.sections?.finance?.ok === true && Array.isArray(source.operations) : source?.version === 3 && source.complete === true && !source.foreignRecords && Array.isArray(allProducts ? source.daily : source.skuDaily));
   let observedTo = null;
-  if (wb) for (const row of source?.operations || []) {
+  const compactWb = wb && source?._categorySales && typeof source._categorySales === 'object' ? source._categorySales : null;
+  if (compactWb) {
+    observedTo = validDate(compactWb.observedTo) ? compactWb.observedTo : null;
+    if (compactWb.invalidDate === true) { valid = false; reasons.add('Есть строки WB без даты финансового отчёта.'); }
+  } else if (wb) for (const row of source?.operations || []) {
     const date = typeof row.rrDate === 'string' ? row.rrDate.slice(0, 10) : '';
     if (!validDate(date)) { valid = false; reasons.add('Есть строки WB без даты финансового отчёта.'); }
     else if (!observedTo || date > observedTo) observedTo = date;
@@ -95,7 +110,8 @@ function sourceSeries(store, keys, days, allProducts = false) {
       aliases.get(sku).add(product.key);
     }
     const selectedAliases = new Set([...aliases].filter(([, owners]) => [...owners].some(key => keys.has(key))).map(([sku]) => sku));
-    const missing = [...keys].some(key => !selected.some(p => p.key === key)) || selected.some(p => ![p.sku, ...(Array.isArray(p.skus) ? p.skus : [])].some(v => text(v)));
+    const selectedKeys = new Set(selected.map(product => product.key));
+    const missing = [...keys].some(key => !selectedKeys.has(key)) || selected.some(p => ![p.sku, ...(Array.isArray(p.skus) ? p.skus : [])].some(v => text(v)));
     const ambiguous = [...selectedAliases].some(sku => aliases.get(sku).size !== 1);
     if (!allProducts && (missing || ambiguous)) {
       for (const day of days) series.set(day, null);
@@ -115,15 +131,16 @@ function sourceSeries(store, keys, days, allProducts = false) {
     }
   } else {
     const seen = new Set();
-    for (const row of source?.operations || []) {
-      const date = typeof row.rrDate === 'string' ? row.rrDate.slice(0, 10) : '';
+    for (const row of compactWb?.rows || source?.operations || []) {
+      const date = compactWb ? row.date : typeof row.rrDate === 'string' ? row.rrDate.slice(0, 10) : '';
       if (!series.has(date)) continue;
-      const id = row.rrdId;
-      const safe = typeof id === 'string' && /^\d+$/.test(id) || typeof id === 'number' && Number.isSafeInteger(id);
-      if (safe) { const identity = text(row.reportId) + ':' + text(id); if (seen.has(identity)) continue; seen.add(identity); }
+      if (!compactWb) { const id = row.rrdId;
+        const safe = typeof id === 'string' && /^\d+$/.test(id) || typeof id === 'number' && Number.isSafeInteger(id);
+        if (safe) { const identity = text(row.reportId) + ':' + text(id); if (seen.has(identity)) continue; seen.add(identity); }
+      }
       if (!allProducts && !keys.has(store.id + ':' + text(row.nmId))) continue;
       if (row.sellerOperName !== 'Продажа' && row.sellerOperName !== 'Возврат') continue;
-      const quantity = units(row.quantity);
+      const quantity = compactWb && row.quantityKnown !== true ? null : units(row.quantity);
       if (quantity === null) { series.set(date, null); reasons.add('В строках продажи или возврата WB неизвестно количество.'); continue; }
       const returned = row.sellerOperName === 'Возврат';
       if (series.get(date)) series.set(date, sum([series.get(date), { sold: returned ? 0 : quantity, returned: returned ? quantity : 0, net: returned ? -quantity : quantity }]));
@@ -137,13 +154,7 @@ function sourceSeries(store, keys, days, allProducts = false) {
 function build(stores, categories, options = {}) {
   const taxonomy = taxonomyCategories(stores, categories, options.productTypes);
   categories = taxonomy || sharedCategories(stores, categories);
-  const now = new Date(options.now || Date.now());
-  if (!Number.isFinite(now.getTime())) throw Error('Некорректная текущая дата');
-  const today = new Date(now.getTime() + 3 * 3600000).toISOString().slice(0, 10);
-  const count = Number(options.days || 14);
-  if (!Number.isInteger(count) || count < 1 || count > 366) throw Error('Некорректная длительность периода');
-  const from = options.from || shift(today, -count), to = options.to || shift(today, -1);
-  if (!validDate(from) || !validDate(to) || from > to || to >= today || (Date.parse(to) - Date.parse(from)) / DAY > 365) throw Error('Выберите до 366 завершённых дней; сегодняшний день не включается');
+  const {from, to} = resolvePeriod(options);
   const market = options.market || 'all', storeId = options.store || '';
   if (!['all', 'WB', 'Ozon'].includes(market)) throw Error('Неизвестная площадка');
   if (storeId && !stores.some(s => s.id === storeId)) throw Error('Магазин не подключён');
@@ -153,10 +164,13 @@ function build(stores, categories, options = {}) {
   const keys = new Set(activeCategories.flatMap(c => c.productKeys || []));
   const days = []; for (let day = from; day <= to; day = shift(day, 1)) days.push(day);
   const scope = stores.filter(s => (!storeId || s.id === storeId) && (market === 'all' || (s.market === 'WB' ? 'WB' : 'Ozon') === market));
-  const sources = scope.map(store => ({ store, keys: new Set([...keys].filter(key => key.startsWith(store.id + ':'))) })).filter(s => !categoryId || s.keys.size).map(s => sourceSeries(s.store, s.keys, days, !categoryId));
+  const keysByStore = new Map(scope.map(store => [store.id, new Set()]));
+  for (const key of keys) { const separator=key.indexOf(':');if(separator>0)keysByStore.get(key.slice(0,separator))?.add(key); }
+  const sources = scope.map(store => ({ store, keys: keysByStore.get(store.id) || new Set() })).filter(s => !categoryId || s.keys.size).map(s => sourceSeries(s.store, s.keys, days, !categoryId));
+  const sourcesByMarket = new Map(['Ozon','WB'].map(name => [name, sources.filter(source => source.source.market === name)]));
   const series = days.map(date => {
     const row = { date };
-    for (const name of ['Ozon', 'WB']) row[name] = sum(sources.filter(s => s.source.market === name).map(s => s.series.get(date)));
+    for (const name of ['Ozon', 'WB']) row[name] = sum(sourcesByMarket.get(name).map(s => s.series.get(date)));
     row.total = sum(sources.map(s => s.series.get(date)));
     return row;
   });
@@ -178,4 +192,4 @@ function build(stores, categories, options = {}) {
     sources: sources.map(s => s.source), limitations
   };
 }
-module.exports = { build, sharedCategories, taxonomyCategories };
+module.exports = { build, sharedCategories, taxonomyCategories, resolvePeriod };

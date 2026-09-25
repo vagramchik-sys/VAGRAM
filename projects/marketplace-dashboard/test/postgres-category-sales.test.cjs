@@ -35,3 +35,16 @@ test('selected store and market skip unrelated finance sources without changing 
  const result=await service.read({...options,category:'',store:'oz-2',market:'Ozon'});
  assert.deepEqual(calls,['oz-2']);assert.deepEqual(result.totals.Ozon,{sold:7,returned:0,net:7});assert.deepEqual(result.totals.total,result.totals.Ozon);assert.equal(result.coverage.complete,true);assert.equal(result.sources.length,1);assert.equal(result.sources[0].id,'oz-2');
 });
+
+test('narrow category source preserves full business response including partial and empty coverage', async () => {
+ const stores=[{id:'1',name:'O',market:'Ozon'},{id:'wb-2',name:'W',market:'WB'}],products=[{key:'1:1',storeId:'1',sku:'10'},{key:'wb-2:2',storeId:'wb-2',nmID:'2'}],categories=[{id:'c',name:'C',productKeys:['1:1','wb-2:2']}];
+ const ledger={version:3,complete:true,period:{from:options.from,to:options.to},completedAt:'2026-09-18T00:00:00Z',daily:[],skuDaily:[{date:'2026-09-14',sku:'10',values:{soldUnits:90,salesRows:1}},{date:'2026-09-15',sku:'10',values:{soldUnits:2,salesRows:1}}]};
+ const finance={period:{from:options.from,to:'2026-09-20'},sections:{finance:{ok:true}},completedAt:'2026-09-21T00:00:00Z',operations:[{rrDate:'2026-09-15',rrdId:'1',reportId:'r',nmId:2,sellerOperName:'Продажа',quantity:3},{rrDate:'2026-09-20',rrdId:'2',reportId:'r',nmId:2,sellerOperName:'Продажа',quantity:99}]};
+ const common={async getStores(){return structuredClone(stores)},async getProducts(){return structuredClone(products)},async getCategories(){return structuredClone(categories)},async getOzonLedger(){return structuredClone(ledger)},async getWbFinance(){return structuredClone(finance)}};
+ const baseline=await create(common).read(options);
+ const narrow=await create({...common,async getCategorySalesSources(){return{products:structuredClone(products),facts:[['1',{data:{...structuredClone(ledger),skuDaily:[structuredClone(ledger.skuDaily[1])]}}],['wb-2',{...structuredClone(finance),operations:structuredClone(finance.operations)}]]}}}).read(options);
+ assert.deepEqual(narrow,baseline);
+ const emptyBase=await create({...common,async getOzonLedger(){return null},async getWbFinance(){return null}}).read(options);
+ const emptyNarrow=await create({...common,async getCategorySalesSources(){return{products:structuredClone(products),facts:[['1',null],['wb-2',null]]}}}).read(options);
+ assert.deepEqual(emptyNarrow,emptyBase);
+});

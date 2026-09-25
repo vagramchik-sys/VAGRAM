@@ -3,7 +3,7 @@
  const num=new Intl.NumberFormat('ru-RU',{maximumFractionDigits:2}),integer=new Intl.NumberFormat('ru-RU',{maximumFractionDigits:0});
  const short=v=>new Date(v+'T12:00:00Z').toLocaleDateString('ru-RU',{day:'2-digit',month:'short'}),time=v=>new Date(v).toLocaleTimeString('ru-RU',{timeZone:'Europe/Moscow',hour:'2-digit',minute:'2-digit'});
  const colors=['var(--chart-store-1, #158b78)','var(--chart-store-2, #9270cc)','var(--chart-store-3, #d28532)','var(--chart-store-4, #378fbd)'];
- window.createPultStoreChart=function({api,metricTitle,requestTimeoutMs=15000}){
+ window.createPultStoreChart=function({api,metricTitle,requestTimeoutMs=15000,reportCacheTtlMs=30000}){
   let report=null,catalog=[],selected=new Set(['']),cache=new Map(),version=0,catalogError=null,inspected=null,mode='stores',categoryReport=null,selectedCategories=new Set(),categoryRequests=new Map(),categoryDataRevision=null,profitRequests=new Map(),expandedCategories=new Set(),collapsedCategories=new Set();
   const dynamicsClient=window.PultBusinessDynamicsClient?.create();
   const pendingCategories=new Map();
@@ -96,7 +96,7 @@
   $('chart-forecast-enabled').onchange=()=>{void render()};
   const reportScope=()=>['orderedRevenue','orderedUnits'].includes($('ins-chart-metric').value)?'orders':'full';
   const cacheKey=(id,period,scope=reportScope())=>id+':'+period.from+':'+period.to+':'+scope;
-  function getReport(id,period=report.current){const scope=reportScope(),key=cacheKey(id,period,scope);if(cache.has(key))return Promise.resolve(cache.get(key));const wb=id.startsWith('wb-'),query=new URLSearchParams(wb?{date:period.from,store:id}:{from:period.from,to:period.to,store:id,scope,hideInactive:String($('hide-inactive').checked)}),url=(wb?'/api/wb/orders?':'/api/insights?')+query;let timer,request=Promise.race([Promise.resolve().then(()=>api(url)),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Источник не ответил вовремя.')),requestTimeoutMs)})]).finally(()=>clearTimeout(timer)).catch(error=>{if(cache.get(key)===request)cache.delete(key);throw error});cache.set(key,request);return request}
+  function getReport(id,period=report.current){const scope=reportScope(),key=cacheKey(id,period,scope),cached=cache.get(key);if(cached&&(cached.pending||cached.expires>Date.now()))return cached.promise;const wb=id.startsWith('wb-'),query=new URLSearchParams(wb?{date:period.from,store:id}:{from:period.from,to:period.to,store:id,scope,hideInactive:String($('hide-inactive').checked)}),url=(wb?'/api/wb/orders?':'/api/insights?')+query,entry={pending:true,expires:0};let timer;entry.promise=Promise.race([Promise.resolve().then(()=>api(url)),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('Источник не ответил вовремя.')),requestTimeoutMs)})]).then(value=>{entry.pending=false;entry.expires=Date.now()+reportCacheTtlMs;return value}).finally(()=>clearTimeout(timer)).catch(error=>{if(cache.get(key)===entry)cache.delete(key);throw error});cache.set(key,entry);return entry.promise}
   function getCategoryDailyReport(period){
    const market=$('market')?.value||'all',store=$('store')?.value||'',key=['daily',period.from,period.to,market,store].join(':');
    if(categoryRequests.has(key))return categoryRequests.get(key);
@@ -291,6 +291,6 @@
    const restored=inspected?observations.findIndex(p=>p.series.id===inspected.id&&p.point.time===inspected.time):-1;
    show(restored>=0?restored:observations.findLastIndex(p=>p.series.id===observations[0]?.series.id));
   }
-  return {update(value,storeId){const nextRevision=Array.isArray(value?.sources)&&value.sources.length?JSON.stringify(value.sources.map(source=>[source.id,source.ordersAt||null,source.ordersHistoryAt||null])):null,keepCategoryCache=report===null||Boolean(nextRevision&&nextRevision===categoryDataRevision);report=value;if(!keepCategoryCache){categoryRequests=new Map();renderedCategoryTableReport=null}categoryDataRevision=nextRevision;profitRequests=new Map();cache=new Map([[cacheKey(storeId||'',value.current,value.scope||'full'),value]]);void render()},render};
+  return {update(value,storeId){const nextRevision=Array.isArray(value?.sources)&&value.sources.length?JSON.stringify(value.sources.map(source=>[source.id,source.ordersAt||null,source.ordersHistoryAt||null])):null,keepCategoryCache=report===null||Boolean(nextRevision&&nextRevision===categoryDataRevision);report=value;if(!keepCategoryCache){categoryRequests=new Map();renderedCategoryTableReport=null}categoryDataRevision=nextRevision;profitRequests=new Map();cache=new Map();if(!storeId&&value?.current?.from&&value?.current?.to&&value?.scope){const entry={pending:false,expires:Date.now()+reportCacheTtlMs,promise:Promise.resolve(value)};cache.set(cacheKey('',value.current,value.scope),entry)}void render()},render};
  };
 })();

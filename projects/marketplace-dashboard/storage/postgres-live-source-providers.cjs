@@ -132,16 +132,60 @@ function createLiveSourceProviders({sources} = {}) {
     return clone(row?.value ?? null);
   }
 
-  async function getReportCatalog(storeId) {
-    storeId = store(storeId);
-    const row = await read(`data-${storeId}.json`, ['products', 'stocks']);
+  function reportCatalog(storeId,row,detached=false) {
     if (!row) return null;
     const revision = String(row.revision ?? row.head?.revision ?? '');
     const sourceSha256 = row.head?.sourceMetadata?.sourceSha256;
     if (!/^\d+$/u.test(revision) || !HASH.test(sourceSha256 || '') || !Array.isArray(row.value.products) || !Array.isArray(row.value.stocks)) {
       fail('CORRUPT_SOURCE', 'Live report catalog integrity check failed');
     }
-    return {...clone(row.value), _source: {snapshotId: `live:${storeId}:${revision}`, marketRevision: revision, marketSha256: sourceSha256}};
+    return {...(detached?row.value:clone(row.value)), _source: {snapshotId: `live:${storeId}:${revision}`, marketRevision: revision, marketSha256: sourceSha256}};
+  }
+  async function getReportCatalog(storeId) {
+    storeId = store(storeId);
+    return reportCatalog(storeId,await read(`data-${storeId}.json`, ['products', 'stocks']));
+  }
+
+  async function batchRecords(requests) {
+    try {
+      const rows=typeof sources.records === 'function'?await sources.records(requests):await readMany(requests,undefined,request=>read(request.sourcePath,request.entities));
+      if (!Array.isArray(rows) || rows.length!==requests.length) fail('CORRUPT_SOURCE','Live SQL report bundle is invalid');
+      return rows;
+    } catch(error) {
+      if(error instanceof LiveSourceProviderError)throw error;
+      fail(error?.code==='CORRUPT_DOCUMENT'?'CORRUPT_SOURCE':'DATABASE_ERROR','Live SQL report bundle is unavailable');
+    }
+  }
+
+  function reportStoreIds(values) {
+    if (!Array.isArray(values) || values.length>100) fail('INVALID_STORE','Store scope is invalid');
+    const ids=values.map(value=>store(value));
+    if (ids.some(id=>id.startsWith('wb-')) || new Set(ids).size!==ids.length) fail('INVALID_STORE','Ozon store scope is invalid');
+    return ids;
+  }
+
+  async function getReportInputs(storeIds) {
+    const ids=reportStoreIds(storeIds),requests=[];
+    if (!ids.length) return [];
+    for (const id of ids) requests.push(
+      {sourcePath:`insights-${id}.json`,entities:['orders.daily','orders.skuDaily','orders.skuCoverage','types','errors']},
+      {sourcePath:`data-${id}.json`,entities:['products','stocks']},
+      {sourcePath:`ledger-${id}.json`,entities:['data.daily','data.skuDaily','data.fees','data.currencies']},
+      {sourcePath:`costs-${id}.json`,entities:['items']}
+    );
+    const rows=await batchRecords(requests),result=[];
+    for(let index=0;index<ids.length;index++){
+      const id=ids[index],offset=index*4,insight=rows[offset],catalog=rows[offset+1],ledger=rows[offset+2],costs=rows[offset+3];
+      result.push({storeId:id,extra:insight?.value??null,catalog:reportCatalog(id,catalog,true),ledger:ledger?.value??null,costs:costs?.value??null});
+    }
+    return result;
+  }
+
+  async function getOrderInsightsForStores(storeIds) {
+    const ids=reportStoreIds(storeIds);
+    if (!ids.length) return [];
+    const requests=ids.map(id=>({sourcePath:`insights-${id}.json`,entities:['orders.daily','errors']})),rows=await batchRecords(requests);
+    return ids.flatMap((id,index)=>rows[index]?[{storeId:id,value:rows[index].value}]:[]);
   }
 
   async function getAllProducts() {
@@ -295,7 +339,7 @@ function createLiveSourceProviders({sources} = {}) {
     return JSON.stringify(selected);
   }
 
-  return Object.freeze({exact, getMarketSnapshot, getReportCatalog, getProducts, getCatalog, getAllProducts, getOzonFunnel, getOzonLedger, getWbFinance, getCatalogs, getInsights, getOrderInsights, getCategoryInsights, getWbOrders, getOrderCategoryState, getBuyerOrderSnapshot, getBuyerProductSnapshot, getBuyerOrderSnapshots, getSnapshots, categoryRevision});
+  return Object.freeze({exact, getMarketSnapshot, getReportCatalog, getReportInputs, getOrderInsightsForStores, getProducts, getCatalog, getAllProducts, getOzonFunnel, getOzonLedger, getWbFinance, getCatalogs, getInsights, getOrderInsights, getCategoryInsights, getWbOrders, getOrderCategoryState, getBuyerOrderSnapshot, getBuyerProductSnapshot, getBuyerOrderSnapshots, getSnapshots, categoryRevision});
 }
 
 module.exports = {createLiveSourceProviders, LiveSourceProviderError};

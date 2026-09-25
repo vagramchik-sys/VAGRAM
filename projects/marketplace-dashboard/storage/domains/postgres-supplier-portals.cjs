@@ -83,6 +83,7 @@ module.exports = function createSupplierPortals({ stateStore, getProducts, getFo
     }));
   }
   async function read() { const state = (await load()).value; return { ...structuredClone(state), products: await products(), mode: 'local-draft' }; }
+  async function readCategories() { const state = (await load()).value; return { version: state.version, categories: structuredClone(state.categories) }; }
   const beforeState = journal => journal.before.absent || journal.before.deleted ? empty() : journal.before.value;
   async function commit(input, commandInput, change, replayChange = change) {
     const op = operation(commandInput), journal = await repository.readCommand(op.commandId);
@@ -206,6 +207,6 @@ module.exports = function createSupplierPortals({ stateStore, getProducts, getFo
     return { basis: 'Единицы финансовой реализации, не заказы', period, generatedAt: now(), coverage: { complete: completeRows === categories.length && categories.length > 0, coveredCategories: completeRows, totalCategories: categories.length }, sources, categories,
       reason: completeRows === categories.length && categories.length ? null : 'Неполные категории оставлены неизвестными; нули не подставлены.' };
   }
-  return { read, saveCategory, savePortal, preview, categorySalesOverview };
+  return { read, readCategories, saveCategory, savePortal, preview, categorySalesOverview };
 };
 module.exports.SupplierPortalError = SupplierPortalError;

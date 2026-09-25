@@ -31,6 +31,8 @@ function totalSegment(items,buyerType){
 
 function create({getStores,getSnapshot,getOrderSnapshots,getCatalog,getAggregate,builder=productSegments}={}){
  if([getStores,getSnapshot,getOrderSnapshots,getCatalog].some(value=>typeof value!=='function'))throw Error('Не настроен SQL-источник товарных сегментов');
+ const projectionCache=new Map(),inFlight=new Map(),MAX_CACHE_ENTRIES=8;
+ function remember(key,value){projectionCache.delete(key);projectionCache.set(key,value);while(projectionCache.size>MAX_CACHE_ENTRIES)projectionCache.delete(projectionCache.keys().next().value);return value}
  function derivedSnapshot(documents,from,to){
   if(!Array.isArray(documents)||!documents.length)return null;
   const records=new Map(),productOrders=new Map(),sources=new Map();
@@ -105,6 +107,19 @@ function create({getStores,getSnapshot,getOrderSnapshots,getCatalog,getAggregate
   if(storeId&&item?.market!=null&&item.market!==storeMarket(storeId,stores[storeId]))return true;
   return false;
  }
+ async function buildProjection({from,to,market,storeId,stores,preparedAvailable}){
+  const prepared=preparedAvailable===false?null:await getSnapshot({from,to}),raw=prepared||(typeof getAggregate==='function'?derivedSnapshot((await getAggregate({from,to,market,storeId}))?.documents||[],from,to):derivedSnapshot(await getOrderSnapshots({from,to}),from,to));
+  let catalogs=null;
+  if(raw&&Array.isArray(raw.products)&&typeof getAggregate?.catalogs==='function')catalogs=await getAggregate.catalogs({storeIds:Object.keys(stores),productIds:raw.products.map(item=>item?.productId).filter(value=>value!==undefined&&value!==null)});
+  return {raw,catalogs};
+ }
+ async function projection(options){
+  if(typeof getAggregate?.revision!=='function')return buildProjection(options);
+  const revisionState=await getAggregate.revision(options),revision=revisionState&&typeof revisionState==='object'?revisionState.key:revisionState,preparedAvailable=revisionState&&typeof revisionState==='object'?revisionState.prepared:undefined,storeSignature=JSON.stringify(Object.entries(options.stores).map(([id,store])=>[id,store?.name||null,storeMarket(id,store)])),key=JSON.stringify([options.from,options.to,options.market,options.storeId||null,revision,storeSignature]);
+  const known=projectionCache.get(key);if(known){projectionCache.delete(key);projectionCache.set(key,known);return known}
+  let pending=inFlight.get(key);if(!pending){pending=buildProjection({...options,preparedAvailable}).then(value=>remember(key,value));inFlight.set(key,pending)}
+  try{return await pending}finally{if(inFlight.get(key)===pending)inFlight.delete(key)}
+ }
  function unavailable(from,to,sources=[],buyerType='legal'){return {status:'unavailable',period:{from,to},buyerType,totals:null,products:[],coverage:{complete:false,sources},source:{metric:'gross_ordered_product_units_by_buyer_type',amountConfirmed:false},limitations:['Рейтинг товаров за выбранный период ещё не подготовлен.']}}
  async function read({from,to,market='all',storeId,limit=20,buyerType='legal'}={}){
   const stores=await getStores();if(!stores||typeof stores!=='object'||Array.isArray(stores))throw Error('Некорректный каталог магазинов SQL');
@@ -115,13 +130,13 @@ function create({getStores,getSnapshot,getOrderSnapshots,getCatalog,getAggregate
   if(storeId&&market!=='all'&&storeMarket(storeId,stores[storeId])!==market)throw Error('Магазин не относится к выбранной площадке');
   limit=Number(limit);if(!Number.isSafeInteger(limit)||limit<1||limit>100)throw Error('Проверьте размер товарного рейтинга');
   const selected=Object.entries(stores).filter(([id,store])=>(!storeId||id===storeId)&&(market==='all'||storeMarket(id,store)===market));
-  const prepared=await getSnapshot({from,to}),raw=prepared||(typeof getAggregate==='function'?derivedSnapshot((await getAggregate({from,to,market,storeId}))?.documents||[],from,to):derivedSnapshot(await getOrderSnapshots({from,to}),from,to));
+  const loaded=await projection({from,to,market,storeId,stores}),raw=loaded.raw;
   if(!raw||!Array.isArray(raw.products)||raw.period?.from!==from||raw.period?.to!==to)return unavailable(from,to,[],buyerType);
   const actualSources=(Array.isArray(raw.coverage?.sources)?raw.coverage.sources:[]).filter(source=>(market==='all'||source.market===market)&&(!storeId||source.storeId===storeId)).map(source=>({market:source.market,scheme:source.scheme,storeId:source.storeId||null,name:typeof source.name==='string'?source.name:null,available:source.available===true,complete:source.complete===true&&source.coversRequested!==false,coversRequested:source.coversRequested!==false,overlapsRequested:source.overlapsRequested!==false,limitation:typeof source.limitation==='string'?source.limitation:null}));
   for(const [id,store] of selected){const expectedMarket=storeMarket(id,store);for(const scheme of SCHEMES[expectedMarket])if(!actualSources.some(source=>source.market===expectedMarket&&source.scheme===scheme&&source.storeId===id))actualSources.push({market:expectedMarket,scheme,storeId:id,name:typeof store.name==='string'?store.name:null,available:false,complete:false,limitation:'Источник за выбранный период ещё не подготовлен.'})}
   const available=raw.status!=='unavailable'&&actualSources.some(source=>source.available&&source.overlapsRequested),sourcesComplete=available&&selected.length>0&&selected.every(([id,store])=>SCHEMES[storeMarket(id,store)].every(scheme=>actualSources.some(source=>source.market===storeMarket(id,store)&&source.storeId===id&&source.scheme===scheme&&source.available&&source.complete)))&&raw.status==='ready';
   if(!available)return unavailable(from,to,actualSources,buyerType);
-  const catalogRows=await Promise.all(Object.keys(stores).map(async id=>[id,await getCatalog(id)])),index=catalogIndex(Object.entries(stores),new Map(catalogRows));
+  const catalogs=loaded.catalogs||new Map(await Promise.all(Object.keys(stores).map(async id=>[id,await getCatalog(id)]))),index=catalogIndex(Object.entries(stores),catalogs);
   const resolved=raw.products.map(item=>({item,resolved:resolveProduct(item,index,stores)}));
   const unresolvedRows=resolved.filter(row=>!row.resolved&&!explicitlyOutsideScope(row.item,market,storeId,stores)).length;
   const complete=sourcesComplete&&unresolvedRows===0;

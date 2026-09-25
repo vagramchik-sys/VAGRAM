@@ -11,17 +11,19 @@ const {createPostgresBuyerAggregates}=require('../postgres-buyer-aggregates.cjs'
 const {createPostgresB2BRadarRepository}=require('../postgres-b2b-radar.cjs');
 const b2bRadarModule=require('./postgres-b2b-radar.cjs');
 const {analyzeB2BRadar}=require('../../b2b-radar-metrics.cjs');
+const {createPostgresCategorySalesSource}=require('../postgres-category-sales-source.cjs');
 module.exports=function createPostgresAnalyticsComposition({pool,stateSchema='pult',storesRepository,productTypes,supplierPortals,trueStats,now=()=>Date.now(),sourceProviders}={}){
  if(typeof storesRepository?.read!=='function'||typeof productTypes?.read!=='function'||typeof supplierPortals?.read!=='function'||!trueStats||['readLinks','daily','compare','getWbConversion'].some(method=>typeof trueStats[method]!=='function'))throw new TypeError('SQL analytics dependencies are required');
  const sources=sourceProviders||createPostgresSourceProviders({pool,stateSchema}),getStores=()=>storesRepository.read(),buyerAggregates=pool?.query?createPostgresBuyerAggregates({pool}):null;
  const getOrderSnapshots=options=>sources.getBuyerOrderSnapshots({...options,includePartial:true});
  const getStoreRows=async()=>Object.entries(await getStores()).map(([id,store])=>({id,name:store.name,market:store.market==='WB'?'WB':'Ozon'}));
- const getCategories=async()=>{const value=await supplierPortals.read();if(!Array.isArray(value?.categories))throw Error('Invalid supplier categories SQL contract');return structuredClone(value.categories)};
+ const getCategories=async()=>{const value=typeof supplierPortals.readCategories==='function'?await supplierPortals.readCategories():await supplierPortals.read();if(!Array.isArray(value?.categories))throw Error('Invalid supplier categories SQL contract');const rows=structuredClone(value.categories);if(Number.isSafeInteger(value.version))Object.defineProperty(rows,'revision',{value:String(value.version)});return rows};
  const buyerOrderSegments=buyerOrderModule.create({getStores,getSnapshots:getOrderSnapshots,getAggregate:buyerAggregates?.order});
  const buyerProductSegments=buyerProductModule.create({getStores,getSnapshot:sources.getBuyerProductSnapshot,getOrderSnapshots,getCatalog:sources.getCatalog,getAggregate:buyerAggregates?.product});
  const b2bRadar=pool?.query?b2bRadarModule.create({repository:createPostgresB2BRadarRepository({pool}),getStores,analyze:analyzeB2BRadar}):null;
- const orderCategoryDaily=createOrderCategoryDaily({productTypes,getCatalogs:sources.getCatalogs,getSnapshots:sources.getSnapshots,getInsights:sources.getInsights,getWbOrders:sources.getWbOrders,getStores,categoryRevision:sources.categoryRevision,now});
- const categorySales=createCategorySales({getStores:getStoreRows,getProducts:sources.getAllProducts,getCategories,getOzonLedger:sources.getOzonLedger,getWbFinance:sources.getWbFinance,productTypes});
+ const orderCategoryDaily=createOrderCategoryDaily({pool,productTypes,getCatalogs:sources.getCatalogs,getSnapshots:sources.getSnapshots,getInsights:sources.getInsights,getWbOrders:sources.getWbOrders,getStores,categoryRevision:sources.categoryRevision,now});
+ const categorySalesSource=pool?.query?createPostgresCategorySalesSource({pool}):null;
+ const categorySales=createCategorySales({getStores:getStoreRows,getProducts:sources.getAllProducts,getCategories,getOzonLedger:sources.getOzonLedger,getWbFinance:sources.getWbFinance,getCategorySalesSources:categorySalesSource?.read,productTypes});
  const backgroundRead=(read,refresh)=>(...args)=>Promise.resolve(read(...args)).then(result=>{if(result?.status==='pending')refresh?.(...args);return result});
  const profitSeries=createProfitSeries({getStores,getWbLink:trueStats.readLinks,daily:backgroundRead(trueStats.readDaily||trueStats.daily,trueStats.refreshDaily),now});
  const wbEconomics=createWbEconomics({getStores,getSnapshot:sources.getMarketSnapshot,getWbLink:trueStats.readLinks,compare:backgroundRead(trueStats.readCompare||trueStats.compare,trueStats.refreshCompare)});

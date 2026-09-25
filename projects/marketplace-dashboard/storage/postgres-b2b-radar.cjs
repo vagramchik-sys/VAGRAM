@@ -23,25 +23,29 @@ const RADAR_SQL=`WITH RECURSIVE
  SELECT * FROM (SELECT c.*,row_number() OVER(PARTITION BY range_from,range_to ORDER BY retry DESC,source_path DESC) AS choice FROM candidates c WHERE NOT partial) ranked WHERE choice=1
   UNION ALL SELECT c.*,1 FROM candidates c WHERE partial
  ), product_base AS MATERIALIZED (
-  SELECT f.value,s.source_path,s.generated_at,f.source_order
+  SELECT f.value->>'market' AS market,f.value->>'storeId' AS store_id,f.value->>'scheme' AS scheme,
+   f.value->>'orderId' AS order_id,f.value->>'productId' AS product_id,f.value->>'buyerType' AS buyer_type,
+   f.value->'cancelled' AS cancelled,f.value->'units' AS units,f.value->'amountRub' AS amount_rub,
+   f.value->>'orderedAt' AS ordered_at,COALESCE(f.value->>'updatedAt',s.generated_at) AS updated_at,
+   s.source_path,f.source_order
   FROM selected s JOIN pult_live.facts f ON f.store_id=s.store_id AND f.domain=s.domain AND f.entity_type='productOrders',params p
   WHERE (p.market='all' OR f.value->>'market'=p.market) AND (p.store_id IS NULL OR f.value->>'storeId'=p.store_id)
    AND left(f.value->>'orderedAt',10) BETWEEN (p.previous_from-1)::text AND (p.current_to+1)::text
  ), product_candidates AS MATERIALIZED (
-  SELECT DISTINCT ON (p.value->>'market',p.value->>'storeId',p.value->>'scheme',p.value->>'orderId',p.value->>'productId') p.*
-  FROM product_base p ORDER BY p.value->>'market',p.value->>'storeId',p.value->>'scheme',p.value->>'orderId',p.value->>'productId',COALESCE(p.value->>'updatedAt',p.generated_at) DESC,p.source_path DESC,p.source_order DESC
+  SELECT DISTINCT ON (p.market,p.store_id,p.scheme,p.order_id,p.product_id) p.*
+  FROM product_base p ORDER BY p.market,p.store_id,p.scheme,p.order_id,p.product_id,p.updated_at DESC,p.source_path DESC,p.source_order DESC
  ), valid_products AS MATERIALIZED (
-  SELECT v->>'market' AS market,v->>'storeId' AS store_id,v->>'scheme' AS scheme,v->>'orderId' AS order_id,v->>'productId' AS product_id,
-   CASE WHEN v->>'buyerType' IN ('legal','individual') THEN v->>'buyerType' ELSE 'unknown' END AS buyer_type,
-   CASE WHEN jsonb_typeof(v->'cancelled')='boolean' THEN (v->>'cancelled')::boolean ELSE NULL END AS cancelled,
-   (v->>'units')::numeric AS units,
-   CASE WHEN jsonb_typeof(v->'amountRub')='number' AND (v->>'amountRub')::numeric>=0 THEN round((v->>'amountRub')::numeric,2) ELSE NULL END AS amount_rub,
-   ((v->>'orderedAt')::timestamptz AT TIME ZONE 'Europe/Moscow')::date AS order_day
-  FROM (SELECT value AS v FROM product_candidates) p
-  WHERE v->>'market' IN ('Ozon','WB') AND NULLIF(v->>'storeId','') IS NOT NULL AND NULLIF(v->>'scheme','') IS NOT NULL
-   AND NULLIF(v->>'orderId','') IS NOT NULL AND NULLIF(v->>'productId','') IS NOT NULL
-   AND jsonb_typeof(v->'units')='number' AND v->>'units' ~ '^[0-9]+(?:\\.0+)?$' AND (v->>'units')::numeric>0 AND (v->>'units')::numeric<=9007199254740991
-   AND v->>'orderedAt' ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
+  SELECT market,store_id,scheme,order_id,product_id,
+   CASE WHEN buyer_type IN ('legal','individual') THEN buyer_type ELSE 'unknown' END AS buyer_type,
+   CASE WHEN jsonb_typeof(cancelled)='boolean' THEN (cancelled#>>'{}')::boolean ELSE NULL END AS cancelled,
+   (units#>>'{}')::numeric AS units,
+   CASE WHEN jsonb_typeof(amount_rub)='number' AND (amount_rub#>>'{}')::numeric>=0 THEN round((amount_rub#>>'{}')::numeric,2) ELSE NULL END AS amount_rub,
+   (ordered_at::timestamptz AT TIME ZONE 'Europe/Moscow')::date AS order_day
+  FROM product_candidates
+  WHERE market IN ('Ozon','WB') AND NULLIF(store_id,'') IS NOT NULL AND NULLIF(scheme,'') IS NOT NULL
+   AND NULLIF(order_id,'') IS NOT NULL AND NULLIF(product_id,'') IS NOT NULL
+   AND jsonb_typeof(units)='number' AND units#>>'{}' ~ '^[0-9]+(?:\\.0+)?$' AND (units#>>'{}')::numeric>0 AND (units#>>'{}')::numeric<=9007199254740991
+   AND ordered_at ~ '^[0-9]{4}-[0-9]{2}-[0-9]{2}T'
  ), scoped AS MATERIALIZED (
   SELECT v.*,CASE WHEN v.order_day BETWEEN p.current_from AND p.current_to THEN 'current' WHEN v.order_day BETWEEN p.previous_from AND p.previous_to THEN 'previous' END AS period
   FROM valid_products v,params p WHERE v.order_day BETWEEN p.previous_from AND p.current_to
@@ -84,7 +88,7 @@ const RADAR_SQL=`WITH RECURSIVE
    CASE WHEN count(*) FILTER(WHERE buyer_type='unknown' AND cancelled=false AND amount_rub IS NULL)>0 THEN NULL ELSE COALESCE(sum(amount_rub) FILTER(WHERE buyer_type='unknown' AND cancelled=false),0)::text END AS unknown_not_cancelled_amount_rub
   FROM scoped WHERE period IS NOT NULL GROUP BY period,market,store_id,product_id,order_day
  ), product_totals AS MATERIALIZED (
-  SELECT period,market,store_id,product_id,sum(units) AS gross_units FROM scoped WHERE period IS NOT NULL GROUP BY period,market,store_id,product_id
+  SELECT period,market,store_id,product_id,sum(gross_units::numeric) AS gross_units FROM daily GROUP BY period,market,store_id,product_id
  ), ranked_products AS MATERIALIZED (
  SELECT market,store_id,product_id,sum(gross_units) AS gross_units,row_number() OVER(ORDER BY sum(gross_units) DESC,market,store_id,product_id) AS rank,count(*) OVER() AS product_count
   FROM product_totals GROUP BY market,store_id,product_id
@@ -117,23 +121,25 @@ const RADAR_SQL=`WITH RECURSIVE
   SELECT 'source'::text AS kind,json_build_object('sourcePath',s.source_path,'partial',s.partial,'generatedAt',s.generated_at,'value',f.value) AS payload
   FROM selected s JOIN pult_live.facts f ON f.store_id=s.store_id AND f.domain=s.domain AND f.entity_type='report.coverage.sources',params p
   WHERE (p.market='all' OR f.value->>'market'=p.market) AND (p.store_id IS NULL OR f.value->>'storeId'=p.store_id)
- ), summary_daily AS MATERIALIZED (
-  SELECT period,order_day,sum(units)::text AS gross_units,sum(units) FILTER(WHERE cancelled=false)::text AS not_cancelled_units,
-   sum(units) FILTER(WHERE buyer_type='legal')::text AS legal_units,sum(units) FILTER(WHERE buyer_type='legal' AND cancelled=false)::text AS legal_not_cancelled_units,
-   sum(units) FILTER(WHERE buyer_type='individual')::text AS individual_units,sum(units) FILTER(WHERE buyer_type='individual' AND cancelled=false)::text AS individual_not_cancelled_units,
-   sum(units) FILTER(WHERE buyer_type='unknown')::text AS unknown_units,sum(units) FILTER(WHERE buyer_type='unknown' AND cancelled=false)::text AS unknown_not_cancelled_units,
+ ), order_counts AS MATERIALIZED (
+  SELECT period,order_day,
    count(DISTINCT (market,store_id,scheme,order_id)) FILTER(WHERE cancelled=false)::text AS order_count,
-   count(DISTINCT (market,store_id,scheme,order_id)) FILTER(WHERE buyer_type='legal' AND cancelled=false)::text AS legal_order_count,
-   COALESCE(sum(units) FILTER(WHERE cancelled=true),0)::text AS cancelled_units,COALESCE(sum(units) FILTER(WHERE cancelled IS NULL),0)::text AS cancellation_unknown_units,
-   CASE WHEN count(*) FILTER(WHERE amount_rub IS NULL)>0 THEN NULL ELSE COALESCE(sum(amount_rub),0)::text END AS amount_rub,
-   CASE WHEN count(*) FILTER(WHERE cancelled=false AND amount_rub IS NULL)>0 THEN NULL ELSE COALESCE(sum(amount_rub) FILTER(WHERE cancelled=false),0)::text END AS not_cancelled_amount_rub,
-   CASE WHEN count(*) FILTER(WHERE buyer_type='legal' AND cancelled=false AND amount_rub IS NULL)>0 THEN NULL ELSE COALESCE(sum(amount_rub) FILTER(WHERE buyer_type='legal' AND cancelled=false),0)::text END AS legal_not_cancelled_amount_rub,
-   CASE WHEN count(*) FILTER(WHERE buyer_type='individual' AND cancelled=false AND amount_rub IS NULL)>0 THEN NULL ELSE COALESCE(sum(amount_rub) FILTER(WHERE buyer_type='individual' AND cancelled=false),0)::text END AS individual_not_cancelled_amount_rub
-  FROM scoped WHERE period IS NOT NULL GROUP BY period,order_day
- ), global_orders AS MATERIALIZED (
-  SELECT period,count(DISTINCT (market,store_id,scheme,order_id)) FILTER(WHERE cancelled=false)::text AS order_count,
    count(DISTINCT (market,store_id,scheme,order_id)) FILTER(WHERE buyer_type='legal' AND cancelled=false)::text AS legal_order_count
-  FROM scoped WHERE period IS NOT NULL GROUP BY period
+  FROM scoped WHERE period IS NOT NULL GROUP BY GROUPING SETS ((period,order_day),(period))
+ ), summary_daily AS MATERIALIZED (
+  SELECT d.period,d.order_day,sum(d.gross_units::numeric)::text AS gross_units,sum(d.not_cancelled_units::numeric)::text AS not_cancelled_units,
+   sum(d.legal_units::numeric)::text AS legal_units,sum(d.legal_not_cancelled_units::numeric)::text AS legal_not_cancelled_units,
+   sum(d.individual_units::numeric)::text AS individual_units,sum(d.individual_not_cancelled_units::numeric)::text AS individual_not_cancelled_units,
+   sum(d.unknown_units::numeric)::text AS unknown_units,sum(d.unknown_not_cancelled_units::numeric)::text AS unknown_not_cancelled_units,
+   o.order_count,o.legal_order_count,sum(d.cancelled_units::numeric)::text AS cancelled_units,sum(d.cancellation_unknown_units::numeric)::text AS cancellation_unknown_units,
+   CASE WHEN count(*) FILTER(WHERE d.amount_rub IS NULL)>0 THEN NULL ELSE COALESCE(sum(d.amount_rub::numeric),0)::text END AS amount_rub,
+   CASE WHEN count(*) FILTER(WHERE d.not_cancelled_amount_rub IS NULL)>0 THEN NULL ELSE COALESCE(sum(d.not_cancelled_amount_rub::numeric),0)::text END AS not_cancelled_amount_rub,
+   CASE WHEN count(*) FILTER(WHERE d.legal_not_cancelled_amount_rub IS NULL)>0 THEN NULL ELSE COALESCE(sum(d.legal_not_cancelled_amount_rub::numeric),0)::text END AS legal_not_cancelled_amount_rub,
+   CASE WHEN count(*) FILTER(WHERE d.individual_not_cancelled_amount_rub IS NULL)>0 THEN NULL ELSE COALESCE(sum(d.individual_not_cancelled_amount_rub::numeric),0)::text END AS individual_not_cancelled_amount_rub
+  FROM daily d JOIN order_counts o ON o.period=d.period AND o.order_day=d.order_day
+  GROUP BY d.period,d.order_day,o.order_count,o.legal_order_count
+ ), global_orders AS MATERIALIZED (
+  SELECT period,order_count,legal_order_count FROM order_counts WHERE order_day IS NULL
  ), summary_rows AS (
   SELECT 'summary'::text AS kind,json_build_object('period',g.period,'orderCount',g.order_count,'legalOrderCount',g.legal_order_count,
    'daily',COALESCE(json_agg(json_build_object('date',d.order_day::text,'grossUnits',d.gross_units,'notCancelledUnits',d.not_cancelled_units,'legalUnits',d.legal_units,'legalNotCancelledUnits',d.legal_not_cancelled_units,'individualUnits',d.individual_units,'individualNotCancelledUnits',d.individual_not_cancelled_units,'unknownUnits',d.unknown_units,'unknownNotCancelledUnits',d.unknown_not_cancelled_units,'orderCount',d.order_count,'legalOrderCount',d.legal_order_count,'cancelledUnits',d.cancelled_units,'cancellationUnknownUnits',d.cancellation_unknown_units,'amountRub',d.amount_rub,'notCancelledAmountRub',d.not_cancelled_amount_rub,'legalNotCancelledAmountRub',d.legal_not_cancelled_amount_rub,'individualNotCancelledAmountRub',d.individual_not_cancelled_amount_rub) ORDER BY d.order_day) FILTER(WHERE d.order_day IS NOT NULL),'[]'::json)) AS payload
@@ -179,14 +185,24 @@ function shape(result,limit){
  return {rows:[...products.values()],sources,summary,productCount};
 }
 
+const HEADS_REVISION_SQL="SELECT COALESCE(string_agg(domain || '/' || store_id || '/' || revision::text,'|' ORDER BY domain,store_id),'') AS revision_key FROM pult_live.heads WHERE domain IN ('buyers','market')";
+const CACHE_ENTRIES=4;
+
 function createPostgresB2BRadarRepository({pool,maxProducts=MAX_PRODUCTS}={}){
  if(!pool||typeof pool.query!=='function')throw new TypeError('PostgreSQL pool is required');
  if(!Number.isSafeInteger(maxProducts)||maxProducts<1||maxProducts>MAX_PRODUCTS)throw new TypeError('Invalid B2B radar product limit');
+ const cache=new Map();
  async function read({currentPeriod,previousPeriod,market='all',storeId}={}){
-  const result=await pool.query(RADAR_SQL,[currentPeriod.from,currentPeriod.to,previousPeriod.from,previousPeriod.to,market,storeId||null,SOURCE_PATTERN,maxProducts,MAX_DAILY_PRODUCTS]);
-  return shape(result,maxProducts);
+  const revision=await pool.query(HEADS_REVISION_SQL);
+  const key=JSON.stringify([revision.rows[0]?.revision_key,currentPeriod.from,currentPeriod.to,previousPeriod.from,previousPeriod.to,market,storeId||null,maxProducts]);
+  const cached=cache.get(key);
+  if(cached)return cached;
+  const pending=(async()=>shape(await pool.query(RADAR_SQL,[currentPeriod.from,currentPeriod.to,previousPeriod.from,previousPeriod.to,market,storeId||null,SOURCE_PATTERN,maxProducts,MAX_DAILY_PRODUCTS]),maxProducts))();
+  cache.set(key,pending);
+  if(cache.size>CACHE_ENTRIES)cache.delete(cache.keys().next().value);
+  try{return await pending;}catch(error){if(cache.get(key)===pending)cache.delete(key);throw error;}
  }
  return Object.freeze({read});
 }
 
-module.exports={createPostgresB2BRadarRepository,RADAR_SQL,SOURCE_PATTERN,MAX_PRODUCTS,MAX_DAILY_PRODUCTS,shape};
+module.exports={createPostgresB2BRadarRepository,RADAR_SQL,HEADS_REVISION_SQL,SOURCE_PATTERN,MAX_PRODUCTS,MAX_DAILY_PRODUCTS,shape};

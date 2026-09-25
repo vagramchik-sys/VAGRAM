@@ -244,6 +244,64 @@ function createPostgresLiveRepository({ pool, maxMetadataBytes = 64 * 1024, writ
       return freeze({ head, collections });
     });
   }
+  async function readCurrentBundles(inputs) {
+    if (!Array.isArray(inputs) || !inputs.length || inputs.length > 100) fail('INVALID_ARGUMENT');
+    const requests = inputs.map((input, requestIndex) => {
+      const id = identity(input);
+      if (!Array.isArray(input.entityTypes) || input.entityTypes.length > 256) fail('INVALID_ARGUMENT');
+      const entityTypes = input.entityTypes.map(entityType);
+      if (new Set(entityTypes).size !== entityTypes.length) fail('INVALID_ARGUMENT');
+      return {...id, entityTypes, requestIndex};
+    });
+    if (requests.reduce((sum, request) => sum + request.entityTypes.length, 0) > 512) fail('INVALID_ARGUMENT');
+    const identities = new Set(requests.map(request => `${request.storeId}\u0000${request.domain}`));
+    if (identities.size !== requests.length) fail('INVALID_ARGUMENT');
+    const encoded = JSON.stringify(requests.map(request => ({store_id:request.storeId,domain:request.domain,entity_types:request.entityTypes,request_index:request.requestIndex})));
+    return transaction(true, async client => {
+      const headRows = await client.query(`WITH requested AS (
+          SELECT store_id,domain,request_index
+          FROM jsonb_to_recordset($1::jsonb) AS value(store_id text,domain text,entity_types jsonb,request_index integer)
+        ) SELECT requested.request_index,h.store_id,h.domain,h.revision,h.metadata,h.source_metadata,h.entity_counts,h.head_sha256,h.updated_at
+        FROM requested LEFT JOIN pult_live.heads h USING(store_id,domain)
+        ORDER BY requested.request_index`, [encoded]);
+      if (headRows.rows.length !== requests.length) fail('DATA_INTEGRITY');
+      const bundles = requests.map(request => ({head:null,collections:Object.fromEntries(request.entityTypes.map(type => [type,[]]))}));
+      for (const row of headRows.rows) {
+        const request = requests[row.request_index];
+        if (!request || row.store_id == null) continue;
+        bundles[row.request_index].head = headValue(request,row);
+      }
+      const factRows = await client.query(`WITH requested AS (
+          SELECT store_id,domain,entity_types,request_index
+          FROM jsonb_to_recordset($1::jsonb) AS value(store_id text,domain text,entity_types jsonb,request_index integer)
+        ), requested_types AS (
+          SELECT requested.store_id,requested.domain,requested.request_index,type.entity_type
+          FROM requested CROSS JOIN LATERAL jsonb_array_elements_text(requested.entity_types) AS type(entity_type)
+        ) SELECT requested_types.request_index,f.entity_type,f.entity_key,f.occurrence,f.business_day::text,f.source_order,f.value,f.row_sha256,f.revision
+        FROM requested_types CROSS JOIN LATERAL (
+          SELECT facts.entity_type,facts.entity_key,facts.occurrence,facts.business_day,facts.source_order,facts.value,facts.row_sha256,facts.revision
+          FROM pult_live.facts
+          WHERE facts.store_id=requested_types.store_id AND facts.domain=requested_types.domain AND facts.entity_type=requested_types.entity_type
+          ORDER BY facts.source_order,facts.entity_key,facts.occurrence OFFSET 0
+        ) f
+        ORDER BY requested_types.request_index,f.entity_type,f.source_order,f.entity_key,f.occurrence`, [encoded]);
+      for (const row of factRows.rows) {
+        const request = requests[row.request_index], bundle = bundles[row.request_index];
+        if (!request || !bundle.head || !Object.hasOwn(bundle.collections,row.entity_type)) fail('DATA_INTEGRITY');
+        bundle.collections[row.entity_type].push(rowValue(request,row));
+      }
+      for (let index=0;index<requests.length;index++) {
+        const head=bundles[index].head;
+        if (!head) continue;
+        for (const type of requests[index].entityTypes) {
+          const expectedCount=head.entityCounts[type];
+          if (expectedCount===undefined) continue;
+          if (!Number.isSafeInteger(expectedCount) || expectedCount<0 || bundles[index].collections[type].length!==expectedCount) fail('DATA_INTEGRITY');
+        }
+      }
+      return freeze(bundles);
+    });
+  }
   async function listJournal(input) {
     const id = identity(input), values = [id.storeId, id.domain], where = ['store_id=$1', 'domain=$2'];
     const limit = integer(input.limit ?? 100, 10000);
@@ -362,7 +420,7 @@ function createPostgresLiveRepository({ pool, maxMetadataBytes = 64 * 1024, writ
       return withStatus ? { receipt, replayed: false } : receipt;
     });
   }
-  return Object.freeze({ getHead, listHeads, listRows, readCurrentCollections, listJournal, readAtRevision, readCommand, publish: input => write(input, false), publishWithStatus: input => write(input, false, true), importComplete: input => write(input, true) });
+  return Object.freeze({ getHead, listHeads, listRows, readCurrentCollections, readCurrentBundles, listJournal, readAtRevision, readCommand, publish: input => write(input, false), publishWithStatus: input => write(input, false, true), importComplete: input => write(input, true) });
 }
 
 module.exports = { createPostgresLiveRepository, LiveRepositoryError, DOMAINS };

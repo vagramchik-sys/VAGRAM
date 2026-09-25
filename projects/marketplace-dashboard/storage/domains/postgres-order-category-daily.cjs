@@ -1,17 +1,26 @@
 'use strict';
-const { build, moscowDay } = require('../../order-category-daily.cjs');
+const { buildAsync, moscowDay } = require('../../order-category-daily.cjs');
 const { validate: validateRegistry } = require('../../product-type-registry.cjs');
-module.exports = function createPostgresOrderCategoryDaily({ productTypes, getCatalogs, getSnapshots, getInsights, getWbOrders, getStores = async () => ({}), categoryRevision, now = () => Date.now() } = {}) {
+const { createCategoryOrderSources } = require('../postgres-category-order-sources.cjs');
+module.exports = function createPostgresOrderCategoryDaily({ pool, productTypes, getCatalogs, getSnapshots, getInsights, getWbOrders, getStores = async () => ({}), categoryRevision, now = () => Date.now() } = {}) {
   if (typeof productTypes?.read !== 'function' || [getCatalogs, getSnapshots, getInsights, getWbOrders, getStores].some(value => typeof value !== 'function')) throw new TypeError('explicit SQL providers are required');
   if (categoryRevision !== undefined && typeof categoryRevision !== 'function') throw new TypeError('category revision provider must be a function');
+  const readSnapshots = pool?.query ? createCategoryOrderSources({pool}) : getSnapshots;
   const pending = new Map(), completed = new Map();
+  // One cooperative calculation at a time, at most two distinct requests queued.
+  let buildTail = Promise.resolve();
+  function runBuild(data, options) {
+    const task = buildTail.then(() => buildAsync(data, options));
+    buildTail = task.catch(() => {});
+    return task;
+  }
   const checkedRevision = value => typeof value === 'string' && value.length > 0 && value.length <= 1000000 ? value : (() => { throw Error('Invalid category revision provider contract'); })();
   const checkedStores = stores => stores && typeof stores === 'object' && !Array.isArray(stores) ? stores : (() => { throw Error('Invalid category SQL provider contract'); })();
   const storeRevision = stores => JSON.stringify(Object.entries(stores).sort(([left], [right]) => left.localeCompare(right)).map(([id, store]) => [id, typeof store?.name === 'string' ? store.name : null, store?.market === 'WB' ? 'WB' : 'Ozon']));
   const requestOptions = (options, effectiveNow) => ({ from: options.from, to: options.to, market: options.market || 'all', store: options.store || options.storeId || null, today: moscowDay(effectiveNow), classifiedAt: options.classifiedAt || null });
   function loadSources(options) {
     const today = moscowDay(options.now || now()), includesToday = typeof options.from === 'string' && typeof options.to === 'string' && options.from <= today && options.to >= today;
-    return Promise.all([getCatalogs(), getSnapshots({ from: options.from, to: options.to }), includesToday ? getInsights() : [], includesToday ? getWbOrders() : []]);
+    return Promise.all([getCatalogs(), readSnapshots({ from: options.from, to: options.to }), includesToday ? getInsights() : [], includesToday ? getWbOrders() : []]);
   }
   async function buildReport(options, prepared, sourceRows) {
     let loaded, registry, stores;
@@ -21,7 +30,7 @@ module.exports = function createPostgresOrderCategoryDaily({ productTypes, getCa
     if (!Array.isArray(catalogsRaw) || !Array.isArray(snapshots) || !Array.isArray(insightsRaw) || !Array.isArray(wbRaw) || !stores || typeof stores !== 'object') throw Error('Invalid category SQL provider contract');
     const catalogs = catalogsRaw.map(item => ({ ...item, name: typeof stores[item.storeId]?.name === 'string' ? stores[item.storeId].name : item.name || null }));
     const entries = (rows, label) => Object.fromEntries(rows.map(row => { if (!row || typeof row.storeId !== 'string' || !Object.hasOwn(row, 'value')) throw Error(`Invalid ${label} provider row`); return [row.storeId, row.value]; }));
-    return build({ registry, catalogs, snapshots, insights: entries(insightsRaw, 'insights'), wbOrders: entries(wbRaw, 'WB orders') }, { ...options, now: options.now || now() });
+    return runBuild({ registry, catalogs, snapshots, insights: entries(insightsRaw, 'insights'), wbOrders: entries(wbRaw, 'WB orders') }, { ...options, now: options.now || now() });
   }
   async function cachedReport(options, effectiveNow) {
     if (!categoryRevision) return buildReport({...options, now: effectiveNow});
@@ -39,6 +48,7 @@ module.exports = function createPostgresOrderCategoryDaily({ productTypes, getCa
   function read(options = {}) {
     const effectiveNow = options.now || now(), key = JSON.stringify(requestOptions(options, effectiveNow));
     if (pending.has(key)) return pending.get(key).then(value => structuredClone(value));
+    if (pending.size >= 3) return Promise.reject(Object.assign(new Error('Расчёт отчётов занят. Повторите запрос через несколько секунд.'), {code: 'CATEGORY_REPORT_BUSY', statusCode: 503}));
     const request = cachedReport(options, effectiveNow).finally(() => { if (pending.get(key) === request) pending.delete(key); });
     pending.set(key, request);
     return request.then(value => structuredClone(value));

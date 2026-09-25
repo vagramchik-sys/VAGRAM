@@ -13,12 +13,14 @@ const safeUnits = value => Number.isSafeInteger(value) && value > 0 ? value : nu
 function safeAmount(value) { return typeof value === 'number' && Number.isFinite(value) && value >= 0 && Number.isSafeInteger(Math.round(value * 100)) ? value : null; }
 function checkedSum(values, label) { let total = 0; for (const value of values) { total += value; if (!Number.isSafeInteger(total) && label === 'units' || !Number.isFinite(total)) throw Error('Переполнение ' + label); } return total; }
 
-function compileCatalogs(catalogs, registry) {
+function* compileCatalogSteps(catalogs, registry) {
+  let work = 0;
   const stores = new Map();
   for (const catalog of Array.isArray(catalogs) ? catalogs : []) {
     if (!catalog?.storeId || !['Ozon', 'WB'].includes(catalog.market) || !Array.isArray(catalog.products)) continue;
     const aliases = new Map();
     for (const product of catalog.products) {
+      if (++work % 128 === 0) yield;
       const stable = numericId(product.product_id ?? product.nmID);
       if (!stable) continue;
       const productKey = catalog.storeId + ':' + stable, classification = productTypes.classify(registry, productKey, product);
@@ -30,20 +32,23 @@ function compileCatalogs(catalogs, registry) {
   return stores;
 }
 
-function latestProductOrders(snapshots, { from, to } = {}) {
+function* latestProductOrderSteps(snapshots, { from, to } = {}, dayOf = moscowDay) {
+  let work = 0;
   const scoped = !!validDay(from) && !!validDay(to) && from <= to;
   const latest = new Map(), coverage = [], orderEvidence = new Set(), productEvidence = new Set();
   for (const snapshot of Array.isArray(snapshots) ? snapshots : []) {
     for (const source of snapshot?.report?.coverage?.sources || []) coverage.push(source);
     for (const record of snapshot?.records || []) {
-      const date = moscowDay(record.createdAt);
+      if (++work % 1000 === 0) yield;
+      const date = dayOf(record.createdAt);
       if (scoped && (!date || date < from || date > to)) continue;
       if (date && record.market && record.storeId && record.scheme) orderEvidence.add([record.market, record.storeId, record.scheme, date].join('\u001f'));
     }
     for (const row of snapshot?.productOrders || []) {
+      if (++work % 1000 === 0) yield;
       const posting = numericId(row.postingId) || numericId(row.orderId), productId = numericId(row.productId);
       if (!row.market || !row.storeId || !row.scheme || !posting || !productId) continue;
-      const date = moscowDay(row.orderedAt), inRange = !scoped || !!date && date >= from && date <= to;
+      const date = dayOf(row.orderedAt), inRange = !scoped || !!date && date >= from && date <= to;
       if (inRange && date) productEvidence.add([row.market, row.storeId, row.scheme, date].join('\u001f'));
       const key = [row.market, row.storeId, row.scheme, posting, productId].join('\u001f'), previous = latest.get(key);
       const rawStamp = Date.parse(row.updatedAt || snapshot.generatedAt || 0), stamp = Number.isFinite(rawStamp) ? rawStamp : -Infinity;
@@ -64,20 +69,45 @@ function descendants(types, parentId) {
   const children = new Map(); for (const type of types) { const list = children.get(type.parentId) || []; list.push(type.id); children.set(type.parentId, list); }
   const leaves = []; (function visit(id) { const next = children.get(id) || []; if (!next.length) leaves.push(id); else for (const child of next) visit(child); })(parentId); return leaves;
 }
+function descendantIndex(types) {
+  const children = new Map(), leaves = new Map();
+  for (const type of types) { const list = children.get(type.parentId) || []; list.push(type.id); children.set(type.parentId, list); }
+  const resolve = id => {
+    if (leaves.has(id)) return leaves.get(id);
+    const next = children.get(id), result = next?.length ? next.flatMap(resolve) : [id];
+    leaves.set(id, result); return result;
+  };
+  return resolve;
+}
 const freshForDay = (stamp, date) => typeof stamp === 'string' && moscowDay(stamp) === date;
 
-function build(data, options = {}) {
+function* buildSteps(data, options = {}) {
+  let work = 0;
   const registry = productTypes.validate(data.registry), classifiedAt = new Date(options.classifiedAt || Date.now()).toISOString();
   let from = validDay(options.from), to = validDay(options.to); if (!from || !to || from > to || (Date.parse(to) - Date.parse(from)) / DAY > 365) throw Error('Некорректный период динамики категорий');
   const market = options.market === '' || options.market === 'all' || options.market == null ? 'all' : options.market;
   if (!['all', 'Ozon', 'WB'].includes(market)) throw Error('Неизвестная площадка');
-  const stores = compileCatalogs(data.catalogs, registry), storeId = options.store || options.storeId || null;
+  const stores = yield* compileCatalogSteps(data.catalogs, registry);
+  const storeId = options.store || options.storeId || null;
   if (storeId && !stores.has(storeId)) throw Error('Магазин не найден в каталоге заказов');
   const scope = [...stores.values()].filter(store => (!storeId || store.storeId === storeId) && (market === 'all' || store.market === market));
   const days = []; for (let value = from; value <= to; value = shift(value, 1)) days.push(value);
-  const canonical = latestProductOrders(data.snapshots, { from, to }), canonicalRowsByStoreDay = new Map(), sourcesByScheme = new Map(), today = moscowDay(options.now || Date.now());
+  // Overlapping snapshots repeat the same order timestamps in records and
+  // product rows. Reuse calendar conversion within this calculation only.
+  // Bound memory for unusually large snapshots and retain the original Intl
+  // timezone/date semantics for every timestamp.
+  const dayCache = new Map(), dayOf = value => {
+    if (typeof value !== 'string') return moscowDay(value);
+    if (dayCache.has(value)) return dayCache.get(value);
+    const day = moscowDay(value);
+    if (dayCache.size < 100000) dayCache.set(value, day);
+    return day;
+  };
+  const canonical = yield* latestProductOrderSteps(data.snapshots, { from, to }, dayOf);
+  const canonicalRowsByStoreDay = new Map(), sourcesByScheme = new Map(), today = moscowDay(options.now || Date.now());
   for (const row of canonical.rows) {
-    const date = moscowDay(row.orderedAt); if (!date) continue;
+    if (++work % 1000 === 0) yield;
+    const date = dayOf(row.orderedAt); if (!date) continue;
     const key = [row.market, row.storeId, date].join('\u001f'), rows = canonicalRowsByStoreDay.get(key);
     if (rows) rows.push(row); else canonicalRowsByStoreDay.set(key, [row]);
   }
@@ -105,13 +135,14 @@ function build(data, options = {}) {
     orderedProducts.set(alias.productKey, { store, product: alias });
   };
   for (const store of scope) for (const date of days) {
+    yield;
     const key = [store.market, store.storeId, date].join('\u001f'), schemes = expectedSchemes(store.market);
     const rows = canonicalRowsByStoreDay.get(key) || [];
     const schemeSourceCoverage = schemes.map(scheme => (sourcesByScheme.get([store.market, store.storeId, scheme].join('\u001f')) || []).some(source => source.market === store.market && source.storeId === store.storeId && source.scheme === scheme && sourceCovers(source, date)));
     const schemeCoverage = schemes.map((scheme,index) => { const evidenceKey = [store.market, store.storeId, scheme, date].join('\u001f');return schemeSourceCoverage[index]&&(!canonical.orderEvidence.has(evidenceKey)||canonical.productEvidence.has(evidenceKey)); });
     const canonicalEvidence = schemes.some(scheme => canonical.orderEvidence.has([store.market, store.storeId, scheme, date].join('\u001f')));
     if (rows.length || schemeSourceCoverage.some(Boolean) && !canonicalEvidence) {
-      for (const row of rows) { const units = safeUnits(row.units); if (units) add(store, date, 'canonical-orders', { productId: row.productId, units, amountRub: safeAmount(row.amountRub) }); }
+      for (const row of rows) { if (++work % 1000 === 0) yield; const units = safeUnits(row.units); if (units) add(store, date, 'canonical-orders', { productId: row.productId, units, amountRub: safeAmount(row.amountRub) }); }
       recordCoverage({ date, storeId: store.storeId, market: store.market, source: 'canonical-orders', complete: schemeCoverage.every(Boolean), observed: rows.length > 0 || !canonicalEvidence, schemes: Object.fromEntries(schemes.map((scheme, index) => [scheme, schemeCoverage[index]])) });
       continue;
     }
@@ -121,12 +152,12 @@ function build(data, options = {}) {
     }
     if (date === today && store.market === 'Ozon') {
       const insight = data.insights?.[store.storeId], orders = insight?.orders, fresh = orders?.skuDailyCoverage === true && freshForDay(orders.skuUpdatedAt, date) && Array.isArray(orders.skuDaily);
-      if (fresh) for (const row of orders.skuDaily.filter(item => item.date === date)) { const units = safeUnits(row.units); if (units) add(store, date, 'ozon-sku-today', { productId: row.sku, units, amountRub: safeAmount(row.revenue) }); }
+      if (fresh) for (const row of orders.skuDaily.filter(item => item.date === date)) { if (++work % 1000 === 0) yield; const units = safeUnits(row.units); if (units) add(store, date, 'ozon-sku-today', { productId: row.sku, units, amountRub: safeAmount(row.revenue) }); }
       recordCoverage({ date, storeId: store.storeId, market: store.market, source: fresh ? 'ozon-sku-today' : 'unavailable', complete: fresh, schemes: { aggregateAnalytics: fresh } }); continue;
     }
     if (date === today && store.market === 'WB') {
       const state = data.wbOrders?.[store.storeId], fresh = state?.complete === true && state.day === date && Array.isArray(state.orders);
-      if (fresh) for (const row of state.orders) { const units = 1; add(store, date, 'wb-orders-today', { productId: row.nmId, units, amountRub: safeAmount(row.amount) }); }
+      if (fresh) for (const row of state.orders) { if (++work % 1000 === 0) yield; const units = 1; add(store, date, 'wb-orders-today', { productId: row.nmId, units, amountRub: safeAmount(row.amount) }); }
       recordCoverage({ date, storeId: store.storeId, market: store.market, source: fresh ? 'wb-orders-today' : 'unavailable', complete: fresh, schemes: { ordersSnapshot: fresh } }); continue;
     }
     recordCoverage({ date, storeId: store.storeId, market: store.market, source: 'unavailable', complete: false, schemes: Object.fromEntries(schemes.map(scheme => [scheme, false])) });
@@ -136,6 +167,7 @@ function build(data, options = {}) {
   const scopeByMarket = new Map(markets.map(currentMarket => [currentMarket, scope.filter(store => store.market === currentMarket)]));
   const leafSeries = [];
   for (const currentMarket of markets) for (const typeId of leafIds) {
+    if (++work % 64 === 0) yield;
     const points = days.map(date => {
       const relevantCoverage = coverageByMarketDay.get([currentMarket, date].join('\u001f')) || [], observed = relevantCoverage.some(item => item.source !== 'unavailable' && item.observed !== false);
       const rows = scopeByMarket.get(currentMarket).flatMap(store => events.get([currentMarket, store.storeId, date].join('\u001f'))?.get(typeId) || []);
@@ -147,6 +179,7 @@ function build(data, options = {}) {
   }
   const storeLeafSeries = [];
   for (const store of scope) for (const typeId of leafIds) {
+    if (++work % 64 === 0) yield;
     const points = days.map(date => {
       const key = [store.market, store.storeId, date].join('\u001f'), storeCoverage = coverageByStoreDay.get(key), observed = !!storeCoverage && storeCoverage.source !== 'unavailable' && storeCoverage.observed !== false;
       const rows = events.get(key)?.get(typeId) || [], missing = !storeCoverage?.complete || (missingProducts.get(key) || 0) > 0;
@@ -157,6 +190,7 @@ function build(data, options = {}) {
   }
   const byProduct = [];
   for (const { store, product } of orderedProducts.values()) {
+    if (++work % 64 === 0) yield;
     const points = days.map(date => {
       const key = [store.market, store.storeId, date].join('\u001f'), storeCoverage = coverageByStoreDay.get(key), observed = !!storeCoverage && storeCoverage.source !== 'unavailable' && storeCoverage.observed !== false;
       const daily = productEvents.get(key)?.get(product.productKey), missing = !storeCoverage?.complete || (missingProducts.get(key) || 0) > 0, amountKnown = observed && (!daily || daily.amountKnown);
@@ -165,20 +199,45 @@ function build(data, options = {}) {
     byProduct.push({ productKey: product.productKey, typeId: product.typeId, productId: product.productId, sku: product.sku, offerId: product.offerId, name: product.name, storeId: store.storeId, storeName: store.name, market: store.market, points });
   }
   const series = [...leafSeries];
-  for (const type of registry.types.filter(type => parentIds.has(type.id))) for (const currentMarket of markets) {
-    const leafSet = new Set(descendants(registry.types, type.id)), children = leafSeries.filter(item => item.market === currentMarket && leafSet.has(item.typeId)); if (!children.length) continue;
+  const parentTypes = registry.types.filter(type => parentIds.has(type.id));
+  // The taxonomy is identical for every market and store. Previously each
+  // parent rebuilt the whole children map once per market and again per store.
+  const descendantLeaves = descendantIndex(registry.types);
+  const parentLeaves = new Map(parentTypes.map(type => [type.id, new Set(descendantLeaves(type.id))]));
+  for (const type of parentTypes) for (const currentMarket of markets) {
+    if (++work % 16 === 0) yield;
+    const leafSet = parentLeaves.get(type.id), children = leafSeries.filter(item => item.market === currentMarket && leafSet.has(item.typeId)); if (!children.length) continue;
     const points = days.map((date, index) => { const values = children.map(child => child.points[index]), observed = values.some(value => value.observed), complete = observed && values.every(value => value.complete), units = observed ? checkedSum(values.map(value => value.orderedUnits || 0), 'units') : null, revenueAvailable = observed && values.every(value => value.orderedRevenue !== null), revenueKnown = complete && values.every(value => value.revenueKnown); return { date, orderedUnits: units, orderedRevenue: revenueAvailable ? Math.round(checkedSum(values.map(value => value.orderedRevenue), 'revenue') * 100) / 100 : null, complete, unitsKnown: complete, revenueKnown, observed }; });
     series.push({ typeId: type.id, market: currentMarket, aggregate: true, leafCount: children.length, points });
   }
   const byStore = [...storeLeafSeries];
-  for (const store of scope) for (const type of registry.types.filter(type => parentIds.has(type.id))) {
-    const leafSet = new Set(descendants(registry.types, type.id)), children = storeLeafSeries.filter(item => item.storeId === store.storeId && leafSet.has(item.typeId)); if (!children.length) continue;
+  for (const store of scope) for (const type of parentTypes) {
+    if (++work % 16 === 0) yield;
+    const leafSet = parentLeaves.get(type.id), children = storeLeafSeries.filter(item => item.storeId === store.storeId && leafSet.has(item.typeId)); if (!children.length) continue;
     const points = days.map((date, index) => { const values = children.map(child => child.points[index]), observed = values.some(value => value.observed), complete = observed && values.every(value => value.complete), units = observed ? checkedSum(values.map(value => value.orderedUnits || 0), 'units') : null, revenueAvailable = observed && values.every(value => value.orderedRevenue !== null), revenueKnown = complete && values.every(value => value.revenueKnown); return { date, orderedUnits: units, orderedRevenue: revenueAvailable ? Math.round(checkedSum(values.map(value => value.orderedRevenue), 'revenue') * 100) / 100 : null, complete, unitsKnown: complete, revenueKnown, observed }; });
     byStore.push({ storeId: store.storeId, storeName: store.name, typeId: type.id, market: store.market, aggregate: true, leafCount: children.length, points });
   }
   const typeIds = new Set(series.map(item => item.typeId)), selectedTypes = registry.types.filter(type => typeIds.has(type.id)).map(type => ({ ...type, leaf: !parentIds.has(type.id) }));
   const coveredDays = coverage.filter(item => item.source !== 'unavailable').map(item => item.date).sort(), coverageWithNames = coverage.map(item => ({ ...item, name: stores.get(item.storeId)?.name || null }));
   return { period: { from, to, days: days.length, timezone: TZ }, types: selectedTypes, series, byStore, byProduct, classificationRevision: registry.revision, classifiedAt, sourcePeriod: { from: coveredDays[0] || null, to: coveredDays.at(-1) || null }, coverage: { complete: coverage.length > 0 && coverage.every(item => item.complete) && missingProducts.size === 0, stores: coverageWithNames, missingProductUnits: checkedSum([...missingProducts.values()], 'units') }, limitations: ['Исторические категории пересчитаны по текущей ревизии справочника; сохранённые внутридневные точки не изменяются.', 'За день и магазин используется один источник: канонические заказы либо только сегодняшний SKU-снимок.', 'WB до текущего дня не показан без подтверждённой истории заказов.', 'Сумма равна null, если валюта RUB не подтверждена для всех включённых строк.', 'Неполные магазины и схемы дают частичную точку, а отсутствие источника — null.'] };
+}
+
+// Keep legacy callers synchronous; SQL requests use the same calculation with
+// bounded cooperative work slices so a report cannot monopolize the event loop.
+function drain(iterator) { let step; do { step = iterator.next(); } while (!step.done); return step.value; }
+function compileCatalogs(catalogs, registry) { return drain(compileCatalogSteps(catalogs, registry)); }
+function latestProductOrders(snapshots, options) { return drain(latestProductOrderSteps(snapshots, options)); }
+function build(data, options = {}) { return drain(buildSteps(data, options)); }
+async function buildAsync(data, options = {}) {
+  // Capture the timestamp once, before yielding, just as the synchronous build does.
+  const iterator = buildSteps(data, {...options, now: options.now || Date.now(), classifiedAt: options.classifiedAt || new Date().toISOString()});
+  let step;
+  do {
+    const started = performance.now();
+    do { step = iterator.next(); } while (!step.done && performance.now() - started < 8);
+    if (!step.done) await new Promise(resolve => setImmediate(resolve));
+  } while (!step.done);
+  return step.value;
 }
 
 function create({ privateDir, stores: storeDirectory = {}, now = () => Date.now() }) {
@@ -195,4 +254,4 @@ function create({ privateDir, stores: storeDirectory = {}, now = () => Date.now(
   return { read(options = {}) { const loaded = load(), effectiveNow = options.now || now(), today = moscowDay(effectiveNow), includesToday = validDay(options.from) <= today && validDay(options.to) >= today, key = JSON.stringify({ ...options, now: today, sources: loaded.baseKey + (includesToday ? '|' + loaded.currentKey : '') }); if (!resultCache.has(key)) { if (resultCache.size >= 20) resultCache.delete(resultCache.keys().next().value); resultCache.set(key, build(loaded.data, { ...options, now: effectiveNow })); } return resultCache.get(key); } };
 }
 
-module.exports = { build, create, compileCatalogs, latestProductOrders, descendants, moscowDay };
+module.exports = { build, buildAsync, create, compileCatalogs, latestProductOrders, descendants, moscowDay };

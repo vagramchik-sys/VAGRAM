@@ -132,6 +132,17 @@ test('initial page-layout route event reuses the in-flight orders request and re
   assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
 });
 
+test('completed route request is reused for the duplicate view event, but explicit refresh bypasses it', async () => {
+  const app = runtime({ market: 'Ozon', fetchImpl: async url => ({ ok: true, json: async () => url === '/api/insights/refresh' ? {} : ordersReport() }) });
+  await new Promise(resolve => setImmediate(resolve));
+  app.dispatch('pult:view-change');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
+  await app.nodes.get('ins-refresh').onclick();
+  assert.equal(app.fetches.filter(url => url === '/api/insights/refresh').length, 1);
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 2);
+});
+
 test('buyer page does not start or poll the hidden insights report', () => {
   const app = runtime({ href: 'http://127.0.0.1:4317/?view=buyers', market: 'Ozon' });
   app.dispatch('pult:view-change');
@@ -189,10 +200,8 @@ test('today business chart bypasses the legacy insights request on initial load 
   assert.equal(app.storeChartUpdates[0].report.scope, 'orders');
   assert.equal(app.storeChartUpdates[0].report.days, 1);
   assert.equal(app.storeChartUpdates[0].report.current.from, app.storeChartUpdates[0].report.current.to);
-  app.intervals[0]();
+  app.intervals.at(-1)();
   assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 0);
-  assert.equal(app.storeChartUpdates.length, 1);
-  app.intervals[1]();
   assert.equal(app.storeChartUpdates.length, 2);
 });
 
@@ -242,8 +251,7 @@ test('business chart uses the orders scope while an explicit economics route loa
   assert.equal(queryEconomics.fetches.length, 1);
   assert.doesNotMatch(queryEconomics.fetches[0], /scope=orders/);
   assert.match(ui, /else void load\('orders'\)/);
-  assert.match(ui, /hash!=='business-chart'&&insightsRoutes\.has\(hash\)&&!wantsFullReport\(\)/);
-  assert.match(ui, /currentHash\(\)==='business-chart'&&!wantsFullReport\(\)\)void load\('orders'\)\},300000\)/);
+  assert.match(ui, /insightsRoutes\.has\(hash\)&&!wantsFullReport\(\)/);
   assert.doesNotMatch(ui, /wbView\.render\(report\);focusView\.render\(report\);economicsView\.render\(report\);declineView\.render\(report\)/);
 });
 

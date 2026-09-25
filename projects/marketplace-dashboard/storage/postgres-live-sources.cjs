@@ -87,6 +87,32 @@ function createLiveSources({ repository } = {}) {
     const sha256 = digest(encodeJson(value, maxBytes));
     return { revision: String(head.revision), deleted: false, value, sha256, head };
   }
+  async function records(requests) {
+    if (!Array.isArray(requests) || !requests.length || requests.length > 100 || typeof repository.readCurrentBundles !== 'function') fail('INVALID_ARGUMENT');
+    const normalized = requests.map(request => {
+      if (!request || typeof request !== 'object' || !Array.isArray(request.entities) || request.entities.some(type => typeof type !== 'string')) fail('INVALID_ARGUMENT');
+      return {sourcePath:request.sourcePath,entities:[...request.entities],scope:identity(request.sourcePath)};
+    });
+    const bundles = await repository.readCurrentBundles(normalized.map(request => ({...request.scope,entityTypes:request.entities})));
+    if (!Array.isArray(bundles) || bundles.length !== normalized.length) fail('CORRUPT_DOCUMENT');
+    return bundles.map((bundle,index) => {
+      const request=normalized[index],head=bundle?.head;
+      if (!head) return null;
+      verifySource(head,request.sourcePath);
+      const present=collectionPaths(request.sourcePath,head.metadata),selected=present.filter(type=>request.entities.includes(type)),collections={};
+      for (const entityType of selected) {
+        const rows=bundle.collections?.[entityType];
+        if (!Array.isArray(rows) || !Number.isSafeInteger(head.entityCounts[entityType]) || head.entityCounts[entityType]<0 || rows.length!==head.entityCounts[entityType]) fail('CORRUPT_DOCUMENT');
+        collections[entityType]=rows.map(row=>({key:row.entityKey,day:row.businessDay,ordinal:row.sourceOrder,value:row.value}));
+      }
+      // The batch reader is a current-revision projection for trusted internal
+      // report code. Individual row/head hashes were verified above; rebuilding
+      // and hashing the complete multi-megabyte JSON documents here duplicated
+      // CPU work without adding evidence used by the caller.
+      const value=codecs.decode(request.sourcePath,{metadata:head.metadata,collections},{partial:true});
+      return {revision:String(head.revision),deleted:false,value,head};
+    });
+  }
   function document(sourcePath, { validate = () => true, maxBytes = MAX_BYTES } = {}) {
     const scope = identity(sourcePath);
     if (typeof validate !== 'function' || !Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > MAX_BYTES) throw new TypeError('Invalid live document options');
@@ -162,7 +188,7 @@ function createLiveSources({ repository } = {}) {
     }
     return result;
   }
-  return Object.freeze({ document, record, identity, listSources, revisions, repository });
+  return Object.freeze({ document, record, records, identity, listSources, revisions, repository });
 }
 
 module.exports = { createLiveSources, nativeRevision };
