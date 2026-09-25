@@ -23,6 +23,18 @@ test('bridge validates supported scopes and converts legacy revisions without pr
   assert.throws(() => sources.document('stores.json'), hasCode('UNSUPPORTED_SOURCE'));
 });
 
+test('live revisions fetch supported heads together and leave legacy sources for fallback', async () => {
+  const sourcePath = 'costs-1.json', calls = [];
+  const methods = Object.fromEntries(['publishWithStatus', 'listRows', 'readAtRevision', 'readCommand', 'getHead', 'listHeads'].map(name => [name, async () => { calls.push(name); throw Error('unexpected'); }]));
+  methods.listHeads = async () => {
+    calls.push('listHeads');
+    return [{ domain: 'costs', storeId: '1', revision: 7, sourceMetadata: { sourcePath, logicalKey: sourceKey(sourcePath) } }];
+  };
+  const revisions = await createLiveSources({ repository: methods }).revisions(['costs-1.json', 'costs-2.json', 'prices-1.json']);
+  assert.deepEqual([...revisions], [['costs-1.json', '7'], ['costs-2.json', '0']]);
+  assert.deepEqual(calls, ['listHeads']);
+});
+
 test('bridge validates and detaches requested JSON before database work', async () => {
   let calls = 0;
   const methods = Object.fromEntries(['publishWithStatus', 'listRows', 'readAtRevision', 'readCommand', 'getHead', 'listHeads'].map(name => [name, async () => { calls++; return null; }]));

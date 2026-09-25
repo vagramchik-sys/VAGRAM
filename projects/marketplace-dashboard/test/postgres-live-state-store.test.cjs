@@ -33,6 +33,18 @@ test('known missing native sources never fall back and non-market registries del
   await assert.rejects(state.writeWithProjection(sourceKey(sourcePath), Buffer.from('{}'), options, () => {}), hasCode('UNSUPPORTED_LIVE_OPERATION'));
 });
 
+test('revision projection batches native and legacy sources without reading payloads', async () => {
+  const calls = [], old = legacy();
+  old.readRevisions = async keys => { calls.push(['legacy', keys]); return new Map(keys.map(key => [key, '4'])); };
+  const sources = { document() {}, record: async () => null, listSources: async () => [], repository: { readCommand() {} },
+    revisions: async paths => { calls.push(['native', paths]); return new Map(paths.map(path => [path, '7'])); } };
+  const state = createLiveStateStore({ legacyStateStore: old, sources });
+  const result = await state.revisions(['costs-1.json', 'prices-1.json', 'data-1.json']);
+  assert.deepEqual([...result], [['costs-1.json', '7'], ['prices-1.json', '4'], ['data-1.json', '7']]);
+  assert.deepEqual(calls, [['native', ['costs-1.json', 'data-1.json']], ['legacy', [sourceKey('prices-1.json')]]]);
+  assert.equal(old.calls.length, 0);
+});
+
 test('state compatibility bridge works through real native SQL without legacy marketplace bytes', { skip: !process.env.PULT_TEST_DATABASE_URL }, async t => {
   const { Pool } = require('pg'), pool = new Pool({ connectionString: process.env.PULT_TEST_DATABASE_URL, max: 3 });
   t.after(() => pool.end()); await ensurePostgresLiveSchema(pool);

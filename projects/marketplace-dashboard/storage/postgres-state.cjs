@@ -161,6 +161,15 @@ function createStateStore({ pool, schema = 'pult', marketSchema = 'pult_market',
     return !row || (row.deleted && !includeDeleted) ? null : project(row);
   }
 
+  async function readRevisions(logicalKeys) {
+    if (!Array.isArray(logicalKeys) || logicalKeys.length > 100) fail('INVALID_ARGUMENT', 'logicalKeys are invalid');
+    const keys = [...new Set(logicalKeys.map(validateKey))], revisions = new Map(keys.map(key => [key, '0']));
+    if (!keys.length) return revisions;
+    const result = await query(`SELECT logical_key,revision::text AS revision,deleted FROM ${table('document_states')} WHERE logical_key=ANY($1::text[])`, [keys]);
+    for (const row of result.rows || []) if (!row.deleted) revisions.set(row.logical_key, String(row.revision));
+    return revisions;
+  }
+
   async function list({ prefix = '', includeContent = true } = {}) {
     if (typeof prefix !== 'string' || prefix.length > 450 || (prefix !== '' && !/^[A-Za-z0-9][A-Za-z0-9._\/-]*$/u.test(prefix)))
       fail('INVALID_ARGUMENT', 'prefix is invalid');
@@ -338,6 +347,7 @@ function createStateStore({ pool, schema = 'pult', marketSchema = 'pult_market',
 
   return Object.freeze({
     read,
+    readRevisions,
     readCommand,
     list,
     write: (key, content, options) => mutate('write', key, content, options),

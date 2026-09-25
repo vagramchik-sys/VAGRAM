@@ -10,11 +10,12 @@ const dashboard = require('../../dist/dashboard-model.js');
 class PostgresCoreError extends Error { constructor(code, message) { super(message); this.name = 'PostgresCoreError'; this.code = code; } }
 const fail = (code, message) => { throw new PostgresCoreError(code, message); };
 const STORE_ID = /^(?:wb-)?\d+$/u;
-function createPostgresCore({ storesRepository, marketRepository, stateStore, jobsProvider = async () => new Map() } = {}) {
+function createPostgresCore({ storesRepository, marketRepository, stateStore, jobsProvider = async () => new Map(), sourceRevisions } = {}) {
   if (!storesRepository || !['read', 'record', 'protectedStore'].every(name => typeof storesRepository[name] === 'function')) throw new TypeError('storesRepository is required');
   if (!marketRepository || typeof marketRepository.getSnapshot !== 'function') throw new TypeError('marketRepository is required');
   if (!stateStore || typeof stateStore.read !== 'function') throw new TypeError('stateStore is required');
   if (typeof jobsProvider !== 'function') throw new TypeError('jobsProvider must be a function');
+  if (sourceRevisions !== undefined && typeof sourceRevisions !== 'function') throw new TypeError('sourceRevisions must be a function');
   const idOf = value => { if (typeof value !== 'string' || !STORE_ID.test(value)) fail('INVALID_STORE', 'Некорректный магазин'); return value; };
   async function sourceJson(sourcePath) {
     const row = await stateStore.read(sourceKey(sourcePath), { includeDeleted: true });
@@ -26,11 +27,18 @@ function createPostgresCore({ storesRepository, marketRepository, stateStore, jo
   async function storeMap() { return storesRepository.read(); }
   async function registryRevision() { return (await storesRepository.record())?.revision || '0'; }
   async function publicStores() {
-    const stores = await storeMap(), jobs = await jobsProvider();
-    return Promise.all(Object.entries(stores).map(async ([id, store]) => {
-      const [costs, prices] = await Promise.all([sourceJson(`costs-${id}.json`), sourceJson(`prices-${id}.json`)]);
+    const [stores, jobs] = await Promise.all([storeMap(), jobsProvider()]);
+    const entries = Object.entries(stores);
+    const revisions = sourceRevisions ? await sourceRevisions(entries.flatMap(([id]) => [`costs-${id}.json`, `prices-${id}.json`, `data-${id}.json`])) : null;
+    return Promise.all(entries.map(async ([id, store]) => {
+      const [costs, prices] = revisions ? [
+        { revision: revisions.get(`costs-${id}.json`) },
+        { revision: revisions.get(`prices-${id}.json`) }
+      ] : await Promise.all([sourceJson(`costs-${id}.json`), sourceJson(`prices-${id}.json`)]);
+      if (typeof costs?.revision !== 'string' || typeof prices?.revision !== 'string' || (revisions && typeof revisions.get(`data-${id}.json`) !== 'string')) throw new TypeError('sourceRevisions must return all source revisions');
       const job = jobs instanceof Map ? jobs.get(id) : jobs?.[id];
-      return { id, name: store.name, clientId: store.clientId, connectedAt: store.connectedAt, job: job || null, updatedAt: store.updatedAt || null, revision: `${store.updatedAt || ''}:${costs.revision}:${prices.revision}` };
+      return { id, name: store.name, clientId: store.clientId, connectedAt: store.connectedAt, job: job || null, updatedAt: store.updatedAt || null, revision: `${store.updatedAt || ''}:${costs.revision}:${prices.revision}`,
+        ...(revisions ? { snapshotRevision: revisions.get(`data-${id}.json`) } : {}) };
     }));
   }
   async function hasStore(id) { id = idOf(id); return Object.hasOwn(await storeMap(), id); }

@@ -49,6 +49,22 @@ test('core reads fresh SQL state after CAS and rejects unknown stores without fa
   assert.equal(await core.publicSnapshot('2'), null); assert.equal(await core.hasStore('2'), false);
 });
 
+test('public stores reads native source revisions in one batch without decoding source data', async () => {
+  const paths = [], reads = [];
+  const core = createCore({
+    storesRepository: { read: async () => storesValue('2026-09-22T00:00:00.000Z'), record: async () => null, protectedStore: async () => null },
+    marketRepository: { getSnapshot: async () => null },
+    stateStore: { read: async key => { reads.push(key); return null; } },
+    sourceRevisions: async sourcePaths => { paths.push(...sourcePaths); return new Map([['costs-1.json', '8'], ['prices-1.json', '0'], ['data-1.json', '3']]); }
+  });
+  assert.deepEqual(await core.publicStores(), [{
+    id: '1', name: 'SK', clientId: '1', connectedAt: '2026-09-01T00:00:00.000Z',
+    job: null, updatedAt: '2026-09-22T00:00:00.000Z', revision: '2026-09-22T00:00:00.000Z:8:0', snapshotRevision: '3'
+  }]);
+  assert.deepEqual(paths, ['costs-1.json', 'prices-1.json', 'data-1.json']);
+  assert.equal(reads.length, 0, 'source payloads are never read for store metadata');
+});
+
 test('core prefers the normalized summary projection when available', async () => {
   const stateStore = memoryState(), stores = createStores({ stateStore }); let projected = 0, full = 0;
   await stores.compareAndSet(storesValue(), { expectedRevision: '0', commandId: C1 });

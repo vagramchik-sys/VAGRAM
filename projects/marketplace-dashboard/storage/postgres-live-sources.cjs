@@ -144,7 +144,25 @@ function createLiveSources({ repository } = {}) {
     }
     return result;
   }
-  return Object.freeze({ document, record, identity, listSources, repository });
+  async function revisions(sourcePaths) {
+    if (!Array.isArray(sourcePaths) || sourcePaths.some(path => typeof path !== 'string')) fail('INVALID_ARGUMENT');
+    const wanted = new Map(), result = new Map();
+    for (const sourcePath of sourcePaths) {
+      if (!codecs.isSupportedSourcePath(sourcePath)) continue;
+      const scope = identity(sourcePath);
+      wanted.set(`${scope.domain}\u0000${scope.storeId}`, sourcePath);
+      result.set(sourcePath, '0');
+    }
+    if (!wanted.size) return result;
+    for (const head of await repository.listHeads({})) {
+      const sourcePath = wanted.get(`${head.domain}\u0000${head.storeId}`);
+      if (!sourcePath) continue;
+      verifySource(head, sourcePath);
+      result.set(sourcePath, String(head.revision));
+    }
+    return result;
+  }
+  return Object.freeze({ document, record, identity, listSources, revisions, repository });
 }
 
 module.exports = { createLiveSources, nativeRevision };

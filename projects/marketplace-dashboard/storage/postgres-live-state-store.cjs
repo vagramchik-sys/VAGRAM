@@ -48,6 +48,20 @@ function createLiveStateStore({ legacyStateStore, sources, sourcePaths = [] } = 
     if (!sourcePath) return legacyStateStore.read(key, options);
     return stateRecord(key, await sources.record(sourcePath));
   }
+  async function revisions(sourcePaths) {
+    if (!Array.isArray(sourcePaths) || sourcePaths.length > 100 || sourcePaths.some(path => typeof path !== 'string')) fail('INVALID_ARGUMENT');
+    const nativePaths = [], legacyPaths = [];
+    for (const sourcePath of new Set(sourcePaths)) {
+      sourceKey(sourcePath);
+      (isSupportedSourcePath(sourcePath) ? nativePaths : legacyPaths).push(sourcePath);
+    }
+    const [native, legacy] = await Promise.all([
+      nativePaths.length ? sources.revisions(nativePaths) : new Map(),
+      legacyPaths.length ? legacyStateStore.readRevisions(legacyPaths.map(sourceKey)) : new Map()
+    ]);
+    return new Map(sourcePaths.map(sourcePath => [sourcePath, isSupportedSourcePath(sourcePath)
+      ? native.get(sourcePath) : legacy.get(sourceKey(sourcePath))]));
+  }
   async function write(key, content, options = {}) {
     // Detach bytes before resolving metadata asynchronously.
     if (!Buffer.isBuffer(content)) fail('INVALID_ARGUMENT');
@@ -99,7 +113,7 @@ function createLiveStateStore({ legacyStateStore, sources, sourcePaths = [] } = 
     }
     return result.filter(Boolean).sort((a, b) => a.logicalKey < b.logicalKey ? -1 : a.logicalKey > b.logicalKey ? 1 : 0);
   }
-  const methods = { read, write, readCommand, list, learn };
+  const methods = { read, readCommand, revisions, write, list, learn };
   for (const method of ['remove', 'writeWithEffect', 'writeWithProjection', 'writeStoreRegistry']) {
     if (typeof legacyStateStore[method] !== 'function') continue;
     methods[method] = async (key, ...args) => {

@@ -25,6 +25,18 @@ function fakePool(handler) {
   };
 }
 
+test('readRevisions fetches only metadata for multiple documents and treats deleted as absent', async () => {
+  const pool = fakePool(() => ({ rows: [
+    { logical_key: 'file/one', revision: '7', deleted: false },
+    { logical_key: 'file/two', revision: '9', deleted: true }
+  ] }));
+  const result = await createStateStore({ pool }).readRevisions(['file/one', 'file/two', 'file/missing']);
+  assert.deepEqual([...result], [['file/one', '7'], ['file/two', '0'], ['file/missing', '0']]);
+  assert.equal(pool.calls.length, 1);
+  assert.match(pool.calls[0].text, /logical_key=ANY\(\$1::text\[\]\)/u);
+  assert.doesNotMatch(pool.calls[0].text, /content|sha256/u);
+});
+
 test('write uses one serializable transaction, ordered advisory locks, CAS and an atomic journal', async () => {
   const content = Buffer.from([0, 255, 12, 128]);
   const pool = fakePool(text => {
