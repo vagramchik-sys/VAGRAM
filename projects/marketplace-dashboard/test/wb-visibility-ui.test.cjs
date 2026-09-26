@@ -130,6 +130,24 @@ test('initial page-layout route event reuses the in-flight orders request and re
   assert.equal(app.homeUpdates.at(-1).state, 'ready');
   assert.match(app.nodes.get('ins-state').textContent, /Заказы загружены/);
   assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
+  assert.equal(app.runTimeout(15000), false);
+});
+
+test('homepage leaves loading state when the orders report never responds', async () => {
+  let aborted = false;
+  const app = runtime({ market: 'Ozon', fetchImpl(url, options) {
+    if (!url.startsWith('/api/insights?')) return new Promise(() => {});
+    options.signal.addEventListener('abort', () => { aborted = true; }, { once: true });
+    return new Promise(() => {});
+  } });
+  assert.equal(app.homeUpdates.at(-1).state, 'loading');
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
+  assert.equal(app.runTimeout(15000), true);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(aborted, true);
+  assert.equal(app.homeUpdates.at(-1).state, 'error');
+  assert.match(app.nodes.get('ins-state').textContent, /Время ожидания данных истекло/);
+  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
 });
 
 test('completed route request is reused for the duplicate view event, but explicit refresh bypasses it', async () => {
