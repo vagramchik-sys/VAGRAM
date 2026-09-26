@@ -14,7 +14,7 @@ const FINANCE_UPLOAD_MEDIA = new Set(['application/pdf', 'application/vnd.openxm
 const HEAVY_READ_ROUTES = new Set(['/api/buyer-order-segments', '/api/buyer-product-segments', '/api/b2b-radar', '/api/category-sales', '/api/order-category-daily', '/api/order-categories']);
 const json = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(value)); };
 
-async function start({ pool, core, ownerRoutesFactory, otherHandlers = [], handlerFactories = [], background = [], staticDir, staticFiles, port = 0, readiness, apiGetWaitTimeoutMs = 30000, requestMetrics = defaultRequestMetrics } = {}) {
+async function start({ pool, core, ownerRoutesFactory, otherHandlers = [], handlerFactories = [], background = [], staticDir, staticFiles, moduleAssets, port = 0, readiness, apiGetWaitTimeoutMs = 30000, requestMetrics = defaultRequestMetrics } = {}) {
   if (!pool?.connect || !core || !['ready', 'publicStores', 'publicSnapshot', 'hasStore'].every(name => typeof core[name] === 'function')) throw new TypeError('SQL pool and core are required');
   if (typeof ownerRoutesFactory !== 'function' || !Array.isArray(otherHandlers) || !Array.isArray(handlerFactories) || !handlerFactories.every(value => typeof value === 'function') || !Array.isArray(background) || typeof readiness !== 'function') throw new TypeError('Explicit complete handler readiness is required');
   if (typeof staticDir !== 'string' || !path.isAbsolute(staticDir) || !Array.isArray(staticFiles) || !staticFiles.length || !Number.isSafeInteger(port) || port < 0 || port > 65535 || !Number.isSafeInteger(apiGetWaitTimeoutMs) || apiGetWaitTimeoutMs < 1 || apiGetWaitTimeoutMs > 300000) throw new TypeError('staticDir, staticFiles, port and API queue timeout are invalid');
@@ -105,6 +105,8 @@ async function start({ pool, core, ownerRoutesFactory, otherHandlers = [], handl
           json(res, 404, { error: 'Не найдено' }); return;
         }
         if (req.method !== 'GET') { res.writeHead(405).end(); return; }
+        if (moduleAssets?.isPagePath?.(url.pathname) && !sessions.has(token(req))) { const value = crypto.randomBytes(32).toString('hex'); sessions.add(value); res.setHeader('Set-Cookie', `pult_session=${value}; HttpOnly; SameSite=Strict; Path=/`); }
+        if (moduleAssets && await moduleAssets.serveAsset(req, res, url)) return;
         const pathname = url.pathname === '/' ? '/index.html' : url.pathname, declared = publicFiles.get(pathname), extension = path.extname(pathname).toLowerCase();
         if (!declared) { res.writeHead(404).end(); return; }
         let bytes;

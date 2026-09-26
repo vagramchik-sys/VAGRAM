@@ -8,7 +8,10 @@
     "test": "node --test test/*.test.cjs",
     "start:postgres": "node --max-old-space-size=8192 scripts/start-pult-postgres.cjs",
     "check:postgres": "node --max-old-space-size=8192 scripts/start-pult-postgres.cjs --check",
-    "start:legacy": "node server.cjs"
+    "start:legacy": "node server.cjs",
+    "module:create": "node scripts/module-create.cjs",
+    "verify:module": "node scripts/verify-module.cjs",
+    "dev:isolated": "node --max-old-space-size=8192 scripts/dev-isolated.cjs"
   },
   "engines": {
     "node": ">=20"
