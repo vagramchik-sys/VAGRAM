@@ -262,10 +262,11 @@ test('executive screen puts factual KPIs first, adds plan line and keeps warning
   const data = model({
     notices: ['Ozon: время заказа неизвестно'],
     executive: {
-      today: 20, yesterdaySameTime: 18, changePct: 11.1, last15m: null, last60m: null,
+      today: 20, comparisonToday: 20, comparisonAsOf: '2026-09-24T09:00:00.000Z', yesterdaySameTime: 18, changePct: 11.1, last15m: null, last60m: null,
       previousHourChange: null, target: 40, targetCompletion: 75, remaining: 20,
       requiredHourly: 2, forecastConfidence: 'medium', marketplaces: [{ market: 'Ozon', share: 100 }],
       stores: [{ id: '1', name: 'Тестовый магазин', market: 'Ozon', value: 20, share: 100, changePct: -5, velocity: null }],
+      sourceStatus: [{ id: '1', name: 'Тестовый магазин', basis: 'observation', lastSuccessAt: '2026-09-24T08:30:00.000Z', expectedNextAt: '2026-09-24T08:40:00.000Z', observedIntervals: 10, expectedIntervals: 12, missingIntervals: 2, yesterdayComparable: true, historyCompleteDays: 7, error: true }],
       dataQuality: { score: 72, issues: [{ code: 'missing_time', message: 'Время заказов неизвестно' }], byMarket: { Ozon: { score: 72 } } },
       insights: [{ id: 'change', message: 'Продажи выше вчера на 11,1%.' }]
     }
@@ -282,10 +283,27 @@ test('executive screen puts factual KPIs first, adds plan line and keeps warning
   assert.doesNotMatch(view.html, /<details class="bd-notices"/);
   assert.match(view.html, /15-минутная детализация всех выбранных магазинов недоступна/);
   assert.match(view.html, /Тестовый магазин/);
+  assert.match(view.html, /снимков по 15-минутным слотам: 10\/12 · без новых данных: 2/);
+  assert.match(view.html, /ошибка последнего обновления/);
+  assert.match(view.html, /исторических дней с полным срезом: 7\/28/);
   assert.match(view.html, /Продажи выше вчера на 11,1%/);
   assert.equal((view.html.match(/<article class="bd-kpi bd-kpi--/g) || []).length, 7);
   assert.match(view.html, /<th>Вчера к этому времени<\/th>/);
-  assert.match(view.html, /Для выбранного периода детализация по категориям открывается отдельно/);
+  assert.match(view.html, /Загружаем категории/);
+});
+
+test('latest known store amount is distinct from the comparable 15-minute amount', () => {
+  const view = harness();
+  view.api.render(view.host, model({ executive: {
+    today: 22, comparisonToday: 20, comparisonAsOf: '2026-09-24T08:00:00.000Z',
+    yesterdaySameTime: 18, changePct: 11.1, marketplaces: [],
+    stores: [{ id: 'wb-1', name: 'WB', market: 'WB', value: 22, asOf: '2026-09-24T08:07:00.000Z', comparisonToday: 20, comparisonAsOf: '2026-09-24T08:00:00.000Z', yesterdaySameTime: 18, changePct: 11.1, share: 100 }],
+    dataQuality: { score: 90, issues: [], byMarket: {} }, insights: []
+  } }));
+  assert.match(view.html, /Срез 11:00 МСК/);
+  assert.match(view.html, /bd-kpi--difference[\s\S]*?\+2\s*₽/);
+  assert.match(view.html, /<td>22\s*₽/);
+  assert.match(view.html, /срез 11:00 МСК/);
 });
 
 test('executive drawer, refresh and store drill-down work without losing keyboard close', () => {
@@ -321,4 +339,31 @@ test('executive missing values and stale data remain explicit', () => {
   assert.match(view.html, /Прогноз пока недоступен/);
   assert.doesNotMatch(view.html, /<strong[^>]*>0\s*₽<\/strong>/);
   assert.match(view.root.parts.freshnessText.textContent, /Данные устарели · 10:40 МСК · 120 мин/);
+});
+
+test('category card renders known real subtotals and marks incomplete coverage', () => {
+  const view = harness(), content = {innerHTML:''}, host = {querySelector:selector=>selector==='.bd-categories__content'?content:null};
+  view.api.updateCategories(host,{knownTotal:150,complete:false,rows:[{name:'Крепёж',value:150,share:100}]});
+  assert.match(content.innerHTML,/Крепёж/);
+  assert.match(content.innerHTML,/150/);
+  assert.match(content.innerHTML,/данные по категориям неполные/);
+  view.api.updateCategories(host,{knownTotal:null,complete:false,rows:[]});
+  assert.doesNotMatch(content.innerHTML,/0\s*₽/);
+  view.api.updateCategories(host,null,{code:'UNSUPPORTED_SCOPE'});
+  assert.match(content.innerHTML,/выбранного набора магазинов/);
+  assert.doesNotMatch(content.innerHTML,/150|0\s*₽/);
+});
+
+test('estimated pace is visibly distinguished from an exact sixty-minute order sum', () => {
+  const view = harness(),data=model({executive:{today:20,last60m:null,currentPaceHourly:150,paceEstimated:true,marketplaces:[],stores:[],dataQuality:{score:70,issues:[],byMarket:{}},insights:[]}});
+  view.api.render(view.host,data);
+  assert.match(view.html,/Оценка по разнице накопительных снимков/);
+  assert.match(view.html,/Оценка темпа за час/);
+  assert.match(view.html,/≈ 150/);
+});
+
+test('owner can enter a real daily plan only on the all-store dashboard', () => {
+ const view=harness(),input=model({canEditTarget:true,executive:{today:20,target:null,marketplaces:[],stores:[],dataQuality:{score:70,issues:[],byMarket:{}},insights:[]}});
+ view.api.render(view.host,input);assert.match(view.html,/data-target-form/);assert.match(view.html,/Сохранить/);
+ input.canEditTarget=false;view.api.render(view.host,input);assert.doesNotMatch(view.html,/data-target-form/);
 });

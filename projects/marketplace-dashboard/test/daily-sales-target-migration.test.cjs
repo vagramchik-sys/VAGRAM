@@ -9,13 +9,13 @@ test('daily target migration is additive, transactional and grants bounded acces
  const client = { async query(sql) {
   statements.push(sql);
   if (sql.includes('to_regclass')) return { rows: [{ present: false }] };
-  if (sql.includes('has_table_privilege')) return { rows: [{ app_read: true, importer_insert: true }] };
+  if (sql.includes('has_table_privilege')) return { rows: [{ app_read: true, app_insert: true, app_update: true, importer_insert: true }] };
   return { rows: [] };
  }, release() { statements.push('RELEASE'); } };
  assert.deepEqual(await apply({ async connect() { return client; } }), { table: 'pult_live.daily_sales_targets', created: true, appRead: true });
  assert.equal(statements[0], 'BEGIN');
  assert.ok(statements.includes(DAILY_SALES_TARGET_SQL));
- assert.ok(statements.includes('GRANT SELECT ON pult_live.daily_sales_targets TO pult_app'));
+ assert.ok(statements.includes('GRANT SELECT,INSERT,UPDATE ON pult_live.daily_sales_targets TO pult_app'));
  assert.ok(statements.includes('COMMIT'));
  assert.equal(statements.at(-1), 'RELEASE');
  assert.ok(statements.every(sql => !/DROP|TRUNCATE|DELETE FROM/iu.test(sql)));

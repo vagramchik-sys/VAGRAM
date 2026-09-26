@@ -1,7 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict');
 const {createBusinessDynamics}=require('../storage/domains/postgres-business-dynamics.cjs');
-const {createBusinessDynamicsRepository,SQL,TARGET_SQL}=require('../storage/postgres-business-dynamics-repository.cjs');
+const {createBusinessDynamicsRepository,SQL,TARGET_SQL,SAVE_TARGET_SQL}=require('../storage/postgres-business-dynamics-repository.cjs');
 const {point}=require('../intraday.cjs');
 const NOW=Date.parse('2026-09-24T09:07:00Z'),DATE='2026-09-24';
 const stores={'1':{name:'Первый',market:'Ozon'},'2':{name:'Второй'},'wb-1':{name:'Третий',market:'WB'}};
@@ -77,6 +77,19 @@ test('an explicitly imported empty WB day is zero only until its real source tim
  rows[0].value.fetchedAt='2026-09-24T21:00:00Z';const closed=getDay(await fixture(rows,Date.parse('2026-09-24T21:01:00Z')).service.read(),'wb-1');assert.equal(closed.complete,true);assert.equal(closed.intervals.length,96);
 });
 
+test('historical WB order events restore yesterday without summing old snapshots or borrowing today',async()=>{
+ const date='2026-09-23',from='2026-09-22T21:00:00.000Z';
+ const rows=[...wbRows(),
+  {kind:'wb-history-head',store_id:'wb-1',value:{day:date,fetchedAt:'2026-09-24T07:30:00Z',complete:true,orderedRevenue:15,orderedUnits:2,orderRowsPresent:true,orderRowsCount:2}},
+  {kind:'wb-history-interval',store_id:'wb-1',value:{day:date,from,firstAt:'2026-09-22T21:01:00Z',lastAt:'2026-09-22T21:10:00Z',orderedRevenue:15,orderedUnits:2}}];
+ const result=await fixture(rows).service.read(),yesterday=getDay(result,'wb-1',date),today=getDay(result,'wb-1');
+ assert.equal(yesterday.basis,'order-time');assert.equal(yesterday.complete,true);
+ assert.equal(yesterday.totals.orderedRevenue,15);assert.equal(yesterday.intervals.length,96);
+ assert.equal(today.totals.orderedRevenue,30.3);
+ rows[4].value.orderedRevenue=16;
+ assert.equal(getDay(await fixture(rows).service.read(),'wb-1',date).basis,'unavailable','reconciliation must reject inconsistent historical buckets');
+});
+
 test('scope validation rejects bad dates and stores before SQL and never silently falls back to all stores',async()=>{
  const f=fixture();for(const options of [{date:'2026-02-30'},{date:'2026-09-25'},{storeId:'1 OR TRUE'},{storeId:'999'},{market:'other'},{storeId:'1',market:'WB'}])await assert.rejects(f.service.read(options));
  assert.equal(f.calls.length,0);const result=await f.service.read({storeId:'wb-1',market:'WB'});assert.deepEqual(f.calls[0].storeIds,['wb-1']);assert.equal(result.stores.length,1);
@@ -91,10 +104,10 @@ test('sales target is returned only for the exact requested all, marketplace or 
  f=fixture([],NOW,targets);result=await f.service.read({market:'Ozon'});assert.equal(result.target,null);assert.deepEqual(f.targetCalls[0],{date:DATE,scopeType:'marketplace',scopeId:'Ozon'});
 });
 
-test('repository makes one parameterized bounded statement independent of store count, without historical event scans',async()=>{
+test('repository makes one parameterized bounded statement and selects only latest WB history snapshot per day',async()=>{
  const calls=[],repository=createBusinessDynamicsRepository({pool:{async query(sql,params){calls.push({sql,params});return {rows:[]}}}});
  await repository.read({storeIds:['1','2','wb-1'],from:'2026-08-27',to:DATE});assert.equal(calls.length,1);assert.deepEqual(calls[0].params,[['1','2','wb-1'],'2026-08-27',DATE]);
- assert.match(SQL,/store_id=ANY\(\$1::text\[\]\)/);assert.match(SQL,/business_day BETWEEN \$2::date AND \$3::date/);assert.match(SQL,/entity_type='orders.daily'/);assert.match(SQL,/entity_type='points'/);assert.match(SQL,/entity_type='orders'/);assert.match(SQL,/floor\(extract\(epoch/);assert.doesNotMatch(SQL,/pult_history|record_journal|SELECT \*/i);
+ assert.match(SQL,/store_id=ANY\(\$1::text\[\]\)/);assert.match(SQL,/business_day BETWEEN \$2::date AND \$3::date/);assert.match(SQL,/entity_type='orders.daily'/);assert.match(SQL,/entity_type='points'/);assert.match(SQL,/entity_type='orders'/);assert.match(SQL,/floor\(extract\(epoch/);assert.match(SQL,/SELECT DISTINCT ON \(s.store_id,s.day\)/u);assert.match(SQL,/pult_history\.order_events/u);assert.doesNotMatch(SQL,/record_journal|SELECT \*/i);
  for(const args of [{storeIds:['1'],from:'2020-01-01',to:DATE},{storeIds:['1','1'],from:'2026-08-27',to:DATE}])await assert.rejects(repository.read(args));assert.equal(calls.length,1);
  await repository.read({storeIds:[],from:'2026-08-27',to:DATE});assert.equal(calls.length,1);
 });
@@ -105,6 +118,18 @@ test('repository reads one exact indexed sales target and preserves integer cent
  assert.equal(calls.length,1);assert.equal(calls[0].sql,TARGET_SQL);assert.deepEqual(calls[0].params,[DATE,'marketplace','WB']);assert.match(TARGET_SQL,/WHERE business_day=\$1::date AND scope_type=\$2 AND scope_id=\$3/u);
  for(const args of [{date:'2026-02-30',scopeType:'all',scopeId:''},{date:DATE,scopeType:'marketplace',scopeId:'all'},{date:DATE,scopeType:'store',scopeId:'bad'}])await assert.rejects(repository.readTarget(args));
  assert.equal(calls.length,1);
+});
+
+test('daily plan save validates Moscow today and writes integer cents through one parameterized upsert',async()=>{
+ const writes=[],writePool={async query(sql,params){writes.push({sql,params});return {rows:[{business_day:DATE,amount_cents:params[1],currency:'RUB',time_zone:'Europe/Moscow',updated_at:'2026-09-24T09:07:00Z'}]}}};
+ const repository=createBusinessDynamicsRepository({pool:{query:async()=>({rows:[]})},writePool});
+ const service=createBusinessDynamics({repository,storesRepository:{read:async()=>stores},now:()=>NOW});
+ const saved=await service.saveTarget({date:DATE,amountRub:'15000000.25'});
+ assert.equal(saved.amountCents,1500000025);assert.equal(saved.scope.type,'all');
+ assert.equal(writes.length,1);assert.equal(writes[0].sql,SAVE_TARGET_SQL);assert.deepEqual(writes[0].params,[DATE,'1500000025']);
+ assert.match(SAVE_TARGET_SQL,/ON CONFLICT \(business_day,scope_type,scope_id\) DO UPDATE/u);
+ for(const input of [{date:'2026-09-23',amountRub:'100'},{date:DATE,amountRub:'0'},{date:DATE,amountRub:'1.001'},{date:DATE,amountRub:'1e9'},{date:DATE,amountRub:'-1'}])await assert.rejects(service.saveTarget(input));
+ assert.equal(writes.length,1);
 });
 
 test('missing optional target table leaves dashboard available, other SQL failures surface',async()=>{

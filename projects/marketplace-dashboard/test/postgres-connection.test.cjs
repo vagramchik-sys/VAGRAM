@@ -59,11 +59,13 @@ test('UI pool has independent bounded capacity and a longer acquisition timeout'
   const unprotect = async () => Buffer.from(JSON.stringify(config));
   const runtime = await createApplicationPool({bootstrapFile:file,unprotect,Pool:CapturingPool,profile:'runtime'});
   const ui = await createApplicationPool({bootstrapFile:file,unprotect,Pool:CapturingPool,profile:'ui'});
+  const analytics = await createApplicationPool({bootstrapFile:file,unprotect,Pool:CapturingPool,profile:'analytics'});
   const outbound = await createApplicationPool({bootstrapFile:file,unprotect,Pool:CapturingPool,profile:'outbound'});
-  await runtime.end(); await ui.end(); await outbound.end();
+  await runtime.end(); await ui.end(); await analytics.end(); await outbound.end();
   assert.deepEqual(configurations.map(value => ({name:value.application_name,max:value.max,timeout:value.connectionTimeoutMillis})), [
-    {name:'pult',max:12,timeout:15000},{name:'pult_ui',max:3,timeout:15000},{name:'pult_ozon_http',max:2,timeout:15000}
+    {name:'pult',max:10,timeout:15000},{name:'pult_ui',max:3,timeout:15000},{name:'pult_analytics',max:2,timeout:15000},{name:'pult_ozon_http',max:2,timeout:15000}
   ]);
-  assert.equal(configurations[2].statement_timeout,125000);
+  assert.equal(configurations[3].statement_timeout,125000);
+  assert.equal(configurations.reduce((total, value) => total + value.max, 0), 17, 'analytics reserves capacity without increasing total pool size');
   await assert.rejects(createApplicationPool({bootstrapFile:file,unprotect,Pool:CapturingPool,profile:'unknown'}),error=>error.code==='POSTGRES_BOOTSTRAP_INVALID');
 });

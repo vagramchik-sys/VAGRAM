@@ -9,7 +9,7 @@ test('total and child checkbox never double count; empty selection stays empty',
 test('missing store, interval or historical day is not zero',()=>{const a=store(),b=store('2');b.days=[];const result=build([a,b]);assert.equal(result.kpis.today.value,4800);assert.equal(result.kpis.yesterdayAtSameTime.value,null);assert.equal(result.kpis.forecast.available,false);assert.equal(result.state,'partial');a.days[0].intervals.splice(4,1);assert.equal(build([a]).kpis.pace.value,null);assert.equal(build([store('1',6)]).comparison.avg7dSameTime,null);assert.equal(build([store('1',6)]).kpis.yesterdayAtSameTime.value,4800);});
 test('zero previous base has no percentage and zero current has no forecast',()=>{const a=store();a.days[1]=day(m.shift(date,-1),{revenue:0});assert.equal(build([a]).kpis.pace.value,null);a.days[0]=day(date,{bins:48,revenue:0,complete:false});assert.equal(build([a]).kpis.today.value,0);assert.equal(build([a]).kpis.forecast.available,false);});
 test('incomplete seven minutes of current bucket never compare to full interval',()=>{const a=store();a.days[0].intervals.push({...day(date).intervals[48],orderedRevenue:40,complete:false});const r=build([a],{now:Date.parse(at(date,48))+7*60000});assert.equal(r.asOf,at(date,48));assert.equal(r.kpis.today.value,4800);assert.equal(r.velocity.length,48);});
-test('partial current bucket is timestamped at confirmed source cutoff, never its future end',()=>{const a=store();const cutoff=new Date(Date.parse(at(date,48))+7*60000).toISOString();a.updatedAt=cutoff;a.days[0].coverage={from:at(date,0),to:cutoff};a.days[0].intervals.push({...day(date).intervals[48],orderedRevenue:40,complete:false});const r=build([a],{now:Date.parse(at(date,49))});assert.equal(r.asOf,cutoff);assert.equal(r.kpis.today.value,4840);assert.equal(r.executive.stores[0].value,4840);assert.equal(r.executive.stores[0].asOf,cutoff);assert.equal(r.executive.stores[0].complete,false);assert.equal(r.executive.stores[0].velocity,400);assert.equal(r.kpis.yesterdayAtSameTime.value,null);assert.equal(r.velocity.length,48);});
+test('partial current bucket keeps latest known total but compares the last complete interval',()=>{const a=store();const cutoff=new Date(Date.parse(at(date,48))+7*60000).toISOString();a.updatedAt=cutoff;a.days[0].coverage={from:at(date,0),to:cutoff};a.days[0].intervals.push({...day(date).intervals[48],orderedRevenue:40,complete:false});const r=build([a],{now:Date.parse(at(date,49))});assert.equal(r.asOf,cutoff);assert.equal(r.kpis.today.value,4840);assert.equal(r.executive.stores[0].value,4840);assert.equal(r.executive.stores[0].asOf,cutoff);assert.equal(r.executive.stores[0].complete,false);assert.equal(r.executive.stores[0].velocity,400);assert.equal(r.kpis.yesterdayAtSameTime.value,4800);assert.equal(r.executive.comparisonToday,4800);assert.equal(r.executive.comparisonAsOf,at(date,48));assert.equal(r.executive.changePct,0);assert.equal(r.kpis.forecast.available,true);assert.equal(r.velocity.length,48);});
 test('staggered observations keep known sum but disable exact-time comparisons',()=>{const a=store(),b=store('2');for(const [s,t,v] of [[a,48,100],[b,47,200]])s.days[0]={date,basis:'observation',complete:false,observations:[{at:at(date,t),orderedRevenue:v,orderedUnits:1,complete:true}]};const r=build([a,b]);assert.equal(r.kpis.today.value,300);assert.equal(r.series.today.at(-1).cumulative,300);assert.equal(r.series.today.at(-1).complete,false);assert.equal(r.kpis.yesterdayAtSameTime.value,null);assert.equal(r.velocity.length,0);assert.equal(r.series.today.at(-1).last15,null);});
 test('mixed observation and order-time semantics never give precise comparisons',()=>{const a=store(),b=store('2');b.days[0]={date,basis:'observation',observations:[{at:at(date,48),orderedRevenue:200,orderedUnits:1,complete:true}]};const r=build([a,b]);assert.equal(r.state,'partial');assert.equal(r.kpis.pace.value,null);assert.equal(r.kpis.forecast.available,false);});
 test('average check uses pooled revenue and order counts and has no additive forecast',()=>{const a=store();a.days[1]=day(m.shift(date,-1),{orders:10,revenue:300});const r=build([a],{metric:'avgCheck'});assert.equal(r.kpis.today.value,50);assert.equal(r.comparison.avg7dSameTime,(300+6*100)/(10+6*2));assert.equal(r.kpis.forecast.available,false);assert.equal(r.velocity.length,0);});
@@ -66,12 +66,14 @@ test('target is accepted only with a positive finite value and confirmed exact s
 test('partial, stale and mixed sources suppress executive comparisons and velocities',()=>{
  const missingA=store(),missingB=store('2');missingB.days=[];missingB.updatedAt=at(date,40);
  let r=build([missingA,missingB]);
- assert.equal(r.executive.last15m,null);assert.equal(r.executive.changePct,null);assert.equal(r.executive.stores.every(row=>row.share===null),true);
+ assert.equal(r.executive.last15m,null);assert.equal(r.executive.changePct,null);assert.equal(r.executive.stores.find(row=>row.id==='1').share,100);assert.equal(r.executive.stores.find(row=>row.id==='2').share,null);
  assert.ok(r.executive.dataQuality.issues.some(issue=>issue.code==='MISSING_CURRENT'));assert.ok(r.executive.dataQuality.issues.some(issue=>issue.code==='STALE_SOURCE'));
  const ozon=store('o'),wb=store('w');wb.market='WB';ozon.days[0]={date,basis:'observation',complete:false,observations:[{at:at(date,48),orderedRevenue:100,orderedUnits:1,complete:true}]};
  r=build([ozon,wb]);
  assert.equal(r.executive.last15m,null);assert.equal(r.executive.last60m,null);assert.equal(r.executive.previousHourChange,null);assert.equal(r.executive.forecastConfidence,'unavailable');
- assert.equal(r.executive.marketplaces.every(row=>row.share===null&&row.changePct===null&&row.velocity===null),true);
+ assert.equal(r.executive.marketplaces.every(row=>Number.isFinite(row.value)&&Number.isFinite(row.share)),true);
+ assert.equal(r.executive.marketplaces.find(row=>row.market==='Ozon').changePct,null);
+ assert.equal(r.executive.marketplaces.find(row=>row.market==='WB').changePct,0);
  assert.ok(r.executive.dataQuality.byMarket.Ozon);assert.ok(r.executive.dataQuality.byMarket.WB);
  const changedBasis=store();changedBasis.days[1]={date:m.shift(date,-1),basis:'observation',complete:true,totals:{orderedRevenue:9600,orderedUnits:288,orderCount:192},observations:[{at:at(m.shift(date,-1),48),orderedRevenue:4800,orderedUnits:144,orderCount:96,complete:true}]};
  r=build([changedBasis]);assert.equal(r.executive.changePct,null);assert.equal(r.executive.marketplaces[0].changePct,null);assert.equal(r.executive.stores[0].changePct,null);
@@ -133,10 +135,49 @@ test('data quality records history, source and Ozon interval limitations once ea
  assert.equal(codes.filter(code=>code==='SOURCE_ERROR').length,1);assert.equal(codes.includes('STALE_SOURCE'),false);assert.equal(codes.includes('NO_ORDER_TIME'),true);assert.equal(codes.includes('HISTORY_GAPS'),true);assert.equal(new Set(codes).size,codes.length);assert.ok(quality.score<100);
 });
 
-test('staggered Ozon and WB keep each confirmed store contribution without claiming shares',()=>{
+test('staggered Ozon and WB show shares of known amounts without claiming an exact total',()=>{
  const wb=store('wb');wb.market='WB';const ozon=store('ozon');ozon.days[0]={date,basis:'observation',complete:false,observations:[{at:at(date,40),orderedRevenue:10000,orderedUnits:20,complete:true}]};
  const r=build([wb,ozon]),byId=new Map(r.executive.stores.map(row=>[row.id,row]));
  assert.equal(r.state,'partial');assert.equal(r.executive.today,14800);
- assert.deepEqual({...byId.get('ozon')},{id:'ozon',name:'Магазин ozon',market:'Ozon',value:10000,asOf:at(date,40),complete:true,staggered:true,share:null,comparisonToday:null,yesterdaySameTime:null,changePct:null,velocity:null});
- assert.equal(byId.get('wb').value,4800);assert.equal(byId.get('wb').asOf,at(date,48));assert.equal(byId.get('wb').complete,true);assert.equal(byId.get('wb').staggered,true);assert.equal(byId.get('wb').share,null);assert.equal(byId.get('wb').changePct,null);assert.equal(byId.get('wb').velocity,400);
+ assert.equal(byId.get('ozon').value,10000);assert.equal(byId.get('ozon').staggered,true);assert.equal(byId.get('ozon').changePct,null);
+ assert.equal(byId.get('wb').value,4800);assert.equal(byId.get('wb').asOf,at(date,48));assert.equal(byId.get('wb').staggered,false);assert.equal(byId.get('wb').changePct,0);assert.equal(byId.get('wb').velocity,400);
+ assert.ok(Math.abs(byId.get('ozon').share-10000/14800*100)<1e-9);
+ assert.ok(Math.abs(byId.get('wb').share-4800/14800*100)<1e-9);
+ assert.equal(r.executive.marketplaces.find(row=>row.market==='Ozon').partial,true);
+ assert.equal(r.executive.marketplaces.find(row=>row.market==='WB').value,4800);
+});
+
+test('observation pace uses actual elapsed time and rejects gaps, resets and missing coverage',()=>{
+ const observation=(minute,value,complete=true)=>({at:at(date,minute),orderedRevenue:value,complete});
+ const day={date,basis:'observation',observations:[observation(43,1000),observation(47,1600)]};
+ const now=Date.parse(at(date,48));
+ assert.equal(m.observationHourly(day,'orderedRevenue',now).value,600);
+ assert.equal(m.observationHourly(day,'orderedRevenue',now+46*60000),null);
+ day.observations[1].orderedRevenue=900;assert.equal(m.observationHourly(day,'orderedRevenue',now),null);
+ day.observations[1].orderedRevenue=1600;day.observations[0].complete=false;assert.equal(m.observationHourly(day,'orderedRevenue',now),null);
+ day.observations[0].complete=true;day.observations[0].at=at(date,46);assert.equal(m.observationHourly(day,'orderedRevenue',now),null);
+ day.observations[0].at=at(m.shift(date,-1),95);assert.equal(m.observationHourly(day,'orderedRevenue',now),null);
+});
+
+test('mixed marketplace dashboard shows an estimated pace only when every selected store has valid intervals',()=>{
+ const wb=store('wb');wb.market='WB';
+ const ozon=store('ozon');ozon.days[0]={date,basis:'observation',complete:false,observations:[{at:at(date,44),orderedRevenue:1000,orderedUnits:10,complete:true},{at:at(date,48),orderedRevenue:1600,orderedUnits:16,complete:true}]};
+ const result=build([wb,ozon]);
+ assert.equal(result.executive.last60m,null);
+ assert.equal(result.executive.currentPaceHourly,1000);
+ assert.equal(result.executive.paceEstimated,true);
+ ozon.days[0].observations[0].complete=false;
+ assert.equal(build([wb,ozon]).executive.currentPaceHourly,null);
+});
+
+test('source history uses each store complete cutoff when the mixed total ends at an Ozon observation',()=>{
+ const wb=store('wb');wb.market='WB';
+ const cutoff=new Date(Date.parse(at(date,48))+7*60000).toISOString();
+ wb.updatedAt=cutoff;wb.days[0].coverage={from:at(date,0),to:cutoff};
+ wb.days[0].intervals.push({...day(date).intervals[48],orderedRevenue:40,complete:false});
+ const ozon=store('ozon');ozon.days[0]={date,basis:'observation',complete:false,observations:[{at:cutoff,orderedRevenue:1000,complete:true}]};
+ const r=build([ozon,wb],{now:Date.parse(cutoff)});
+ assert.equal(r.executive.comparisonAsOf,null);
+ assert.equal(r.executive.stores.find(row=>row.id==='wb').comparisonAsOf,at(date,48));
+ assert.equal(r.executive.sourceStatus.find(row=>row.id==='wb').historyCompleteDays,7);
 });

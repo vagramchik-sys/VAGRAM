@@ -13,10 +13,10 @@ async function apply(pool) {
   const before = (await client.query("SELECT to_regclass('pult_live.daily_sales_targets') IS NOT NULL AS present")).rows[0]?.present === true;
   await client.query(DAILY_SALES_TARGET_SQL);
   await client.query('REVOKE ALL ON pult_live.daily_sales_targets FROM PUBLIC');
-  await client.query('GRANT SELECT ON pult_live.daily_sales_targets TO pult_app');
+  await client.query('GRANT SELECT,INSERT,UPDATE ON pult_live.daily_sales_targets TO pult_app');
   await client.query('GRANT SELECT,INSERT,UPDATE,DELETE ON pult_live.daily_sales_targets TO pult_importer');
-  const access = (await client.query("SELECT has_table_privilege('pult_app','pult_live.daily_sales_targets','SELECT') AS app_read, has_table_privilege('pult_importer','pult_live.daily_sales_targets','INSERT') AS importer_insert")).rows[0];
-  if (!access?.app_read || !access.importer_insert) throw Error('TARGET_PRIVILEGES_INVALID');
+  const access = (await client.query("SELECT has_table_privilege('pult_app','pult_live.daily_sales_targets','SELECT') AS app_read, has_table_privilege('pult_app','pult_live.daily_sales_targets','INSERT') AS app_insert, has_table_privilege('pult_app','pult_live.daily_sales_targets','UPDATE') AS app_update, has_table_privilege('pult_importer','pult_live.daily_sales_targets','INSERT') AS importer_insert")).rows[0];
+  if (!access?.app_read || !access.app_insert || !access.app_update || !access.importer_insert) throw Error('TARGET_PRIVILEGES_INVALID');
   await client.query('COMMIT');
   return { table: 'pult_live.daily_sales_targets', created: !before, appRead: true };
  } catch (error) {

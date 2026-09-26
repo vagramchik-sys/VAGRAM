@@ -24,6 +24,16 @@ test('business dynamics GET forwards scope to saved SQL reader and isolates unav
  res=response();await fixture().handle({method:'GET'},res,new URL('http://localhost/api/business-dynamics'));assert.equal(res.status,503);
 });
 
+test('daily target POST passes only validated JSON to the plan service',async()=>{
+ const {Readable}=require('node:stream'),calls=[],businessDynamics={async read(){return {}},async saveTarget(input){calls.push(input);return {date:input.date,amountCents:12345}}};
+ const service=fixture({businessDynamics}),url=new URL('http://localhost/api/business-dynamics/target');
+ const response=()=>({status:null,body:null,writeHead(status){this.status=status;return this},end(body){this.body=JSON.parse(body)}});
+ let req=Readable.from([Buffer.from(JSON.stringify({date:DAY,amountRub:'123.45'}))]);req.method='POST';let res=response();
+ assert.equal(await service.handle(req,res,url),true);assert.equal(res.status,200);assert.deepEqual(calls,[{date:DAY,amountRub:'123.45'}]);
+ req=Readable.from([Buffer.from(JSON.stringify({date:DAY,amountRub:'123.45',scope:'all'}))]);req.method='POST';res=response();
+ await service.handle(req,res,url);assert.equal(res.status,400);assert.equal(calls.length,1);
+});
+
 test('live SQL insight projection preserves sales, ledger evidence and warnings in reports', async () => {
  const codecs=require('../storage/postgres-live-codecs.cjs');
  const {createLiveSourceProviders}=require('../storage/postgres-live-source-providers.cjs');

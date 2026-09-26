@@ -1,4 +1,6 @@
 'use strict';
+const refreshPolicy=require('../../refresh-policy.cjs');
+const {INTERVAL:WB_ORDERS_INTERVAL}=require('../../wb-orders.cjs');
 
 const DAY=86400000,INTERVAL=15*60000;
 const iso=ms=>new Date(ms).toISOString();
@@ -91,10 +93,19 @@ function createBusinessDynamics({repository,storesRepository,now=()=>Date.now()}
   for(const store of stores) {
    const rows=byStore.get(store.id)||[],domain=store.market==='WB'?'wb-orders':'insights',head=rows.find(r=>r.kind==='head'&&r.domain===domain)?.value;
    store.days=dates.map(date=>emptyDay(date,store.market==='WB'?'Исторические интервалы WB не загружены в доступный индексируемый источник.':'Заказы за этот день недоступны.'));
-   (store.market==='WB'?wbDays:ozonDays)(store.days,head,rows,instant);
+   if(store.market==='WB') {
+    for(const historical of rows.filter(r=>r.kind==='wb-history-head')) {
+     const intervals=rows.filter(r=>r.kind==='wb-history-interval'&&r.value?.day===historical.value?.day)
+      .map(r=>({...r,kind:'wb-interval'}));
+     wbDays(store.days,historical.value,intervals,instant);
+    }
+    // The current live snapshot is fresher than its async history capture.
+    wbDays(store.days,head,rows,instant);
+   } else ozonDays(store.days,head,rows,instant);
    const updated=time(store.market==='WB'?head?.fetchedAt:head?.orders?.updatedAt);
    store.updatedAt=updated!==null&&updated<=instant?iso(updated):null;
-   store.sources=[{id:domain,basis:store.market==='WB'?'order-time':'observation',updatedAt:store.updatedAt,error:store.market==='WB'?!!head?.errorCode:head?.orderSection?.ok===false}];
+   const cadenceMs=store.market==='WB'?WB_ORDERS_INTERVAL:refreshPolicy.ORDERS_INTERVAL;
+   store.sources=[{id:domain,basis:store.market==='WB'?'order-time':'observation',updatedAt:store.updatedAt,expectedNextAt:updated!==null&&updated<=instant?iso(updated+cadenceMs):null,error:store.market==='WB'?!!head?.errorCode:head?.orderSection?.ok===false}];
    if(store.market==='Ozon'){
     const last=rows.filter(r=>r.kind==='observation').map(r=>observation(r.value,r.value?.date,instant)).filter(Boolean).map(p=>p.at).sort().at(-1)||null;
     store.sources.push({id:'intraday',basis:'observation',updatedAt:last});
@@ -102,6 +113,14 @@ function createBusinessDynamics({repository,storesRepository,now=()=>Date.now()}
   }
   return {version:1,timeZone:'Europe/Moscow',currency:'RUB',intervalMinutes:15,period,generatedAt:iso(instant),target:salesTarget,events:[],stores};
  }
- return Object.freeze({read});
+ async function saveTarget({date,amountRub}={}) {
+  const today=moscowDay(Number(new Date(now())));
+  if(date!==today||typeof amountRub!=='string'||!/^(?:0|[1-9]\d{0,12})(?:\.\d{1,2})?$/u.test(amountRub))throw new DynamicsError('Проверьте дату и сумму дневного плана.');
+  const [whole,fraction='']=amountRub.split('.'),amount=BigInt(whole)*100n+BigInt((fraction+'00').slice(0,2));
+  if(amount<=0n||amount>BigInt(Number.MAX_SAFE_INTEGER))throw new DynamicsError('Проверьте сумму дневного плана.');
+  if(typeof repository.saveTarget!=='function')throw new DynamicsError('Сохранение плана пока недоступно.',503);
+  return repository.saveTarget({date,amountCents:Number(amount)});
+ }
+ return Object.freeze({read,saveTarget});
 }
 module.exports={createBusinessDynamics,DynamicsError};

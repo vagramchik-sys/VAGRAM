@@ -29,6 +29,11 @@
   function renderOptions(){$('chart-store-options').innerHTML=options().map(s=>'<label style="--series-color:'+s.color+'"><input type="checkbox" value="'+esc(s.id)+'" '+(selected.has(s.id)?'checked':'')+'><i></i><span>'+esc(s.name)+'</span></label>').join('')}
   $('chart-store-options').onchange=e=>{if(e.target.type!=='checkbox')return;if(e.target.checked){if(e.target.value==='')selected.clear();else selected.delete('');selected.add(e.target.value)}else selected.delete(e.target.value);renderOptions();void render()};
   $('ins-chart').addEventListener('business-dynamics:refresh',()=>{dynamicsClient?.invalidate();void render()});
+  $('ins-chart').addEventListener('business-dynamics:target',async event=>{
+   const status=$('ins-chart').querySelector('[data-target-status]');if(status)status.textContent='Сохраняем план…';
+   try{await api('/api/business-dynamics/target',event.detail);dynamicsClient?.invalidate();void render()}
+   catch(error){if(status)status.textContent=error?.message||'Не удалось сохранить план.'}
+  });
   $('ins-chart').addEventListener('business-dynamics:categories',()=>setMode('categories'));
   $('ins-chart').addEventListener('business-dynamics:store',event=>{const id=event.detail?.storeId,control=$('store');if(!control||!id||![...control.options].some(option=>option.value===id))return;control.value=id;control.dispatchEvent(new Event('change',{bubbles:true}))});
   $('chart-only-total').onclick=()=>{selected=new Set(['']);renderOptions();void render()};
@@ -128,8 +133,14 @@
     if(storeSelectionScope!==null&&scope!==storeSelectionScope){selected=new Set(['']);renderOptions()}
     storeSelectionScope=scope;
     const model=window.PultBusinessDynamicsModel.build(payload,{date:current.current.from,metric:key,selectedIds:[...selected]});
+    model.canEditTarget=key==='orderedRevenue'&&current.current.from===new Intl.DateTimeFormat('en-CA',{timeZone:'Europe/Moscow',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date())&&scope===JSON.stringify(['all',''])&&selected.has('');
     for(const name of ['orderCount','avgCheck']){const option=$('ins-chart-metric').querySelector('option[value="'+name+'"]');if(option){const field=name==='avgCheck'?'orderCount':name;const enabled=mode==='stores'&&model.stores.length>0&&payload.stores.filter(store=>model.stores.some(item=>item.id===store.id)).every(store=>store.days.find(day=>day.date===current.current.from)?.intervals?.some(row=>Number.isFinite(row[field])));option.disabled=!enabled;option.textContent=(name==='orderCount'?'Количество заказов':'Средний чек')+(enabled?'':' — нет данных');}}
     view.render(host,model);dynamicsScope=nextScope;$('chart-store-status').textContent='';
+    if(key==='orderedRevenue'&&typeof dynamicsClient.readCategories==='function'){
+     const scope=window.PultBusinessDynamicsClient.categoryScope({allStores:payload.stores,visibleStores:model.stores,market:$('market')?.value||'all',store:$('store')?.value||''});
+     if(!scope)view.updateCategories(host,null,{code:'UNSUPPORTED_SCOPE'});
+     else void dynamicsClient.readCategories({date:current.current.from,...scope}).then(summary=>{if(seq===version)view.updateCategories(host,summary)}).catch(error=>{if(seq===version)view.updateCategories(host,null,error)});
+    }
    }catch(error){if(seq!==version)return;if(keepCurrent){$('chart-store-status').textContent='Не удалось обновить данные · сохранён последний срез.';}else{dynamicsScope=null;view.error(host,{message:error.message||'Не удалось загрузить динамику',retryLabel:'Повторить'});host.onclick=event=>{if(event.target.closest('.bd-retry')){dynamicsClient.invalidate();void render()}}}}
    finally{if(seq===version)host.removeAttribute('aria-busy')}
   }

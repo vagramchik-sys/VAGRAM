@@ -23,7 +23,7 @@ function createRequestMetrics({ maxSeries = 96, maxRecent = 200, maxSamplesPerSe
     if (!series.has(key) && series.size >= Math.max(0, maxSeries - 1)) key = 'OTHER';
     let value = series.get(key);
     if (!value) {
-      value = { method: key === 'OTHER' ? 'OTHER' : method, route: key === 'OTHER' ? 'OTHER' : pathname, status: key === 'OTHER' ? 0 : status, count: 0, wallMs: 0, sqlCount: 0, sqlMs: 0, poolWaitMs: 0, externalCount: 0, externalMs: 0, responseBytes: 0, maxWallMs: 0 };
+      value = { method: key === 'OTHER' ? 'OTHER' : method, route: key === 'OTHER' ? 'OTHER' : pathname, status: key === 'OTHER' ? 0 : status, count: 0, wallMs: 0, sqlCount: 0, sqlMs: 0, poolWaitMs: 0, externalCount: 0, externalMs: 0, otherMs: 0, responseBytes: 0, maxWallMs: 0 };
       series.set(key, value);
       samples.set(value, { wall: [], sql: [] });
     }
@@ -40,11 +40,12 @@ function createRequestMetrics({ maxSeries = 96, maxRecent = 200, maxSamplesPerSe
       state.finished = true;
       if (state.route === '/api/runtime-metrics') return;
       const wallMs = elapsed(state.started), item = metric(state.method, state.route, Number(res.statusCode) || 0);
-      item.count++; item.wallMs += wallMs; item.sqlCount += state.sqlCount; item.sqlMs += state.sqlMs; item.poolWaitMs += state.poolWaitMs; item.externalCount += state.externalCount; item.externalMs += state.externalMs; item.responseBytes += state.responseBytes; item.maxWallMs = Math.max(item.maxWallMs, wallMs);
+      const otherMs = Math.max(0, wallMs - state.sqlMs - state.poolWaitMs - state.externalMs);
+      item.count++; item.wallMs += wallMs; item.sqlCount += state.sqlCount; item.sqlMs += state.sqlMs; item.poolWaitMs += state.poolWaitMs; item.externalCount += state.externalCount; item.externalMs += state.externalMs; item.otherMs += otherMs; item.responseBytes += state.responseBytes; item.maxWallMs = Math.max(item.maxWallMs, wallMs);
       const sample = samples.get(item); sample.wall.push(wallMs); sample.sql.push(state.sqlMs);
       if (sample.wall.length > maxSamplesPerSeries) { sample.wall.shift(); sample.sql.shift(); }
       if (maxRecent) {
-        recent.push({ at: new Date().toISOString(), method: state.method, route: state.route, status: Number(res.statusCode) || 0, wallMs: Number(wallMs.toFixed(3)), sqlCount: state.sqlCount, sqlMs: Number(state.sqlMs.toFixed(3)), poolWaitMs: Number(state.poolWaitMs.toFixed(3)), externalCount: state.externalCount, externalMs: Number(state.externalMs.toFixed(3)), responseBytes: state.responseBytes });
+        recent.push({ at: new Date().toISOString(), method: state.method, route: state.route, status: Number(res.statusCode) || 0, wallMs: Number(wallMs.toFixed(3)), sqlCount: state.sqlCount, sqlMs: Number(state.sqlMs.toFixed(3)), poolWaitMs: Number(state.poolWaitMs.toFixed(3)), externalCount: state.externalCount, externalMs: Number(state.externalMs.toFixed(3)), otherMs: Number(otherMs.toFixed(3)), responseBytes: state.responseBytes });
         if (recent.length > maxRecent) recent.shift();
       }
     };
@@ -93,10 +94,10 @@ function createRequestMetrics({ maxSeries = 96, maxRecent = 200, maxSamplesPerSe
     };
   };
   const percentile = (values, fraction) => { const sorted = [...values].sort((a, b) => a - b); return Number(sorted[Math.max(0, Math.ceil(sorted.length * fraction) - 1)].toFixed(3)); };
-  const snapshot = () => Object.freeze({ generatedAt: new Date().toISOString(), series: [...series.values()].map(value => { const sample = samples.get(value); return Object.freeze({ ...value, wallMs: Number(value.wallMs.toFixed(3)), sqlMs: Number(value.sqlMs.toFixed(3)), poolWaitMs: Number(value.poolWaitMs.toFixed(3)), externalMs: Number(value.externalMs.toFixed(3)), maxWallMs: Number(value.maxWallMs.toFixed(3)), sampleCount: sample.wall.length, p50Ms: percentile(sample.wall, .5), p95Ms: percentile(sample.wall, .95), p99Ms: percentile(sample.wall, .99), sqlRequestP95Ms: percentile(sample.sql, .95) }); }), recent: recent.map(value => Object.freeze({ ...value })), pools: pools.map((pool, index) => {
+  const snapshot = () => Object.freeze({ generatedAt: new Date().toISOString(), series: [...series.values()].map(value => { const sample = samples.get(value); return Object.freeze({ ...value, wallMs: Number(value.wallMs.toFixed(3)), sqlMs: Number(value.sqlMs.toFixed(3)), poolWaitMs: Number(value.poolWaitMs.toFixed(3)), externalMs: Number(value.externalMs.toFixed(3)), otherMs: Number(value.otherMs.toFixed(3)), maxWallMs: Number(value.maxWallMs.toFixed(3)), sampleCount: sample.wall.length, p50Ms: percentile(sample.wall, .5), p95Ms: percentile(sample.wall, .95), p99Ms: percentile(sample.wall, .99), sqlRequestP95Ms: percentile(sample.sql, .95) }); }), recent: recent.map(value => Object.freeze({ ...value })), pools: pools.map((pool, index) => {
     const name = pool.options?.application_name;
     const total = Number(pool.totalCount) || 0, idle = Number(pool.idleCount) || 0;
-    return Object.freeze({ name: ['pult', 'pult_ui', 'pult_ozon_http'].includes(name) ? name : `pool-${index + 1}`, max: Number(pool.options?.max) || null, total, idle, inUse: Math.max(0, total - idle), waiting: Number(pool.waitingCount) || 0 });
+    return Object.freeze({ name: ['pult', 'pult_ui', 'pult_analytics', 'pult_ozon_http'].includes(name) ? name : `pool-${index + 1}`, max: Number(pool.options?.max) || null, total, idle, inUse: Math.max(0, total - idle), waiting: Number(pool.waitingCount) || 0 });
   }) });
   return Object.freeze({ run, instrumentPool, instrumentExternal, snapshot });
 }
