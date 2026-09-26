@@ -6,7 +6,7 @@ const {point}=require('../intraday.cjs');
 const NOW=Date.parse('2026-09-24T09:07:00Z'),DATE='2026-09-24';
 const stores={'1':{name:'Первый',market:'Ozon'},'2':{name:'Второй'},'wb-1':{name:'Третий',market:'WB'}};
 const head=(store_id,domain,value)=>({kind:'head',store_id,domain,value});
-const daily=(date,revenue,units)=>({kind:'daily',store_id:'1',value:{date,revenue,units}});
+const daily=(date,revenue,units,factUpdatedAt,finalizedAt)=>({kind:'daily',store_id:'1',value:{date,revenue,units,...(factUpdatedAt?{factUpdatedAt}:{}),...(finalizedAt?{finalizedAt}:{})}});
 const ozonHead=(extra={})=>head('1','insights',{orders:{period:{from:'2026-08-27',to:DATE},todayDate:DATE,updatedAt:'2026-09-24T09:05:00Z',historyUpdatedAt:'2026-09-24T08:30:00Z',...extra},orderSection:{ok:true}});
 const observed=(date,at,revenue=100,complete=false)=>({kind:'observation',store_id:'1',value:{date,at,source:'orders',values:{orderedRevenue:Math.round(revenue*100),orderedUnits:2},...(complete?{complete:true,coverage:{from:new Date(date+'T00:00:00+03:00').toISOString(),to:at}}:{})}});
 function fixture(rows=[],clock=NOW,targets=new Map()){const calls=[],targetCalls=[];const service=createBusinessDynamics({repository:{async read(args){calls.push(args);return rows},async readTarget(args){targetCalls.push(args);return targets.get(`${args.date}:${args.scopeType}:${args.scopeId}`)||null}},storesRepository:{async read(){return stores}},now:()=>clock});return {service,calls,targetCalls};}
@@ -21,11 +21,11 @@ test('one bounded bulk read covers Moscow today and exactly 28 preceding dates, 
 });
 
 test('Ozon daily totals and cumulative observations never become 15-minute order-time sales',async()=>{
- const rows=[ozonHead(),daily(DATE,135,3),daily('2026-09-23',200,4),observed(DATE,'2026-09-24T09:00:00Z',100,true)];
+ const rows=[ozonHead(),daily(DATE,135,3),daily('2026-09-23',200,4,'2026-09-23T21:01:00Z'),observed(DATE,'2026-09-24T09:00:00Z',100,true)];
  const result=await fixture(rows).service.read(),today=getDay(result),yesterday=getDay(result,'1','2026-09-23');
  assert.equal(today.basis,'observation');assert.deepEqual(today.intervals,[]);assert.equal(today.complete,false);assert.equal(today.observations.length,1);assert.equal(today.observations[0].orderedRevenue,135);assert.equal(today.observations[0].complete,true);
  assert.deepEqual(today.coverage,{from:'2026-09-23T21:00:00.000Z',to:'2026-09-24T09:05:00.000Z',intervalsComplete:0});
- assert.equal(yesterday.complete,true);assert.equal(yesterday.totals.orderedRevenue,200);assert.equal(yesterday.updatedAt,'2026-09-24T08:30:00.000Z');
+ assert.equal(yesterday.complete,true);assert.equal(yesterday.totals.orderedRevenue,200);assert.equal(yesterday.updatedAt,'2026-09-23T21:01:00.000Z');
  assert.equal(result.stores[0].sources[1].updatedAt,'2026-09-24T09:00:00.000Z','intraday timestamp must not borrow the later head observation');
 });
 
@@ -35,11 +35,27 @@ test('legacy points remain visible but cannot certify cumulative coverage or mis
  assert.equal(today.totals.orderedRevenue,null);assert.equal(today.basis,'unavailable');assert.deepEqual(today.observations,[]);
 });
 
-test('today-only refresh and missing historical timestamp cannot falsely close yesterday',async()=>{
- for(const historyUpdatedAt of [null,'2026-09-23T20:55:00Z']){
-  const result=await fixture([ozonHead({historyUpdatedAt}),daily('2026-09-23',100,1)]).service.read(),old=getDay(result,'1','2026-09-23');
-  assert.equal(old.complete,false);assert.equal(old.updatedAt,historyUpdatedAt?new Date(historyUpdatedAt).toISOString():null);
+test('only a daily fact recorded after Moscow day end can close historical Ozon totals',async()=>{
+ for(const factUpdatedAt of [null,'2026-09-24T09:08:00Z','invalid']){
+  const result=await fixture([ozonHead({historyUpdatedAt:'2026-09-24T08:30:00Z'}),daily('2026-09-23',100,1,factUpdatedAt)]).service.read(),old=getDay(result,'1','2026-09-23');
+  assert.equal(old.complete,false);assert.equal(old.updatedAt,null);
  }
+ const partial=getDay(await fixture([ozonHead({historyUpdatedAt:'2026-09-24T08:30:00Z'}),daily('2026-09-23',90,1,'2026-09-23T20:55:00Z')]).service.read(),'1','2026-09-23');
+ assert.equal(partial.complete,false);assert.equal(partial.updatedAt,'2026-09-23T20:55:00.000Z');assert.equal(partial.totals.orderedRevenue,90);assert.equal(partial.observations.at(-1).complete,false);
+ const result=await fixture([ozonHead({historyUpdatedAt:'2026-09-23T20:55:00Z'}),daily('2026-09-23',100,1,'2026-09-23T21:00:00Z')]).service.read(),old=getDay(result,'1','2026-09-23');
+ assert.equal(old.complete,true);assert.equal(old.updatedAt,'2026-09-23T21:00:00.000Z');assert.equal(old.totals.orderedRevenue,100);
+});
+
+test('validated finalizedAt closes a historical Ozon day and invalid markers fall back to fact time',async()=>{
+ const staleFact='2026-09-23T20:55:00Z',head=ozonHead({historyUpdatedAt:'2026-09-24T08:30:00Z'});
+ const closed=getDay(await fixture([head,daily('2026-09-23',100,1,staleFact,'2026-09-23T21:05:00Z')]).service.read(),'1','2026-09-23');
+ assert.equal(closed.complete,true);assert.equal(closed.updatedAt,'2026-09-23T21:05:00.000Z');assert.equal(closed.totals.orderedRevenue,100);
+ for(const finalizedAt of ['invalid','2026-09-23T20:59:59Z','2026-09-24T09:08:00Z']){
+  const partial=getDay(await fixture([head,daily('2026-09-23',90,1,staleFact,finalizedAt)]).service.read(),'1','2026-09-23');
+  assert.equal(partial.complete,false);assert.equal(partial.updatedAt,'2026-09-23T20:55:00.000Z');assert.equal(partial.totals.orderedRevenue,90);
+ }
+ const fallback=getDay(await fixture([head,daily('2026-09-23',110,1,'2026-09-23T21:02:00Z','invalid')]).service.read(),'1','2026-09-23');
+ assert.equal(fallback.complete,true);assert.equal(fallback.updatedAt,'2026-09-23T21:02:00.000Z');
 });
 
 test('confirmed historical cumulative points stay partial days and future/mismatched coverage is rejected',async()=>{
@@ -94,7 +110,7 @@ test('sales target is returned only for the exact requested all, marketplace or 
 test('repository makes one parameterized bounded statement independent of store count, without historical event scans',async()=>{
  const calls=[],repository=createBusinessDynamicsRepository({pool:{async query(sql,params){calls.push({sql,params});return {rows:[]}}}});
  await repository.read({storeIds:['1','2','wb-1'],from:'2026-08-27',to:DATE});assert.equal(calls.length,1);assert.deepEqual(calls[0].params,[['1','2','wb-1'],'2026-08-27',DATE]);
- assert.match(SQL,/store_id=ANY\(\$1::text\[\]\)/);assert.match(SQL,/business_day BETWEEN \$2::date AND \$3::date/);assert.match(SQL,/entity_type='orders.daily'/);assert.match(SQL,/entity_type='points'/);assert.match(SQL,/entity_type='orders'/);assert.match(SQL,/floor\(extract\(epoch/);assert.doesNotMatch(SQL,/pult_history|record_journal|SELECT \*/i);
+ assert.match(SQL,/store_id=ANY\(\$1::text\[\]\)/);assert.match(SQL,/business_day BETWEEN \$2::date AND \$3::date/);assert.match(SQL,/entity_type='orders.daily'/);assert.match(SQL,/jsonb_build_object\('factUpdatedAt',f\.updated_at\)/);assert.match(SQL,/entity_type='points'/);assert.match(SQL,/entity_type='orders'/);assert.match(SQL,/floor\(extract\(epoch/);assert.doesNotMatch(SQL,/pult_history|record_journal|SELECT \*/i);
  for(const args of [{storeIds:['1'],from:'2020-01-01',to:DATE},{storeIds:['1','1'],from:'2026-08-27',to:DATE}])await assert.rejects(repository.read(args));assert.equal(calls.length,1);
  await repository.read({storeIds:[],from:'2026-08-27',to:DATE});assert.equal(calls.length,1);
 });

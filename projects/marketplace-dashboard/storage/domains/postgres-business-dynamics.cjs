@@ -26,25 +26,28 @@ function observation(raw,date,now) {
 function ozonDays(days,head,rows,now) {
  const orders=head?.orders,covered=date=>validDay(orders?.period?.from)&&validDay(orders?.period?.to)&&orders.period.from<=date&&orders.period.to>=date;
  for(const target of days) {
-  const date=target.date,daily=rows.filter(r=>r.kind==='daily'&&r.value?.date===date);
+  const date=target.date,daily=rows.filter(r=>r.kind==='daily'&&r.value?.date===date),dailyRow=daily.length===1?daily[0]:null;
   const latest=time(orders?.updatedAt),isObservedDay=date===orders?.todayDate||latest!==null&&moscowDay(latest)===date;
-  // A today-only refresh must not relabel older daily rows as freshly closed.
-  // Legacy heads without a history timestamp cannot certify historical totals.
-  const rawAt=isObservedDay?orders?.todayUpdatedAt||orders?.updatedAt:orders?.historyUpdatedAt;
-  const updated=time(rawAt),dailyMetrics=daily.length===1?metrics(daily[0].value.revenue,daily[0].value.units):null;
+  // Current-day coverage comes from the live head. Historical totals are
+  // certified by the daily fact itself, after its Moscow day has closed.
+  const factUpdated=time(dailyRow?.value?.factUpdatedAt),finalized=time(dailyRow?.value?.finalizedAt),dayEnd=start(date)+DAY;
+  const validFinalized=finalized!==null&&finalized<=now&&finalized>=dayEnd;
+  const rawAt=isObservedDay?orders?.todayUpdatedAt||orders?.updatedAt:validFinalized?dailyRow.value.finalizedAt:dailyRow?.value?.factUpdatedAt;
+  const updated=time(rawAt),dailyMetrics=dailyRow?metrics(dailyRow.value.revenue,dailyRow.value.units):null;
   const usable=covered(date)&&updated!==null&&updated<=now&&updated>=start(date)&&dailyMetrics;
+  const dailyComplete=usable&&(validFinalized||factUpdated!==null&&factUpdated>=dayEnd);
   const points=rows.filter(r=>r.kind==='observation'&&r.value?.date===date).map(r=>observation(r.value,date,now)).filter(Boolean);
   // The current head may precede the derived history writer. Its explicit day
   // coverage can prove a new cumulative observation without writing from GET.
   const latestAt=updated;
-  if(usable&&latestAt!==null&&latestAt<=now&&moscowDay(latestAt)===date)points.push({at:iso(latestAt),...dailyMetrics,complete:true});
+  if(usable&&latestAt!==null&&latestAt<=now&&moscowDay(latestAt)===date)points.push({at:iso(latestAt),...dailyMetrics,complete:isObservedDay||dailyComplete});
   // Keep the last real observation in each 15-minute display slot. These are
   // cumulative observations, never sales in that slot and never differenced.
   const slots=new Map();
   for(const point of points.sort((a,b)=>a.at.localeCompare(b.at)))slots.set(Math.floor((Date.parse(point.at)-start(date))/INTERVAL),point);
   const observations=[...slots.values()],confirmed=observations.filter(p=>p.complete),last=confirmed.at(-1);
   target.basis=observations.length||usable?'observation':'unavailable';target.observations=observations;
-  if(usable){target.totals=dailyMetrics;target.updatedAt=iso(updated);target.complete=updated>=start(date)+DAY;}
+  if(usable){target.totals=dailyMetrics;target.updatedAt=iso(updated);target.complete=dailyComplete;}
   else if(last){target.totals={orderedRevenue:last.orderedRevenue,orderedUnits:last.orderedUnits,orderCount:null};target.updatedAt=last.at;}
   else if(observations.length)target.updatedAt=observations.at(-1).at;
   if(last)target.coverage={from:iso(start(date)),to:last.at,intervalsComplete:0};

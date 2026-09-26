@@ -4,6 +4,28 @@ const date='2026-09-24',STEP=900000,DAY=86400000,at=(d,n)=>new Date(m.start(d)+n
 function day(d,{bins=96,revenue=100,orders=2,complete=true}={}){return {date:d,basis:'order-time',complete,totals:{orderedRevenue:bins*revenue,orderedUnits:bins*3,orderCount:bins*orders},intervals:Array.from({length:bins},(_,i)=>({from:at(d,i),to:at(d,i+1),orderedRevenue:revenue,orderedUnits:3,orderCount:orders,complete:true}))};}
 function store(id='1',history=7){return {id,name:'Магазин '+id,market:'Ozon',updatedAt:at(date,48),days:[day(date,{bins:48,complete:false}),...Array.from({length:history},(_,i)=>day(m.shift(date,-i-1)))]};}
 const payload=stores=>({period:{to:date},stores,events:[]}),build=(stores,opts={})=>m.build(payload(stores),{date,now:Date.parse(at(date,48)),...opts});
+
+test('yesterday known amount stays separate from a missing same-time comparison',()=>{
+ const a=store(),b=store('2'),previous=m.shift(date,-1);
+ a.days[1]={date:previous,basis:'observation',complete:false,updatedAt:at(previous,95),totals:{orderedRevenue:900,orderedUnits:9,orderCount:null},observations:[]};
+ b.days[1].updatedAt=at(previous,96);
+ const result=build([a,b]);
+ assert.equal(result.executive.yesterdaySameTime,null);
+ assert.equal(result.executive.yesterdayFullDay,null);
+ assert.deepEqual(result.executive.yesterdayLatest,{value:10500,from:at(previous,95),to:at(previous,96)});
+ assert.equal(result.executive.changePct,null);
+ b.days[1].updatedAt=null;
+ assert.equal(build([a,b]).executive.yesterdayLatest,null);
+});
+
+test('confirmed complete prior day is labelled separately from same-time comparison',()=>{
+ const a=store(),b=store('2'),previous=m.shift(date,-1);
+ a.days[1].updatedAt=at(previous,96);
+ b.days[1].updatedAt=at(previous,96);
+ const result=build([a,b]);
+ assert.equal(result.executive.yesterdayFullDay,19200);
+ assert.equal(result.executive.yesterdayLatest.value,19200);
+});
 test('equal MSK cutoff, seven complete days and historical-share forecast',()=>{const a=build([store()]);assert.equal(a.kpis.today.value,4800);assert.equal(a.kpis.yesterdayAtSameTime.value,4800);assert.equal(a.kpis.pace.value,0);assert.equal(a.comparison.avg7dSameTime,4800);assert.equal(a.kpis.forecast.value,9600);assert.equal(a.kpis.forecast.sampleSize,7);assert.equal(a.series.forecast.at(-1).at,at(date,96));assert.equal(a.velocity.length,48);assert.equal(a.velocityComparison.value,0);assert.equal(a.series.today.at(-1).avgCheck,50);});
 test('total and child checkbox never double count; empty selection stays empty',()=>{const a=store(),b=store('2');assert.equal(build([a,a,b],{selectedIds:['','1']}).kpis.today.value,9600);assert.equal(build([a,b],{selectedIds:['2']}).kpis.today.value,4800);assert.equal(build([a],{selectedIds:[]}).state,'empty');});
 test('missing store, interval or historical day is not zero',()=>{const a=store(),b=store('2');b.days=[];const result=build([a,b]);assert.equal(result.kpis.today.value,4800);assert.equal(result.kpis.yesterdayAtSameTime.value,null);assert.equal(result.kpis.forecast.available,false);assert.equal(result.state,'partial');a.days[0].intervals.splice(4,1);assert.equal(build([a]).kpis.pace.value,null);assert.equal(build([store('1',6)]).comparison.avg7dSameTime,null);assert.equal(build([store('1',6)]).kpis.yesterdayAtSameTime.value,4800);});

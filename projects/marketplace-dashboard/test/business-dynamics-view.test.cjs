@@ -322,3 +322,18 @@ test('executive missing values and stale data remain explicit', () => {
   assert.doesNotMatch(view.html, /<strong[^>]*>0\s*₽<\/strong>/);
   assert.match(view.root.parts.freshnessText.textContent, /Данные устарели · 10:40 МСК · 120 мин/);
 });
+
+test('shows known yesterday amount and cutoff without inventing a same-time delta', () => {
+  const view = harness();
+  const data = model({ executive: {
+    today: 20, yesterdaySameTime: null, yesterdayFullDay: null,
+    yesterdayLatest: { value: 150, from: '2026-09-23T20:34:00.000Z', to: '2026-09-23T21:00:00.000Z' },
+    changePct: null, marketplaces: [], stores: [], dataQuality: { score: 50, issues: [], byMarket: {} }, insights: []
+  } });
+  view.api.render(view.host, data);
+  assert.match(view.html, /Вчера · известная часть/);
+  assert.match(view.html, /Срезы 23:34–00:00 МСК · точного сравнения нет/);
+  assert.match(view.html, /<strong[^>]*>150\s*₽<\/strong>/);
+  assert.match(view.html, /Нет сопоставимого среза/);
+  assert.doesNotMatch(view.html, /<strong[^>]*>−130 ₽<\/strong>/);
+});

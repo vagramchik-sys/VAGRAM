@@ -130,6 +130,14 @@
   const value=finite(offset)?combined(stores,date,offset,metric).value:null;
   const chartUnavailableReason=finite(value)&&!today.some(point=>finite(point.cumulative))?'Общий график появится, когда будут данные всех выбранных магазинов. Известная часть показана в карточке.':null;
   const baseline=finite(offset)?combined(stores,shift(date,-1),offset,metric,{exact:true,fullDay:true}):{complete:false};
+  const previousDay=shift(date,-1),previousDays=stores.map(store=>dayFor(store,previousDay));
+  const yesterdayFullDay=metadata.key==='orderedRevenue'&&previousDays.length>0&&previousDays.every(day=>day?.complete===true&&finite(day.totals?.orderedRevenue))?previousDays.reduce((sum,day)=>sum+day.totals.orderedRevenue,0):null;
+  const previousEnd=start(previousDay)+DAY;
+  const latestPrior=previousDays.map(day=>{
+   const amount=day?.totals?.orderedRevenue,updated=Date.parse(day?.updatedAt);
+   return finite(amount)&&finite(updated)&&updated>=start(previousDay)&&updated<=at?{value:amount,at:day.complete===true?previousEnd:Math.min(updated,previousEnd)}:null;
+  });
+  const yesterdayLatest=metadata.key==='orderedRevenue'&&latestPrior.length>0&&latestPrior.every(Boolean)?{value:latestPrior.reduce((sum,row)=>sum+row.value,0),from:iso(Math.min(...latestPrior.map(row=>row.at))),to:iso(Math.max(...latestPrior.map(row=>row.at)))}:null;
   const prior=finite(offset)?dates.map(target=>combined(stores,target,offset,metric,{exact:true,fullDay:true})):[];
   const comparable=current.complete&&baseline.complete&&sameBasis(stores,date,shift(date,-1)),avgComplete=current.complete&&prior.length===7&&prior.every((row,i)=>row.complete&&sameBasis(stores,date,dates[i])),average=avgComplete?meanMetric(prior,metric):null;
   const yesterday=[],avg7d=[];
@@ -168,7 +176,7 @@
   if(finite(forecastVsTarget))insights.push({id:'forecast-vs-target',kind:'fact',value:forecastVsTarget,message:'Прогноз к 24:00: '+signedPct(forecastVsTarget)+' к подтверждённой цели.'});
   if(!insights.length){const reasons=dataQuality.issues.slice(0,2).map(issue=>issue.message).join(' ');insights.push({id:'data-quality',kind:'quality',value:dataQuality.score,message:'Сопоставимый вывод пока недоступен.'+(reasons?' '+reasons:'')});}
   if(insights.length>4)insights.length=4;
-  const executive={today:value,yesterdaySameTime:comparable?baseline.value:null,changePct:comparable?percent(value,baseline.value):null,last15m,last60m,last3h,previousHourChange,forecastConfidence,target:confirmedTarget,targetCompletion,remaining,requiredHourly,marketplaces,stores:executiveStores,dataQuality,insights};
+  const executive={today:value,yesterdaySameTime:comparable?baseline.value:null,yesterdayFullDay,yesterdayLatest,changePct:comparable?percent(value,baseline.value):null,last15m,last60m,last3h,previousHourChange,forecastConfidence,target:confirmedTarget,targetCompletion,remaining,requiredHourly,marketplaces,stores:executiveStores,dataQuality,insights};
   return {state:!finite(value)?'empty':current.complete?'ready':'partial',chartUnavailableReason,chartCaption:allEvents?'Факт показан только до общего среза данных':'Накопительные значения на время загрузки · одинаковый состав магазинов',date,asOf:finite(offset)?iso(base+offset):null,updatedAt,timezone:'Europe/Moscow',metric:metadata,kpis:{today:{value,subtitle:current.complete?'Подтверждённый срез':'Известная часть · покрытие не подтверждено'},yesterdayAtSameTime:{value:comparable?baseline.value:null,reason:comparable?null:'Нет сопоставимого среза'},pace:{value:comparable?percent(value,baseline.value):null,reason:baseline.value===0?'Вчерашняя база равна нулю':null},forecast:prediction},series:{today,yesterday,avg7d,forecast:prediction.points},velocity,velocityComparison:{value:percent(hour,usualHour),reason:usualHour===null?'Нет полного часа и 7 сопоставимых исторических интервалов.':null},stores:stores.map(store=>{const d=dayFor(store,date),last=d?._points?.filter(point=>point.at<=at).at(-1);return{id:store.id,name:store.name,market:store.market,value:valueOf(last,metric),complete:last?.complete===true,updatedAt:store.updatedAt}}),executive,events,notices:[...new Set(notices)],historyAvailable:avgComplete,comparisonLabel:'Среднее ровно за предыдущие 7 дней · на тот же момент МСК',forecastLabel:prediction.available?'Исторический профиль '+prediction.sampleSize+' дней из последних 28; тот же день недели имеет двойной вес.':prediction.reason,comparison:{avg7dSameTime:average,vsAvg7dPct:percent(value,average),sampleSize:historyDays}};
  }
  const api={build,normalized,sample,combined,intervalValue,forecast,shift,start,percent,metrics};

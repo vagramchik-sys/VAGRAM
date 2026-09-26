@@ -35,7 +35,8 @@ SELECT 'head' AS kind,store_id,domain,jsonb_build_object(
  'orderRowsPresent',metadata ? 'orders','orderRowsCount',entity_counts->'orders',
  'errorCode',metadata->'errorCode') AS value FROM heads
 UNION ALL
-SELECT 'daily',f.store_id,f.domain,f.value FROM heads h
+SELECT 'daily',f.store_id,f.domain,
+ f.value || jsonb_build_object('factUpdatedAt',f.updated_at) AS value FROM heads h
  JOIN pult_live.facts f ON f.store_id=h.store_id AND f.domain=h.domain
  WHERE h.domain='insights' AND f.entity_type='orders.daily'
   AND f.business_day BETWEEN $2::date AND $3::date
