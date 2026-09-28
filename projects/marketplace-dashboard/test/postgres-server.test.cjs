@@ -107,7 +107,7 @@ test('data and insights use an independent lane with at most two active reads', 
   assert.deepEqual((await Promise.all([second, data, heavy])).map(value => value.status), [200, 200, 200]);
 });
 
-test('historical report queue does not block a small interactive GET', async t => {
+test('historical report queue does not block small interactive GETs or the lazy business summary', async t => {
   const dir = await assets(); t.after(() => fs.rm(dir, { recursive: true, force: true }));
   const gates = []; let entered = 0;
   const handler = { handle: response(async (req, res, url) => {
@@ -117,6 +117,7 @@ test('historical report queue does not block a small interactive GET', async t =
       res.writeHead(200).end('report'); return true;
     }
     if (url.pathname === '/api/changes') { res.writeHead(200).end('interactive'); return true; }
+    if (url.pathname === '/api/business-dynamics/categories') { res.writeHead(200).end('summary'); return true; }
     return false;
   }) };
   const core = { async ready() { return { ready: true, missingAdapters: [] }; }, async publicStores() { return []; }, async publicSnapshot() {}, async hasStore() { return true; } };
@@ -127,7 +128,9 @@ test('historical report queue does not block a small interactive GET', async t =
   while (entered < 1) await new Promise(resolve => setImmediate(resolve));
   const second = request(runtime.origin, '/api/category-sales?from=another-day', { cookie });
   const quick = await Promise.race([request(runtime.origin, '/api/changes', { cookie }), new Promise((_, reject) => setTimeout(() => reject(Error('interactive GET blocked by report')), 250))]);
+  const summary = await Promise.race([request(runtime.origin, '/api/business-dynamics/categories?date=2026-09-28', { cookie }), new Promise((_, reject) => setTimeout(() => reject(Error('business summary blocked by historical report')), 250))]);
   assert.equal(quick.status, 200);
+  assert.equal(summary.status, 200);
   assert.equal(entered, 1);
   gates[0](); assert.equal((await first).status, 200);
   while (entered < 2) await new Promise(resolve => setImmediate(resolve));

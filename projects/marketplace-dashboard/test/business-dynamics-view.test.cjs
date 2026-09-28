@@ -48,6 +48,7 @@ function harness(now = Date.parse('2026-09-24T12:40:00+03:00')) {
       const cursor = new FakeNode('cursor'); cursor.setAttribute('hidden', '');
       const focus = new FakeNode('focus'); focus.setAttribute('hidden', '');
       const freshness = new FakeNode('freshness'), freshnessText = new FakeNode('freshness-text');
+      const categoriesContent = new FakeNode('categories-content'), productsContent = new FakeNode('products-content');
       freshness.querySelector = selector => selector === 'span' ? freshnessText : null;
       const qualityPanel = new FakeNode('quality-panel'), qualityScrim = new FakeNode('quality-scrim'), qualityBadge = new FakeNode('quality-badge'), qualityClose = new FakeNode('quality-close');
       qualityPanel.hidden = true; qualityScrim.hidden = true;
@@ -65,14 +66,15 @@ function harness(now = Date.parse('2026-09-24T12:40:00+03:00')) {
       root.querySelector = selector => ({
         '.bd-chart': chart, '.bd-tooltip': tooltip, '.bd-detail': detail,
         '.bd-points': html.includes('bd-points') ? points : null, '.bd-freshness': freshness,
+        '.bd-categories__content': categoriesContent, '.bd-products__content': productsContent,
         '.bd-quality-panel': html.includes('bd-quality-panel') ? qualityPanel : null,
         '.bd-quality-scrim': html.includes('bd-quality-scrim') ? qualityScrim : null,
         '[data-quality-open]': html.includes('data-quality-open') ? qualityBadge : null
       })[selector] || null;
-      root.parts = { chart, tooltip, detail, cursor, focus, freshness, freshnessText, qualityPanel, qualityScrim, qualityBadge };
+      root.parts = { chart, tooltip, detail, cursor, focus, freshness, freshnessText, categoriesContent, productsContent, qualityPanel, qualityScrim, qualityBadge };
     }
   });
-  host.querySelector = selector => selector === '.business-dynamics' ? root : selector === '.bd-retry' ? retry : null;
+  host.querySelector = selector => selector === '.business-dynamics' ? root : selector === '.bd-retry' ? retry : root?.querySelector(selector) || null;
   host.replaceChildren = () => { html = ''; root = null; };
   host.dispatchEvent = event => { host.dispatched = event; return true; };
   const context = {
@@ -110,7 +112,7 @@ function group(html, className) {
   return html.match(new RegExp('<g class="[^"]*' + className + '[^"]*">([\\s\\S]*?)</g>'))?.[1] || '';
 }
 
-test('uses asOf for facts, updatedAt for freshness, and keeps the full 24-hour comparison axis', () => {
+test('uses asOf for facts, updatedAt for freshness, and scales a no-forecast chart to the known slice', () => {
   const view = harness(Date.parse('2026-09-24T10:10:00+03:00'));
   const data = model({
     asOf: '2026-09-24T09:00:00+03:00',
@@ -119,8 +121,59 @@ test('uses asOf for facts, updatedAt for freshness, and keeps the full 24-hour c
   });
   view.api.render(view.host, data);
   assert.doesNotMatch(view.html, />999</);
-  assert.match(view.root.parts.freshnessText.textContent, /Актуально · 10:03 МСК · 7 мин/);
+  assert.match(view.root.parts.freshnessText.textContent, /Актуально · 10:03 МСК · 7 мин\. назад/);
   assert.equal(view.root.parts.chart.dataset.domain, '1440');
+});
+
+test('fills top products from the lazy category summary and labels partial coverage', () => {
+  const view = harness();
+  view.api.render(view.host, model({ executive: { stores: [], marketplaces: [], insights: [], dataQuality: { score: 100, issues: [] }, sourceStatus: [] } }));
+  assert.match(view.html, /Загружаем товары/);
+  view.api.updateCategories(view.host, {
+    knownTotal: 300, complete: false, rows: [], productsComplete: false,
+    products: [{ name: 'Профиль <A>', market: 'Ozon', storeName: 'Первый', value: 250, complete: false }]
+  });
+  assert.match(view.root.parts.productsContent.innerHTML, /Лидеры по известной сумме · покрытие неполное/);
+  assert.match(view.root.parts.productsContent.innerHTML, /250[^<]*₽/);
+  assert.match(view.root.parts.productsContent.innerHTML, /Ozon · Первый/);
+  assert.doesNotMatch(view.root.parts.productsContent.innerHTML, /<A>/);
+});
+
+test('shows yesterday known part with source cutoffs without inventing a same-time delta', () => {
+  const view = harness();
+  const data = model({ state: 'partial', executive: {
+    today: 200, yesterdaySameTime: null, yesterdayFullDay: null,
+    yesterdayLatest: { value: 150, from: '2026-09-23T20:45:00Z', to: '2026-09-23T21:00:00Z' },
+    comparisonToday: null, changePct: null, dataQuality: { score: 50, issues: [] },
+    marketplaces: [], stores: [], sourceStatus: [], insights: []
+  } });
+  view.api.render(view.host, data);
+  assert.match(view.html, /Вчера · известная часть/);
+  assert.match(view.html, /Срезы 23:45–00:00 МСК · точного сравнения нет/);
+  assert.match(view.html, /bd-kpi--difference is-unavailable/);
+  assert.doesNotMatch(view.html, /Вчера к этому времени<\/span><strong[^>]*>150/);
+});
+
+test('labels bounded observation comparison as an estimate and keeps the latest Today separate', () => {
+  const view = harness();
+  const data = model({ state: 'partial', series: { ...model().series, yesterday: [] }, executive: {
+    today: 1000, yesterdaySameTime: null, yesterdayFullDay: 1200,
+    comparisonToday: null, changePct: null,
+    alignedComparison: { today: 900, yesterday: 800, changePct: 12.5, asOf: '2026-09-24T09:00:00+03:00', maxLagMinutes: 19.6, windowMinutes: 30 },
+    dataQuality: { score: 50, issues: [] }, marketplaces: [], sourceStatus: [], insights: [],
+    stores: [{ id: '1', name: 'Магазин', market: 'Ozon', value: 1000, share: 100, complete: true,
+      alignedComparison: { today: 900, yesterday: 800, changePct: 12.5, asOf: '2026-09-24T09:00:00+03:00', maxLagMinutes: 19.6 } }]
+  } });
+  view.api.render(view.host, data);
+  assert.match(view.html, /Вчера · сопоставимый срез/);
+  assert.match(view.html, /Разница · оценка/);
+  assert.match(view.html, /Оценка по накопительным снимкам около 09:00 МСК/);
+  assert.match(view.html, /отклонение времени до 20 мин/);
+  assert.match(view.html, /сегодня на срезе 900/);
+  assert.match(view.html, /≈ срез 09:00 МСК/);
+  assert.match(view.html, /Линия «Вчера» не строится без точных сопоставимых точек\. Разница в карточке — оценка по снимкам\./);
+  assert.match(view.html, /Нельзя|Нет прогноза/);
+  assert.doesNotMatch(view.html, /Вчера к этому времени<\/span><strong[^>]*>1/);
 });
 
 test('draws all cumulative histories as STEP, keeps incomplete known facts, and breaks only on null', () => {
@@ -135,7 +188,7 @@ test('draws all cumulative histories as STEP, keeps incomplete known facts, and 
   assert.match(today, / H [\d.]+ V [\d.]+/);
   assert.match(yesterday, / H [\d.]+ V [\d.]+/);
   assert.match(view.html, /Известные значения · покрытие неполное/);
-  assert.match(view.html, /Среднее за 7 дней пока недоступно/);
+  assert.match(view.html, /Среднее за 7 дней для выбранных магазинов пока недоступно/);
   assert.notEqual(yesterday, '');
 });
 
@@ -285,7 +338,8 @@ test('executive screen puts factual KPIs first, adds plan line and keeps warning
   assert.match(view.html, /Продажи выше вчера на 11,1%/);
   assert.equal((view.html.match(/<article class="bd-kpi bd-kpi--/g) || []).length, 7);
   assert.match(view.html, /<th>Вчера к этому времени<\/th>/);
-  assert.match(view.html, /Для выбранного периода детализация по категориям открывается отдельно/);
+  assert.match(view.html, /Загружаем категории/);
+  assert.match(view.html, /Загружаем товары/);
 });
 
 test('executive drawer, refresh and store drill-down work without losing keyboard close', () => {

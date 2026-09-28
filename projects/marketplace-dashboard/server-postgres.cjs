@@ -11,6 +11,8 @@ const STATIC_EXTENSIONS = new Set(Object.keys(MIME));
 const FINANCE_UPLOAD_MEDIA = new Set(['application/pdf', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'image/png', 'image/jpeg']);
 // These reports read large historical sources. Keep their HTTP admission queue
 // separate so one report cannot hold the slot needed by a small interactive GET.
+// The one-day business-dynamics category summary is lazy and bounded; keeping it
+// here would make it wait behind unrelated multi-day reports until its client aborts.
 const HEAVY_READ_ROUTES = new Set(['/api/buyer-order-segments', '/api/buyer-product-segments', '/api/b2b-radar', '/api/category-sales', '/api/order-category-daily', '/api/order-categories']);
 const json = (res, status, value) => { res.writeHead(status, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' }); res.end(JSON.stringify(value)); };
 
