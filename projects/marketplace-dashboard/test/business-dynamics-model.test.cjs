@@ -119,14 +119,19 @@ test('partial, stale and mixed sources keep known contributions but suppress exa
  r=build([changedBasis]);assert.equal(r.executive.changePct,null);assert.equal(r.executive.marketplaces[0].changePct,null);assert.equal(r.executive.stores[0].changePct,null);
 });
 
-test('Ozon forecast uses a real prior observation no more than 30 minutes old without weakening exact yesterday KPI',()=>{
+test('Ozon forecast keeps exact yesterday separate and labels a sparse-history fallback provisional',()=>{
  const current={date,basis:'observation',complete:false,observations:[{at:at(date,48),orderedRevenue:4800,orderedUnits:144,orderCount:96,complete:true}]};
  const history=Array.from({length:7},(_,i)=>{const d=m.shift(date,-i-1);return {date:d,basis:'observation',complete:true,totals:{orderedRevenue:9600,orderedUnits:288,orderCount:192},observations:[{at:at(d,47),orderedRevenue:4700,orderedUnits:141,orderCount:94,complete:true}]}});
  const ozon={id:'1',name:'Ozon',market:'Ozon',updatedAt:at(date,48),days:[current,...history]};
  const r=build([ozon]);
  assert.equal(r.kpis.forecast.available,true);assert.equal(r.kpis.forecast.sampleSize,7);assert.equal(r.kpis.yesterdayAtSameTime.value,null);assert.equal(r.executive.yesterdaySameTime,null);
  history[0].observations[0].at=at(history[0].date,45);
- assert.equal(build([ozon]).kpis.forecast.available,false);
+ const provisional=build([ozon]);
+ assert.equal(provisional.kpis.forecast.available,true);
+ assert.equal(provisional.kpis.forecast.exact,false);
+ assert.equal(provisional.kpis.forecast.method,'component-historical-share');
+ assert.equal(provisional.kpis.yesterdayAtSameTime.value,null);
+ assert.deepEqual(provisional.series.forecast,[]);
 });
 
 test('yesterday line reaches 24:00 only through confirmed full-day points',()=>{
