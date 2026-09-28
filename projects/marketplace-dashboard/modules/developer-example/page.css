@@ -1,0 +1,5 @@
+.module-shell { min-height: 100vh; }
+.module-content { max-width: 1180px; margin: 0 auto; padding: 0 28px 48px; }
+.module-state { min-height: 8rem; padding: 24px; }
+.module-state [data-state] { margin: 0; }
+.module-state [data-state="error"] { color: #b42318; }

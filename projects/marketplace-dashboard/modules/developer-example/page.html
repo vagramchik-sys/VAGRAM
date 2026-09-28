@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Пример модуля</title>
+  <link rel="stylesheet" href="/seller-shell.css">
+  <link rel="stylesheet" href="/module-ui.css">
+  <link rel="stylesheet" href="/modules/developer-example/page.css">
+</head>
+<body class="module-page pult-static-shell">
+  <main class="module-shell" data-module-root="developer-example">
+    <header class="topbar"><a href="/">Пульт</a><span>Пример модуля</span></header>
+    <section class="module-content">
+      <header class="page-heading" data-component="PageHeader">
+        <div><div class="eyebrow">МОДУЛЬ</div><h1 data-page-title>Пример модуля</h1><p data-page-subtitle>Страница нового модуля</p></div>
+      </header>
+      <section class="panel module-state" aria-live="polite" aria-busy="true">
+        <p data-state="loading">Загружаем данные…</p>
+        <p data-state="error" role="alert" hidden>Не удалось загрузить данные. Обновите страницу, чтобы повторить.</p>
+        <p data-state="empty" hidden>Данных пока нет.</p>
+        <div data-state="content" hidden></div>
+      </section>
+    </section>
+  </main>
+  <script src="/module-ui.js" defer></script>
+  <script src="/modules/developer-example/page.js" defer></script>
+</body>
+</html>
