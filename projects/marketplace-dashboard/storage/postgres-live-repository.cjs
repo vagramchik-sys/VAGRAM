@@ -135,11 +135,11 @@ function createPostgresLiveRepository({ pool, maxMetadataBytes = 64 * 1024, writ
   if (!pool || typeof pool.connect !== 'function') throw new TypeError('pool is required');
   if (!Number.isSafeInteger(maxMetadataBytes) || maxMetadataBytes < 1 || maxMetadataBytes > MAX_METADATA_BYTES) throw new TypeError('invalid metadata limit');
   if (!Number.isSafeInteger(writeBatchBytes) || writeBatchBytes < 1024 || writeBatchBytes > 16 * 1024 * 1024) throw new TypeError('invalid write batch limit');
-  async function transaction(readOnly, work) {
+  async function transaction(readOnly, work, { readCommitted = false } = {}) {
     let client;
     try {
       client = await pool.connect();
-      await client.query(readOnly ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : 'BEGIN');
+      await client.query(readOnly ? 'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY' : readCommitted ? 'BEGIN ISOLATION LEVEL READ COMMITTED' : 'BEGIN');
       if (!readOnly) await acquireMutationFence(client);
       const result = await work(client);
       await client.query('COMMIT');
@@ -176,6 +176,20 @@ function createPostgresLiveRepository({ pool, maxMetadataBytes = 64 * 1024, writ
   async function readCommand(input) {
     const id = identity(input), commandId = textId(input.commandId, 200);
     return transaction(true, async client => (await command(client, id, commandId))?.receipt ?? null);
+  }
+  // The caller must first prove that the original collector has stopped. The
+  // row lock drains a pending publication; it cannot fence a still-live collector.
+  async function settleStoppedCommand(input) {
+    const id = identity(input), commandId = textId(input.commandId, 200);
+    if (input.producerStopped !== true) fail('INVALID_ARGUMENT');
+    return transaction(false, async client => {
+      await client.query("SET LOCAL lock_timeout = '5s'");
+      await client.query("SET LOCAL statement_timeout = '10s'");
+      const head = await current(client, id, true);
+      if (!head) return null; // No row exists to synchronize with a publisher.
+      const saved = await command(client, id, commandId);
+      return freeze({ committed: !!saved, revision: String(head.revision) });
+    }, { readCommitted: true });
   }
   async function listRows(input) {
     const id = identity(input), values = [id.storeId, id.domain], where = ['store_id=$1', 'domain=$2'];
@@ -420,7 +434,7 @@ function createPostgresLiveRepository({ pool, maxMetadataBytes = 64 * 1024, writ
       return withStatus ? { receipt, replayed: false } : receipt;
     });
   }
-  return Object.freeze({ getHead, listHeads, listRows, readCurrentCollections, readCurrentBundles, listJournal, readAtRevision, readCommand, publish: input => write(input, false), publishWithStatus: input => write(input, false, true), importComplete: input => write(input, true) });
+  return Object.freeze({ getHead, listHeads, listRows, readCurrentCollections, readCurrentBundles, listJournal, readAtRevision, readCommand, settleStoppedCommand, publish: input => write(input, false), publishWithStatus: input => write(input, false, true), importComplete: input => write(input, true) });
 }
 
 module.exports = { createPostgresLiveRepository, LiveRepositoryError, DOMAINS };

@@ -22,6 +22,7 @@ const TEST_SUITES = Object.freeze({
   'ledger-refresh': 'test/postgres-ledger-refresh.test.cjs',
   'status-readers': 'test/postgres-status-readers.test.cjs',
   'live-repository': 'test/postgres-live-repository.test.cjs',
+  'stopped-command': 'test/postgres-stopped-command.test.cjs',
   'live-scheduler': 'test/postgres-live-scheduler.test.cjs',
   'live-sources': 'test/postgres-live-sources.test.cjs',
   'live-state-store': 'test/postgres-live-state-store.test.cjs',

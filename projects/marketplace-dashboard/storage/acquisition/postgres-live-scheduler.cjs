@@ -199,6 +199,20 @@ function createPostgresLiveScheduler({ pool, schema = 'pult_live' } = {}) {
     if (!validJob(saved) || saved.commandId !== commandId.toLowerCase() || saved.kind !== kind || saved.storeId !== storeId || saved.timestamp !== timestamp) fail('COMMAND_ID_REUSED', 'Scheduler transition intent differs');
     return clone(saved);
   }
+  async function attemptOwner(job) {
+    if (!validJob(job, true)) fail('INVALID_ARGUMENT', 'Scheduler job is invalid');
+    if (job.runnerId) return job.runnerId;
+    // Older unknown jobs cleared runnerId. Recover it from their immutable
+    // transition receipt by primary key, without scanning the scheduler history.
+    let result;
+    try { result = await pool.query(`SELECT before_job,after_job FROM ${table('scheduler_commands')} WHERE command_id=$1`, [job.commandId]); }
+    catch (error) { throw wrap(error); }
+    const row = result.rows[0];
+    if (!row) return null;
+    const sameAttempt = value => value?.kind === job.kind && value?.storeId === job.storeId && value?.attemptId === job.attemptId;
+    if (!sameAttempt(row.after_job) || row.after_job.state !== job.state) fail('JOB_CONFLICT', 'Scheduler receipt does not match the attempt');
+    return sameAttempt(row.before_job) && row.before_job.state === 'running' ? row.before_job.runnerId ?? null : null;
+  }
   async function getPayload(kind, storeId, expectedAttemptId) {
     if (!/^[a-z][a-z0-9-]{0,40}$/u.test(kind || '') || !/^(?:wb-)?[0-9]+$/u.test(storeId || '') || !UUID.test(expectedAttemptId || '')) fail('INVALID_ARGUMENT', 'Scheduler payload request is invalid');
     let result; try { result = await pool.query(`SELECT attempt_id::text,payload,payload_hash FROM ${table('scheduler_jobs')} WHERE kind=$1 AND store_id=$2`, [kind, storeId]); } catch (error) { throw wrap(error); }
@@ -232,7 +246,7 @@ function createPostgresLiveScheduler({ pool, schema = 'pult_live' } = {}) {
       return { revision: String(revision), jobs: Object.keys(snapshot.jobs).length, requests: Object.keys(snapshot.requests || {}).length };
     });
   }
-  return Object.freeze({ load, transition, captureRequest, transitionReceipt, getPayload, jobsProvider, statusJobs, importLegacy });
+  return Object.freeze({ load, transition, captureRequest, transitionReceipt, attemptOwner, getPayload, jobsProvider, statusJobs, importLegacy });
 }
 
 module.exports = { createPostgresLiveScheduler, LiveSchedulerError, schemaSql };
