@@ -27,7 +27,8 @@ function runtime({ href = 'http://127.0.0.1:4317/', market = 'WB', fetchImpl } =
       this.dataset = {};
       this.listeners = new Map();
       this.parentElement = this;
-      this.classList = { add() {}, remove() {} };
+      const classNames = new Set();
+      this.classList = { add(...names) { names.forEach(name => classNames.add(name)); }, remove(...names) { names.forEach(name => classNames.delete(name)); }, contains(name) { return classNames.has(name); } };
     }
     insertAdjacentHTML(_position, html) {
       for (const match of html.matchAll(/id="([^"]+)"/g)) ensure(match[1]);
@@ -171,16 +172,130 @@ test('buyer page does not start or poll the hidden insights report', () => {
   assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
 });
 
-test('latest report mode wins while an orders request is in flight', async () => {
-  let resolveInsights;
-  const app = runtime({ market: 'Ozon', fetchImpl: url => url.startsWith('/api/insights?') ? new Promise(resolve => { resolveInsights = resolve; }) : new Promise(() => {}) });
+test('latest report mode starts immediately and ignores obsolete responses', async () => {
+  const { app, requests } = stalledRuntime();
   const metric = app.nodes.get('ins-chart-metric');
   metric.value = 'net'; metric.dispatchEvent({ type: 'change' });
   metric.value = 'orderedRevenue'; metric.dispatchEvent({ type: 'change' });
-  resolveInsights({ ok: true, json: async () => ordersReport() });
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 1);
+  assert.equal(requests.length, 3);
+  assert.ok(requests.slice(0, 2).every(request => request.signal.aborted));
+  await flushReports();
+  app.dispatch('pult:view-change');
+  assert.equal(requests.length, 3, 'obsolete finally blocks cannot release the latest request');
+  requests[2].resolve('new');
+  await flushReports();
+  requests[0].resolve('old'); requests[1].reject(Error('obsolete failure'));
+  await flushReports();
+  assert.deepEqual(app.homeUpdates.filter(update => update.state === 'ready').map(update => update.report.testId), ['new']);
   assert.equal(app.homeUpdates.at(-1).state, 'ready');
+});
+
+const flushReports = () => new Promise(resolve => setImmediate(resolve));
+function stalledRuntime(href = 'http://127.0.0.1:4317/') {
+  const requests = [];
+  const app = runtime({ href, market: 'Ozon', fetchImpl(url, { signal }) {
+    if (!url.startsWith('/api/insights?')) return new Promise(() => {});
+    // Intentionally ignore abort so late responses also exercise stale-result protection.
+    return new Promise((resolve, reject) => requests.push({ url, signal, reject,
+      resolve(testId) { resolve({ ok: true, json: async () => ({ ...ordersReport(), testId }) }); }
+    }));
+  } });
+  return { app, requests };
+}
+
+test('pending full report is cancelled when overview opens without waiting for its response', async () => {
+  const { app, requests } = stalledRuntime('http://127.0.0.1:4317/?view=economics');
+  assert.equal(new URL(requests[0].url, 'http://local').searchParams.has('scope'), false);
+  app.context.document.body.dataset.pultView = 'overview'; app.dispatch('pult:view-change');
+  assert.equal(requests.length, 2);
+  assert.equal(requests[0].signal.aborted, true);
+  assert.equal(new URL(requests[1].url, 'http://local').searchParams.get('scope'), 'orders');
+  await flushReports(); app.dispatch('pult:view-change');
+  assert.equal(requests.length, 2, 'same-key route events must reuse the active request');
+  requests[1].resolve('home'); await flushReports();
+  requests[0].resolve('obsolete full'); await flushReports();
+  assert.deepEqual(app.homeUpdates.filter(update => update.state === 'ready').map(update => update.report.testId), ['home']);
+});
+
+test('store and period changes supersede pending requests immediately', async () => {
+  const { app, requests } = stalledRuntime();
+  const store = app.nodes.get('store'); store.value = '2'; store.dispatchEvent({ type: 'change' });
+  const from = app.nodes.get('ins-from'); from.value = '2026-09-10'; from.dispatchEvent({ type: 'change' });
+  assert.equal(requests.length, 3);
+  assert.ok(requests.slice(0, 2).every(request => request.signal.aborted));
+  requests[2].resolve('latest scope'); await flushReports();
+  requests[0].reject(Error('old store failed')); requests[1].resolve('old period'); await flushReports();
+  assert.deepEqual(app.homeUpdates.filter(update => update.state === 'ready').map(update => update.report.testId), ['latest scope']);
+  assert.equal(app.homeUpdates.at(-1).state, 'ready');
+});
+
+test('switching to WB cancels pending Ozon work and cannot show its late result', async () => {
+  const { app, requests } = stalledRuntime('http://127.0.0.1:4317/?view=economics');
+  const market = app.nodes.get('market'); market.value = 'WB'; market.dispatchEvent({ type: 'change' });
+  assert.equal(requests.length, 1); assert.equal(requests[0].signal.aborted, true);
+  assert.equal(app.homeUpdates.at(-1).state, 'unsupported');
+  requests[0].resolve('old Ozon'); await flushReports();
+  assert.equal(app.homeUpdates.at(-1).state, 'unsupported');
+});
+
+for (const [view, deadline] of [['overview', 15000], ['economics', 60000]]) {
+  test(view + ' report deadline aborts stalled work and permits retry', async () => {
+    const { app, requests } = stalledRuntime('http://127.0.0.1:4317/?view=' + view);
+    assert.equal(app.homeUpdates.at(-1).state, 'loading');
+    assert.equal(app.runTimeout(deadline), true); await flushReports();
+    assert.equal(requests[0].signal.aborted, true);
+    assert.equal(app.homeUpdates.at(-1).state, 'error');
+    assert.match(app.nodes.get('ins-state').textContent, /Время ожидания данных истекло/);
+    app.dispatch('pult:view-change'); assert.equal(requests.length, 2);
+    requests[1].resolve('retry'); await flushReports();
+    requests[0].resolve('timed out'); await flushReports();
+    assert.equal(app.homeUpdates.at(-1).report.testId, 'retry');
+  });
+}
+
+test('home refresh bypasses fulfilled cache without starting marketplace acquisition', async () => {
+  const { app, requests } = stalledRuntime();
+  requests[0].resolve('cached'); await flushReports();
+  app.dispatch('pult:view-change'); assert.equal(requests.length, 1);
+  app.dispatch('pult:home-refresh'); assert.equal(requests.length, 2);
+  assert.equal(app.fetches.some(url => url === '/api/insights/refresh'), false);
+  requests[1].resolve('fresh'); await flushReports(); assert.equal(app.homeUpdates.at(-1).report.testId, 'fresh');
+});
+
+test('returning from WB to a cached Ozon report restores the visible report section', async () => {
+  const { app, requests } = stalledRuntime();
+  requests[0].resolve('cached Ozon'); await flushReports();
+  const market = app.nodes.get('market'), executive = app.nodes.get('executive'), metrics = app.nodes.get('metrics');
+  market.value = 'WB'; market.dispatchEvent({ type: 'change' });
+  assert.equal(executive.hidden, true); assert.equal(metrics.classList.contains('legacy-visible'), true);
+  market.value = 'Ozon'; market.dispatchEvent({ type: 'change' });
+  assert.equal(requests.length, 1, 'same Ozon scope must use its still-fresh cached report');
+  assert.equal(app.homeUpdates.at(-1).report.testId, 'cached Ozon');
+  assert.equal(executive.hidden, false); assert.equal(metrics.classList.contains('legacy-visible'), false);
+});
+
+test('today business chart remains available for WB and its selected store', () => {
+  for (const market of ['WB', 'Wildberries']) {
+    const app = runtime({ href: 'http://127.0.0.1:4317/?view=overview&section=business-chart', market });
+    assert.equal(app.storeChartUpdates.length, 1, market);
+    assert.equal(app.nodes.get('executive').hidden, false, market);
+    assert.equal(app.homeUpdates.some(update => update.state === 'unsupported'), false, market);
+    const store = app.nodes.get('store'); store.value = 'wb-1'; store.dispatchEvent({ type: 'change' });
+    assert.equal(app.storeChartUpdates.at(-1).storeId, 'wb-1');
+    assert.equal(app.storeChartUpdates.at(-1).report.days, 1);
+    assert.equal(app.fetches.filter(url => url.startsWith('/api/insights?')).length, 0);
+  }
+});
+
+test('leaving insights and opening the one-day chart cancel obsolete reports', async () => {
+  for (const view of ['products', 'wb-economics', 'business-chart']) {
+    const { app, requests } = stalledRuntime('http://127.0.0.1:4317/?view=economics');
+    app.context.document.body.dataset.pultView = view; app.dispatch('pult:view-change'); await flushReports();
+    assert.equal(requests[0].signal.aborted, true, view); assert.equal(requests.length, 1, view);
+    if (view === 'business-chart') assert.equal(app.storeChartUpdates.length, 1);
+    requests[0].resolve('old'); await flushReports();
+    assert.equal(app.homeUpdates.some(update => update.state === 'ready'), false, view);
+  }
 });
 
 test('periodic poll does not invalidate an in-flight insights response', async () => {
