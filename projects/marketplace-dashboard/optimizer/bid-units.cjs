@@ -16,10 +16,10 @@ function bidToRubles(value, unit) {
   return null;
 }
 
-function storedBidToRubles(value, unit, raw) {
+function storedBidToRubles(value, unit, raw, rawUnit) {
   return value !== null && value !== undefined
     ? bidToRubles(value, unit)
-    : bidToRubles(raw, MICRO_RUB);
+    : bidToRubles(raw, rawUnit);
 }
 
 module.exports = {bidToRubles, storedBidToRubles, MICRO_RUB, RUB};

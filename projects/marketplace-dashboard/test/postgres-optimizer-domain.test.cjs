@@ -115,7 +115,7 @@ test('SKU detail explains why an apparent bid recommendation cannot be applied a
 });
 
 test('all three Ozon bid fields normalize once while raw values remain separate', () => {
-  const raw = {current_bid_raw: '130000000', competitive_bid_raw: '200000000', minimum_bid_raw: '3500000'};
+  const raw = {current_bid_raw: '130000000', competitive_bid_raw: '200000000', minimum_bid_raw: '3500000', current_bid_raw_unit: 'MICRO_RUB_PER_CLICK', competitive_bid_raw_unit: 'MICRO_RUB_PER_CLICK', minimum_bid_raw_unit: 'MICRO_RUB_PER_CLICK'};
   const shaped = advertisingShape(raw);
   assert.equal(shaped.currentBid, 130); assert.equal(shaped.competitiveBid, 200); assert.equal(shaped.minimumBid, 3.5); assert.equal(shaped.unit, 'RUB_PER_CLICK');
   assert.equal(shaped.currentBidRaw, raw.current_bid_raw);

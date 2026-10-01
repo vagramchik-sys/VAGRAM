@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Пульт — Управление рекламой Ozon</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <link rel="stylesheet" href="/navigation.css">
+  <link rel="stylesheet" href="/overview-light.css">
+  <link rel="stylesheet" href="/seller-shell.css">
+  <link rel="stylesheet" href="/seller-workspace.css">
+  <link rel="stylesheet" href="/ad-control.css">
+</head>
+<body>
+  <aside class="sidebar"><a class="brand" href="/">Пульт</a><nav><a href="/">Обзор бизнеса</a><a href="/ad-control.html" aria-current="page">Реклама Ozon</a></nav></aside>
+  <main class="ad-main">
+    <header class="ad-heading">
+      <div><div class="ad-eyebrow">РЕКЛАМА · ПРЯМОЕ УПРАВЛЕНИЕ</div><h1>Управление рекламой Ozon</h1><p>Бюджеты, запуск и расписание кампаний в одном месте.</p></div>
+      <span class="ad-source"><i aria-hidden="true"></i>Источник: напрямую из Ozon</span>
+    </header>
+
+    <div id="page-notice" class="ad-notice" role="status" aria-live="polite"></div>
+    <section class="ad-toolbar" aria-label="Кампании и фильтры">
+      <label>Магазин<select id="store-select" autocomplete="off"><option value="">Загрузка магазинов…</option></select></label>
+      <label>Статус<select id="state-filter"><option value="">Все статусы</option><option value="active">Активные</option><option value="inactive">Неактивные</option></select></label>
+      <label class="ad-search">Поиск<input id="campaign-search" type="search" placeholder="Название или ID кампании" autocomplete="off"></label>
+    </section>
+
+    <div class="ad-workspace">
+      <section class="ad-panel ad-campaign-panel" aria-labelledby="campaigns-title">
+        <div class="ad-section-heading"><div><h2 id="campaigns-title">Кампании</h2><p id="campaign-meta">Выберите магазин</p></div><span id="campaign-count" class="ad-count"></span></div>
+        <div class="ad-table-wrap"><table><thead><tr><th>Кампания</th><th>Статус</th><th>Тип оплаты</th><th>Стратегия Ozon</th><th>Бюджет в неделю</th></tr></thead><tbody id="campaign-rows"><tr><td colspan="5" class="ad-empty">Загружаем список магазинов…</td></tr></tbody></table></div>
+      </section>
+
+      <section id="campaign-detail" class="ad-panel ad-detail" aria-labelledby="detail-title">
+        <div class="ad-detail-empty"><h2 id="detail-title">Настройки кампании</h2><p>Выберите кампанию слева. Данные загрузятся без изменения настроек в Ozon.</p></div>
+      </section>
+    </div>
+
+    <section class="ad-panel ad-journal" aria-labelledby="journal-title">
+      <div class="ad-section-heading"><div><h2 id="journal-title">Журнал изменений</h2><p>Последние действия и незавершённые запросы по открытым кампаниям.</p></div></div>
+      <div id="journal-list" class="ad-journal-list"><p class="ad-empty">Изменений пока нет.</p></div>
+    </section>
+  </main>
+  <script src="/seller-workspace.js"></script>
+  <script src="/ad-control.js"></script>
+</body>
+</html>
