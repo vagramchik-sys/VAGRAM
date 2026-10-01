@@ -57,6 +57,26 @@ test('lost response is resolved by readback, while rejected or ambiguous writes 
 
 test('ambiguous readback and unsupported currency stop before write', async () => {
   const transport = createOzonPriceWriteTransport({fetchFn: async () => Response.json({cursor: '', total: 2, items: [{offer_id: 'A-1', price: {price: 100, currency_code: 'RUB'}}]})});
-  await assert.rejects(transport.writeOnce(auth, {offerId: 'A-1', expectedPrice: '100', desiredPrice: '102'}), {code: 'INVALID_RESPONSE'});
+  await assert.rejects(transport.writeOnce(auth, {offerId: 'A-1', expectedPrice: '100', desiredPrice: '102'}), {code: 'MUTATION_NOT_SENT', reason: 'INITIAL_READ_FAILED'});
   await assert.rejects(transport.writeOnce(auth, {offerId: 'A-1', expectedPrice: '100', desiredPrice: '100'}), {code: 'INVALID_ARGUMENT'});
+});
+
+test('initial read errors prove no mutation was sent and preserve no write uncertainty', async () => {
+  for (const fail of [async () => { throw Error('network lost'); }, async () => Response.json({}, {status: 401}), async () => Response.json({items: []})]) {
+    const paths = [];
+    const transport = createOzonPriceWriteTransport({fetchFn: async url => { paths.push(new URL(url).pathname); return fail(); }});
+    await assert.rejects(transport.writeOnce(auth, {offerId: 'A-1', expectedPrice: '100', desiredPrice: '102'}), {code: 'MUTATION_NOT_SENT', reason: 'INITIAL_READ_FAILED'});
+    assert.deepEqual(paths, [READ_PATH]);
+  }
+});
+
+test('synchronous consent guard runs after the live read immediately before mutation', async () => {
+  for (const beforeWrite of [() => false, () => { throw Error('expired'); }, async () => true]) {
+    const f = fixture();
+    await assert.rejects(f.transport.writeOnce(auth, {offerId: 'A-1', expectedPrice: '100', desiredPrice: '102', beforeWrite}), {code: 'MUTATION_NOT_SENT', reason: 'PREVIEW_STALE'});
+    assert.deepEqual(f.calls.map(call => call.path), [READ_PATH]);
+  }
+  const f = fixture(); let checked = false;
+  await f.transport.writeOnce(auth, {offerId: 'A-1', expectedPrice: '100', desiredPrice: '102', beforeWrite: () => { assert.equal(f.calls.length, 1); checked = true; return true; }});
+  assert.equal(checked, true); assert.equal(f.calls.filter(call => call.path === WRITE_PATH).length, 1);
 });

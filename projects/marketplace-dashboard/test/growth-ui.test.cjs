@@ -1,7 +1,10 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const ui = require('../dist/growth.js');
+const read = file => fs.readFileSync(path.join(__dirname, '..', 'dist', file), 'utf8');
 
 test('unknown financial values stay distinct from confirmed zero', () => {
   for (const value of [null, undefined, '', NaN, Infinity]) {
@@ -134,4 +137,64 @@ test('editing competitor identity cannot transfer the original competitor financ
   const unchanged = ui.watchCompetitorInput({...original,url:'https://www.ozon.ru/product/name-123/?from=search'},original);
   assert.deepEqual(unchanged.metrics,original.metrics,'editing a name or a URL alias preserves historical metrics');
   assert.notEqual(unchanged.metrics,original.metrics,'the saved payload owns a copy');
+});
+
+test('price apply is impossible without a preview token and carries explicit confirmation', () => {
+  const context = ui.createActionContext('price', {storeId: '11', productId: '22'});
+  assert.equal(context.token, null);
+  assert.throws(() => ui.actionApplyPayload(context, '11111111-1111-4111-8111-111111111111'), /preview token/i);
+  context.token = '11.22.preview-token';
+  const payload = ui.actionApplyPayload(context, '11111111-1111-4111-8111-111111111111');
+  assert.deepEqual(payload, {token: '11.22.preview-token', commandId: '11111111-1111-4111-8111-111111111111', confirmed: true});
+});
+
+test('an unknown apply outcome reuses one command id instead of creating a second write', () => {
+  const context = ui.createActionContext('price', {storeId: '11', productId: '22'});
+  context.token = '11.22.preview-token';
+  const first = ui.actionApplyPayload(context, '11111111-1111-4111-8111-111111111111');
+  const retry = ui.actionApplyPayload(context, '22222222-2222-4222-8222-222222222222');
+  assert.equal(retry.commandId, first.commandId);
+  assert.equal(retry.token, first.token);
+});
+
+test('refresh request is scoped to the selected store and requests only connected performance data', () => {
+  const payload = ui.refreshRequest({storeId: '2946431', productId: '77', from: '2026-09-01', to: '2026-09-30', performanceConnected: true}, '11111111-1111-4111-8111-111111111111', '2026-10-01T09:00:00.000Z');
+  assert.deepEqual(payload, {storeId: '2946431', productId: '77', from: '2026-09-01', to: '2026-09-30', commandId: '11111111-1111-4111-8111-111111111111', timestamp: '2026-10-01T09:00:00.000Z', includePerformance: true});
+  assert.equal(ui.refreshRequest({storeId:'2946431',productId:'77',performanceConnected:false},'id','time').includePerformance,false);
+  assert.equal(ui.refreshRequest({storeId:'2946431',productId:'77'},'id','time').includePerformance,false);
+  assert.equal(ui.refreshRequest({}, 'id', 'time').storeId, '', 'caller must block all-store refresh');
+});
+
+test('refresh outcomes report queue truth and polling stops only on terminal jobs', () => {
+  assert.match(ui.refreshSummary({queued:false,state:'not_queued',message:'Не поставлено',outcomes:{market:{status:'not_queued'}}}),/Не поставлено/);
+  assert.match(ui.refreshSummary({queued:false,state:'partial',errorCode:'JOB_CONFLICT',outcomes:{market:{status:'done'},costs:{status:'unknown'}}}),/JOB_CONFLICT/);
+  assert.equal(ui.refreshJobsTerminal({jobs:{market:{status:'done'},'costs-prices':{status:'partial'}}},['market','costs-prices']),true);
+  assert.equal(ui.refreshJobsTerminal({jobs:{market:{status:'done'},'costs-prices':{status:'running'}}},['market','costs-prices']),false);
+  assert.equal(ui.refreshJobsTerminal({jobs:{market:{status:'done'}}},['market','costs-prices']),false);
+});
+
+test('action result distinguishes an applied write from reconciliation without attribution', () => {
+  assert.match(ui.actionOutcomeMessage({status:'applied',applied:true}),/Изменение применено/);
+  assert.match(ui.actionOutcomeMessage({status:'applied',applied:false,reconciled:true,attributionUnknown:true}),/автор изменения не подтверждён/);
+  assert.doesNotMatch(ui.actionOutcomeMessage({status:'applied',applied:false}),/Изменение применено/);
+});
+
+test('action dialog hides inactive field groups at CSS level', () => {
+  const css = read('growth.css');
+  assert.match(css,/\.growth-action-dialog \[hidden\]\{display:none!important\}/);
+});
+
+test('manual price preparation and ad budget obey server capabilities', () => {
+  const incomplete = {advisory:{suggestedPrice:null}};
+  assert.deepEqual(ui.commandAvailability(incomplete,{priceWrite:true,budgetWrite:false}),{price:true,budget:false,suggestedPrice:null,manualPrice:true});
+  assert.deepEqual(ui.commandAvailability({advisory:{suggestedPrice:4200}},{priceWrite:true,budgetWrite:true}),{price:true,budget:true,suggestedPrice:4200,manualPrice:false});
+  assert.equal(ui.commandAvailability(incomplete,{priceWrite:false,budgetWrite:false}).price,false);
+});
+
+test('refresh status explains every source in Russian including stages and errors', () => {
+  const text = ui.refreshStatusText({state:'unknown',jobs:{market:{status:'done',stage:'Каталог'},'costs-prices':{status:'error',stage:'Цены',errorCodes:['SOURCE_FAILED']},'ozon-performance':null}});
+  assert.match(text,/Состояние обновления неизвестно/);
+  assert.match(text,/Каталог и остатки: завершено · Каталог/);
+  assert.match(text,/Себестоимость и цены: ошибка · Цены · ошибки: SOURCE_FAILED/);
+  assert.doesNotMatch(text,/undefined|null/);
 });

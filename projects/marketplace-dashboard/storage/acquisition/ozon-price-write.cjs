@@ -10,6 +10,7 @@ class OzonPriceWriteError extends Error {
   constructor(code, message) { super(message); this.name = 'OzonPriceWriteError'; this.code = code; }
 }
 const fail = (code, message) => { throw new OzonPriceWriteError(code, message); };
+const notSent = reason => { const error = new OzonPriceWriteError('MUTATION_NOT_SENT', 'Ozon price mutation was not sent'); error.reason = reason; throw error; };
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 function money(value) {
   const raw = typeof value === 'number' && Number.isFinite(value) ? String(value) : value;
@@ -20,8 +21,15 @@ function money(value) {
 }
 function createOzonPriceWriteTransport({fetchFn = globalThis.fetch, timeoutMs = 30000, host = HOST} = {}) {
   if (typeof fetchFn !== 'function' || !Number.isSafeInteger(timeoutMs) || timeoutMs < 1000 || timeoutMs > 120000 || host !== HOST) throw new TypeError('Valid Ozon price transport options are required');
-  async function request(auth, path, payload) {
+  async function request(auth, path, payload, beforeWrite) {
     if (!object(auth) || !/^[0-9]+$/u.test(String(auth.clientId ?? '')) || typeof auth.apiKey !== 'string' || !auth.apiKey || ![READ_PATH, WRITE_PATH].includes(path)) fail('INVALID_ARGUMENT', 'Ozon price request is invalid');
+    // Synchronous guard: there is no await between consent expiry validation
+    // and the mutation dispatch. An async/throwing guard fails closed.
+    if (path === WRITE_PATH && beforeWrite !== undefined) {
+      let allowed = false;
+      try { allowed = typeof beforeWrite === 'function' && beforeWrite() === true; } catch {}
+      if (!allowed) notSent('PREVIEW_STALE');
+    }
     let response;
     try {
       response = await fetchFn(`${host}${path}`, {method: 'POST', redirect: 'error', headers: {'Content-Type': 'application/json', 'Client-Id': String(auth.clientId), 'Api-Key': auth.apiKey}, body: JSON.stringify(payload), signal: AbortSignal.timeout(timeoutMs)});
@@ -44,14 +52,17 @@ function createOzonPriceWriteTransport({fetchFn = globalThis.fetch, timeoutMs = 
     if (!price || currency !== 'RUB') fail('INVALID_RESPONSE', 'Ozon returned an unsupported price');
     return {offerId, price, currency};
   }
-  async function writeOnce(auth, {offerId, expectedPrice, desiredPrice} = {}) {
+  async function writeOnce(auth, {offerId, expectedPrice, desiredPrice, beforeWrite} = {}) {
     if (typeof offerId !== 'string' || !offerId || offerId.length > 200 || !money(expectedPrice) || !money(desiredPrice) || money(expectedPrice) === money(desiredPrice)) fail('INVALID_ARGUMENT', 'Price change is invalid');
-    const before = await read(auth, offerId);
+    let before;
+    try { before = await read(auth, offerId); }
+    catch { notSent('INITIAL_READ_FAILED'); }
     if (before.price === money(desiredPrice)) return {status: 'VERIFIED', applied: false, offerId, price: before.price};
     if (before.price !== money(expectedPrice)) return {status: 'HOLD', reason: 'PRICE_CHANGED', offerId, price: before.price};
     let response;
-    try { response = await request(auth, WRITE_PATH, {prices: [{offer_id: offerId, price: money(desiredPrice), currency_code: 'RUB'}]}); }
+    try { response = await request(auth, WRITE_PATH, {prices: [{offer_id: offerId, price: money(desiredPrice), currency_code: 'RUB'}]}, beforeWrite); }
     catch (error) {
+      if (error instanceof OzonPriceWriteError && error.code === 'MUTATION_NOT_SENT') throw error;
       // A timeout, 5xx, or unreadable response may have applied the write.
       // Read back once, then leave uncertainty for the durable action record.
       // A caller must never blindly retry this non-idempotent command.

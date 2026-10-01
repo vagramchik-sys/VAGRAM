@@ -17,9 +17,9 @@
       <div>
         <p class="growth-eyebrow">ЦЕНА × РЕКЛАМА × ПРОДАЖИ</p>
         <h1>Центр роста</h1>
-        <p>Решения по цене и рекламе на основе доступных продаж, экономики и ваших наблюдений за аналогами. Изменения на Ozon не отправляются.</p>
+        <p>Решения по цене и рекламе на основе доступных продаж, экономики и ваших наблюдений за аналогами. Изменения цены и бюджета применяются только после вашего подтверждения.</p>
       </div>
-      <button id="growth-refresh" class="growth-button primary" type="button">Обновить данные</button>
+      <div class="growth-heading-buttons"><button id="growth-import" class="growth-button secondary" type="button">Импортировать конкурентов</button><button id="growth-refresh" class="growth-button primary" type="button">Обновить из Ozon</button></div>
     </header>
 
     <section class="growth-warning" aria-label="Ограничения рыночных данных">
@@ -96,6 +96,19 @@
     </form>
   </dialog>
 
+  <dialog id="growth-action-dialog" class="evidence-dialog growth-action-dialog" aria-labelledby="growth-action-title">
+    <form id="growth-action-form" method="dialog" autocomplete="off">
+      <header><div><p class="growth-eyebrow">ИЗМЕНЕНИЕ В OZON</p><h2 id="growth-action-title">Проверить изменение</h2><p id="growth-action-product"></p></div><button id="growth-action-close" class="icon-button" type="button" aria-label="Закрыть">×</button></header>
+      <p id="growth-action-note" class="evidence-note"></p>
+      <div id="growth-price-fields" class="evidence-fields"><label>Новая цена продавца, ₽<input name="desiredPrice" type="number" min="0.01" step="0.01"></label></div>
+      <div id="growth-ad-fields" class="evidence-fields" hidden><label class="wide">Кампания<select name="campaignId"></select></label><label>Новый бюджет, ₽ в неделю<input name="weeklyBudgetRub" type="number" min="1" step="1"></label></div>
+      <label class="evidence-confirm"><input name="exclusiveControl" type="checkbox" required> Другие сервисы не управляют этой ценой или кампанией</label>
+      <section id="growth-action-preview" class="growth-action-preview" hidden></section>
+      <div id="growth-action-error" class="evidence-error" role="alert"></div>
+      <footer><button id="growth-action-reconcile" class="growth-button secondary" type="button" hidden>Сверить с Ozon</button><button id="growth-action-cancel" class="growth-button secondary" type="button">Отмена</button><button id="growth-action-preview-button" class="growth-button primary" type="submit">Проверить изменение</button><button id="growth-action-apply" class="growth-button danger" type="button" hidden>Подтвердить и применить</button></footer>
+    </form>
+  </dialog>
+
   <template id="competitor-template">
     <fieldset class="competitor-card"><legend>Аналог</legend><button class="competitor-remove" type="button" aria-label="Удалить аналог">Удалить</button><label>Название<input name="competitorName" required maxlength="200"></label><label class="wide">Ссылка Ozon<input name="competitorUrl" type="url" required placeholder="https://www.ozon.ru/product/..."></label><label>Цена покупателя, ₽<input name="competitorPrice" type="number" min="0.01" step="0.01" required></label><label>Единиц в комплекте<input name="competitorUnits" type="number" min="1" step="1" value="1" required></label><label>Позиция, если видна<input name="competitorPosition" type="number" min="1" step="1"></label></fieldset>
   </template>
@@ -104,6 +117,7 @@
   </template>
 
   <script src="/growth.js"></script>
+  <script src="/growth-import.js"></script>
   <script src="/seller-workspace.js"></script>
 </body>
 </html>

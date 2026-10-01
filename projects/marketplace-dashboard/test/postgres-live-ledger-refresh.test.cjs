@@ -5,7 +5,7 @@ const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const codecs = require('../storage/postgres-live-codecs.cjs');
 const {encodeJson} = require('../storage/postgres-json-repository.cjs');
-const {buildLedger} = require('../ledger.cjs');
+const {buildLedger, LEDGER_BUILDER_VERSION} = require('../ledger.cjs');
 const {summarize} = require('../summary.cjs');
 const {createPostgresLiveLedgerRefresh} = require('../storage/acquisition/postgres-live-ledger-refresh.cjs');
 const {createPostgresLiveRepository} = require('../storage/postgres-live-repository.cjs');
@@ -56,6 +56,8 @@ test('live ledger refresh streams native operation rows, replays, and repairs A-
   assert.equal(first.replayed,false); assert.equal(sources.rowReads,2); assert.equal(first.source.sourceKind,'native-sql-rows');
   assert.deepEqual((await sources.record('ledger-1.json')).value.data,buildLedger(raw,[]));
   const replay = await refresh.ensure({storeId:'1'}); assert.equal(replay.replayed,true); assert.equal(replay.revision,first.revision);
+  const stale=(await sources.record('ledger-1.json')).value;delete stale.source.builderVersion;sources.set('ledger-1.json',stale);
+  const migrated=await refresh.ensure({storeId:'1'});assert.equal(migrated.replayed,false);assert.equal((await sources.record('ledger-1.json')).value.source.builderVersion,LEDGER_BUILDER_VERSION);
   sources.set('insights-1.json',{types:[{id:41,name:'PayPerClick',description:'Ads'}],orders:{daily:[],skuDaily:[],skuCoverage:[]},errors:[]}); const second=await refresh.ensure({storeId:'1'}); assert.notEqual(second.revision,first.revision);
   sources.set('insights-1.json',{types:[],orders:{daily:[],skuDaily:[],skuCoverage:[]},errors:[]}); const third=await refresh.ensure({storeId:'1'}); assert.notEqual(third.revision,first.revision); assert.deepEqual((await sources.record('ledger-1.json')).value.data,buildLedger(raw,[]));
 });

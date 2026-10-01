@@ -1,6 +1,7 @@
 'use strict';
 const {isOnDemand}=require('./acquisition-policy.cjs');
-const UNKNOWN_RETRY_MS=60000,SETTLE_KINDS=new Set(['insights-today','insights-full']);
+const {READONLY_SETTLE_KINDS}=require('./local-readonly-recovery.cjs');
+const UNKNOWN_RETRY_MS=60000,SETTLE_KINDS=new Set(READONLY_SETTLE_KINDS);
 class SchedulerRunnerError extends Error{constructor(code,message){super(message);this.name='SchedulerRunnerError';this.code=code;}}
 function createSchedulerRunner({scheduler,dispatchers,runnerId,uuid,now=()=>new Date(),intervalMs=30000,onError=()=>{},settleUnknown=null,setIntervalFn=setInterval,clearIntervalFn=clearInterval}={}){
  if(!scheduler?.load||!scheduler?.transition||!dispatchers||typeof runnerId!=='string'||typeof uuid!=='function'||!Number.isSafeInteger(intervalMs)||intervalMs<1000||settleUnknown!==null&&typeof settleUnknown!=='function')throw new TypeError('Complete scheduler runner dependencies are required');

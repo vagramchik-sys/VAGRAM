@@ -20,8 +20,24 @@ test('only stopped read-only Ozon acquisition can settle, using original command
   const attempt=job();
   assert.deepEqual(await recover(attempt),{committed:false,revision:'488'});
   assert.deepEqual(calls,[{storeId:'1',domain:'insights',commandId:attempt.attemptId,producerStopped:true}]);
-  for(const kind of ['market','ozon-performance','costs-prices','wb-orders','derived-capture']) assert.equal(await recover({...attempt,kind}),null);
+  for(const kind of ['ozon-performance','costs-prices','wb-orders','derived-capture']) assert.equal(await recover({...attempt,kind}),null);
   assert.equal(calls.length,1);
+});
+
+test('market uses the live market receipt only after the original PID is absent',async()=>{
+  const calls=[],attempt={...job(),kind:'market'};
+  const recover=createLocalReadonlyRecovery({scheduler:{attemptOwner:async()=> 'runtime-123'},repository:{settleStoppedCommand:async input=>{calls.push(input);return{committed:false,revision:'488'};}},runnerId:'runtime-456',probe:gone});
+  assert.deepEqual(await recover(attempt),{committed:false,revision:'488'});
+  assert.deepEqual(calls,[{storeId:'1',domain:'market',commandId:attempt.attemptId,producerStopped:true}]);
+});
+
+test('Performance recovery uses its own publication locks and holds a live or unknown producer',async()=>{
+  const calls=[],attempt={...job(),kind:'ozon-performance'};let owner='runtime-123',absent=false;
+  const recover=createLocalReadonlyRecovery({scheduler:{attemptOwner:async()=>owner},repository:{settleStoppedCommand:async()=>assert.fail('wrong repository')},performanceRepository:{settleStoppedRefresh:async input=>{calls.push(input);return{committed:false,revision:'488'};}},runnerId:'runtime-456',probe:()=>{if(absent)gone();}});
+  assert.equal(await recover(attempt),null);owner=null;absent=true;assert.equal(await recover(attempt),null);
+  owner='runtime-123';assert.deepEqual(await recover(attempt),{committed:false,revision:'488'});
+  assert.deepEqual(calls,[{storeId:'1',commandId:attempt.attemptId,expectedRevision:'488',producerStopped:true}]);
+  owner='runtime-456';assert.equal(await recover(attempt),null);await recover(attempt,{finishedHere:true});assert.equal(calls.length,2);
 });
 
 test('live collector before its SQL publication cannot be resolved as absent',async()=>{

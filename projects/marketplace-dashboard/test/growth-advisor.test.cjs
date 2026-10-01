@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const {adviseProduct, calculateCommercialPlan} = require('../optimizer/growth-advisor.cjs');
+const {adviseProduct, calculateCommercialPlan, adviseGrowthDecision} = require('../optimizer/growth-advisor.cjs');
 const NOW = '2026-10-01T12:00:00Z';
 function item() {
   return {product: {id: '1', storeId: '2'}, price: {sellerPrice: 1000, currency: 'RUB', observedAt: NOW},
@@ -270,4 +270,99 @@ test('negative planned contribution remains visible without invalid volume promi
   assert.equal(scenario(result, 'price_up').metrics.length, 2);
   assert.equal(scenario(result, 'price_down').metrics.length, 2);
   assert.match(scenario(result, 'price_up').summary, /не определён/u);
+});
+
+const decision = (value = item(), options = {}) => adviseGrowthDecision(value, {now: NOW, terms: terms(), marketEvidence: market(), ...options});
+test('unified decision uses configured reserves once and does not substitute actual ads or commission', () => {
+  const value = item(), before = structuredClone(value), result = decision(value);
+  assert.equal(result.direction, 'price_up'); assert.equal(result.status, 'review');
+  assert.equal(result.calculation.contributionPerUnit, 150); assert.equal(result.suggestedPrice, 1020);
+  assert.equal(scenario(result, 'price_up').metrics[1].value, 162);
+  assert.deepEqual(value, before);
+  value.analysisBasis.commission = 999999; value.analysisBasis.advertising = 999999; value.advertising.spend = 999999;
+  assert.deepEqual(decision(value), result);
+  assert.equal(decision(value, {terms: {...terms(), commissionPct: 10, advertisingPct: 5}}).calculation.contributionPerUnit, 400);
+  assert.equal(result.coverage.automaticChanges, false);
+});
+
+test('above-market buyer price proposes conditional cut with correct volume threshold, never guaranteed growth', () => {
+  const value = item(), evidence = market(); evidence.ownUnitCount = 1;
+  value.optimizer.blockers = [];
+  const result = decision(value, {marketEvidence: evidence});
+  assert.equal(result.status, 'test_candidate'); assert.equal(result.direction, 'price_down'); assert.equal(result.suggestedPrice, 980);
+  near(scenario(result, 'price_down').metrics[2].value, (150 / 138 - 1) * 100);
+  assert.match(result.nextStep, /перенос изменения цены продавца/u);
+  assert.equal(result.coverage.market.ownPricePerUnit, 100); assert.equal(result.coverage.market.competitorMaxPricePerUnit, 60);
+  evidence.ownBuyerPrice = 60;
+  assert.equal(decision(value, {marketEvidence: evidence}).suggestedPrice, null);
+});
+
+test('partial plans preserve useful known arithmetic without inventing final profit or expansion', () => {
+  const value = item(); value.analysisBasis.financeComplete = false;
+  let result = decision(value);
+  assert.equal(result.status, 'data_needed'); assert.equal(result.direction, 'hold');
+  assert.equal(result.calculation.remainderBeforeOtherCosts, 200); assert.equal(result.calculation.contributionPerUnit, null);
+  assert.match(result.summary, /не является прибылью/u); assert.match(result.nextStep, /логистику, эквайринг/u);
+  for (const cost of [600, 700]) {
+    value.cost.unitCost = cost; result = decision(value);
+    assert.equal(result.status, 'hold'); assert.equal(result.priority, 100); assert.equal(result.suggestedPrice, null);
+    assert.equal(result.calculation.remainderBeforeOtherCosts, 600 - cost);
+    assert.match(result.summary, /до прочих расходов/u); assert.match(result.summary, /Итоговый вклад неизвестен/u);
+  }
+});
+
+test('complete loss, insufficient stock, stale price and unavailable market preserve fences', () => {
+  const value = item(); value.optimizer.blockers = [];
+  value.cost.unitCost = 700; assert.equal(decision(value).status, 'hold'); assert.equal(decision(value).suggestedPrice, null);
+  value.cost.unitCost = 400; value.stock.quantity = 1; assert.equal(decision(value).status, 'hold');
+  value.stock.quantity = 500; value.stock.days = null; assert.equal(decision(value).status, 'review');
+  value.stock.days = 30; value.price.observedAt = '2026-09-29T12:00:00Z'; assert.equal(decision(value).status, 'data_needed');
+  value.price.observedAt = NOW;
+  const missingMarket = decision(value, {marketEvidence: null});
+  assert.equal(missingMarket.direction, 'hold'); assert.equal(missingMarket.suggestedPrice, null);
+  for (const objective of ['sales', 'position']) assert.equal(decision(value, {objective}).status, 'review');
+});
+
+test('conditional cut that eliminates positive reserve contribution is held', () => {
+  const value = item(), evidence = market(); evidence.ownUnitCount = 1; value.cost.unitCost = 545;
+  const result = decision(value, {marketEvidence: evidence});
+  assert.equal(result.calculation.contributionPerUnit, 5); assert.equal(result.direction, 'hold'); assert.equal(result.status, 'hold'); assert.equal(result.suggestedPrice, null);
+});
+
+test('rounded executable price and volume arithmetic describe the same cents', () => {
+  const value = item(); value.price.sellerPrice = 1000.01;
+  const result = decision(value), up = scenario(result, 'price_up');
+  assert.equal(result.suggestedPrice, 1020.01); assert.equal(up.metrics[0].value, result.suggestedPrice);
+  near(up.metrics[1].value, result.suggestedPrice * .6 - 450);
+  near(up.metrics[2].value, (1 - result.calculation.contributionPerUnit / up.metrics[1].value) * 100);
+});
+
+function withAdPilot() {
+  const value = item(); value.optimizer.blockers = [];
+  value.advertising = {connected: true, complete: true, model: 'CPC', skuLinkStatus: 'matched', attributionModel: 'ozon_performance', orderBasis: 'attributed_order', scope: 'seller_sku',
+    observedAt: NOW, periodFrom: '2026-09-24', periodTo: '2026-09-30', impressions: 1000, clicks: 40, orders: 4,
+    previousPeriod: {complete: true, observedAt: NOW, scope: 'seller_sku', attributionModel: 'ozon_performance', periodFrom: '2026-09-17', periodTo: '2026-09-23', impressions: 2000, clicks: 80, orders: 8},
+    pilotBasis: {confirmed: true, observedAt: NOW, days: 7, maxAdditionalSpendRub: 1000, stopLossRub: 500, incrementalSalesMeasurement: true}};
+  return value;
+}
+const within = () => ({...market(), ownBuyerPrice: 120});
+test('ad pilot requires comparable declining traffic, observed conversion and explicit bounded pilot evidence', () => {
+  const value = withAdPilot(), result = decision(value, {marketEvidence: within()});
+  assert.equal(result.direction, 'ad_pilot'); assert.equal(result.status, 'test_candidate'); assert.equal(result.suggestedPrice, null);
+  assert.equal(result.coverage.trafficDeclined, true); assert.equal(result.calculation.contributionPerUnit, 150);
+  assert.match(result.summary, /не гарантирует/u); assert.equal(scenario(result, 'ad_up').status, 'conditional');
+  assert.deepEqual(scenario(result, 'ad_up').metrics.map(row => row.value), [1000, 7, 500]);
+  for (const mutate of [v => { delete v.advertising.pilotBasis; }, v => { delete v.advertising.previousPeriod; }, v => { v.advertising.orders = 0; },
+    v => { v.advertising.observedAt = '2026-09-01T12:00:00Z'; }, v => { v.advertising.previousPeriod.periodTo = '2026-09-30'; },
+    v => { v.advertising.previousPeriod.clicks = 20; }, v => { v.advertising.clicks = 2000; }, v => { v.advertising.pilotBasis.incrementalSalesMeasurement = false; }]) {
+    const changed = withAdPilot(); mutate(changed);
+    assert.equal(decision(changed, {marketEvidence: within()}).direction, 'hold');
+  }
+});
+
+test('existing aggregate data cannot invent a budget or call one traffic sample low', () => {
+  const value = item(), result = decision(value, {marketEvidence: within()});
+  assert.equal(result.direction, 'hold'); assert.equal(result.coverage.trafficDeclined, false);
+  for (const code of ['AD_FUNNEL_UNVERIFIED', 'TRAFFIC_BASELINE_NEEDED', 'AD_PILOT_BASIS_NEEDED']) assert.ok(result.missingEvidence.some(row => row.code === code));
+  assert.equal(scenario(result, 'ad_up').status, 'unavailable');
 });

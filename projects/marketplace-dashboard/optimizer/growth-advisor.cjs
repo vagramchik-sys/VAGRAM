@@ -234,4 +234,103 @@ function calculateCommercialPlan(rawItem = {}, rawTerms = {}, rawOptions = {}) {
     scenarios, assumptions, missing};
 }
 
-module.exports = {adviseProduct, calculateCommercialPlan};
+// The growth decision uses the configured planning reserves, while preserving
+// actual finance in the input. It never authorizes a marketplace command.
+function adviseGrowthDecision(rawItem = {}, rawOptions = {}) {
+  const item = object(rawItem), options = object(rawOptions), at = instant(options.now);
+  const objective = options.objective || 'profit_volume', plan = calculateCommercialPlan(item, options.terms, {now: options.now});
+  const market = marketObservation(options.marketEvidence, at), stock = object(item.stock), optimizer = object(item.optimizer);
+  const missingEvidence = [...plan.missing], signals = [], blockers = Array.isArray(optimizer.blockers) ? [...optimizer.blockers] : [];
+  const need = (code, text) => { if (!missingEvidence.some(row => row.code === code)) missingEvidence.push({code, text}); };
+  const stockKnown = Number.isSafeInteger(stock.quantity) && stock.quantity >= 0 && fresh(stock.observedAt, at);
+  const stockCoverKnown = stockKnown && nonnegative(stock.days), stockLow = stockKnown && (stock.quantity < 5 || stockCoverKnown && stock.days < 7);
+  const remainder = finite(plan.retainedRevenue) && finite(plan.unitCost) ? plan.retainedRevenue - plan.unitCost : null;
+  let status = 'data_needed', priority = 80, title = 'Уточнить данные для плана', direction = 'hold', primaryScenarioId = 'hold', suggestedPrice = null;
+  let summary = 'Для решения нужны подтверждённые исходные данные.', nextStep = 'Обновите отмеченные источники и повторите расчёт.';
+  if (!Number.isFinite(at) || !['profit_volume', 'sales', 'position'].includes(objective)) need('INVALID_SCENARIO_SETTINGS', 'Выберите известную цель и корректное время расчёта.');
+  if (!stockKnown) need('STOCK_UNVERIFIED', 'Обновите остатки товара: нужна подтверждённая величина не старше 24 часов.');
+  if (!stockCoverKnown) need('STOCK_COVER_UNKNOWN', 'Подтвердите запас в днях по текущему темпу продаж и дату следующей поставки.');
+  if (!market.available) need('MARKET_OBSERVATION_NEEDED', 'Обновите цены покупателей у своего товара и сопоставимых аналогов за последние 24 часа: одинаковые упаковка, регион, запрос и условия доставки.');
+  if (blockers.length) signals.push({kind: 'warning', text: 'Ограничения основного оптимизатора сохраняются. Плановый сценарий не снимает их и не разрешает запись на площадку.'});
+  if (plan.status !== 'unavailable') signals.push({kind: 'neutral', text: `План резервирует ${plan.commissionPct}% цены продавца на комиссию и ${plan.advertisingPct}% на рекламу. Фактические комиссия и реклама повторно не вычитаются.`});
+  const relation = market.available ? market.ownPricePerUnit < market.competitorMinPricePerUnit ? 'below' : market.ownPricePerUnit > market.competitorMaxPricePerUnit ? 'above' : 'within' : null;
+  if (relation) signals.push({kind: 'neutral', text: `Цена покупателя за единицу ${relation === 'below' ? 'ниже' : relation === 'above' ? 'выше' : 'внутри'} диапазона выбранных аналогов. Это наблюдение части рынка; цена продавца напрямую с ним не сравнивается.`});
+  const ads = object(item.advertising), previous = object(ads.previousPeriod), pilot = object(ads.pilotBasis);
+  const period = row => { const from = day(row.periodFrom), to = day(row.periodTo); return Number.isFinite(from) && Number.isFinite(to) && from <= to && to + DAY - 3 * 3600000 <= at ? {from, to, duration: to - from} : null; };
+  const counts = row => Number.isSafeInteger(row.impressions) && row.impressions >= 0 && Number.isSafeInteger(row.clicks) && row.clicks >= 0 && row.clicks <= row.impressions && Number.isSafeInteger(row.orders) && row.orders >= 0 && row.orders <= row.clicks;
+  const currentPeriod = period(ads), priorPeriod = period(previous);
+  const funnelKnown = ads.connected === true && ads.complete === true && ads.model === 'CPC' && ads.skuLinkStatus === 'matched' && ads.attributionModel === 'ozon_performance' && ads.orderBasis === 'attributed_order' && ['seller_sku', 'campaign_sku'].includes(ads.scope) && fresh(ads.observedAt, at) && counts(ads) && !!currentPeriod;
+  const comparableTraffic = funnelKnown && previous.complete === true && fresh(previous.observedAt, at) && counts(previous) && !!priorPeriod && priorPeriod.duration === currentPeriod.duration && priorPeriod.to < currentPeriod.from && previous.scope === ads.scope && previous.attributionModel === ads.attributionModel && (ads.scope === 'seller_sku' || typeof ads.campaign?.id === 'string' && previous.campaignId === ads.campaign.id);
+  const trafficDeclined = comparableTraffic && ads.clicks < previous.clicks;
+  // Optional pilotBasis is explicit reviewed evidence, never inferred from spend
+  // or an arbitrary percent: confirmed, observedAt, days, maxAdditionalSpendRub,
+  // stopLossRub, and incrementalSalesMeasurement.
+  const pilotKnown = pilot.confirmed === true && fresh(pilot.observedAt, at) && Number.isSafeInteger(pilot.days) && pilot.days > 0 && pilot.days <= 90 && positive(pilot.maxAdditionalSpendRub) && positive(pilot.stopLossRub) && pilot.stopLossRub <= pilot.maxAdditionalSpendRub && pilot.incrementalSalesMeasurement === true;
+  if (funnelKnown) signals.push({kind: 'neutral', text: `Рекламная воронка: ${ads.impressions} показов → ${ads.clicks} кликов → ${ads.orders} атрибутированных заказов. Атрибуция не доказывает дополнительные продажи.`});
+  if (plan.status === 'partial') {
+    title = remainder <= 0 ? 'Не расширять: резервов уже недостаточно' : 'Уточнить прочие расходы';
+    priority = remainder <= 0 ? 100 : 80;
+    summary = remainder <= 0 ? 'После плановых резервов и себестоимости остаток неположителен ещё до прочих расходов. Итоговый вклад неизвестен; неизвестные компенсации не считаются прибылью.' : 'Положительный остаток после резервов и себестоимости ещё не является прибылью: прочие расходы неизвестны.';
+    nextStep = 'Обновите финансы за завершённый период: логистику, эквайринг, услуги, компенсации и реализованные единицы. До проверки полного вклада не расширяйте рекламу.';
+    if (remainder <= 0) status = 'hold';
+  } else if (plan.status === 'complete') {
+    status = 'review'; priority = 40;
+    title = 'Проверить один управляемый тест'; summary = 'Полный плановый вклад рассчитан по заданным резервам и прочим расходам. Реакция спроса неизвестна.';
+    nextStep = 'Выберите один тест, срок, критерий по суммарному вкладу и условия остановки; затем подтвердите конкретное изменение.';
+    if (!positive(plan.contributionPerUnit)) {
+      status = 'hold'; priority = 100; title = 'Сначала восстановить положительный вклад';
+      summary = 'При текущей цене полный плановый вклад неположителен. Рост объёма по этой модели не устраняет проблему.';
+      nextStep = 'Проверьте себестоимость и прочие расходы, затем рассмотрите цену с положительным вкладом. Не расширяйте рекламный бюджет до проверки.';
+    } else if (stockLow) {
+      status = 'hold'; priority = 90; title = 'Сначала пополнить запас';
+      summary = 'Плановый вклад положителен, но остаток или запас в днях слишком мал для расширения спроса.';
+      nextStep = 'Подтвердите поставку и достаточный запас перед ценовым или рекламным тестом.';
+    } else if (relation === 'above' || relation === 'below') {
+      direction = relation === 'above' ? 'price_down' : 'price_up'; primaryScenarioId = direction;
+      const scenario = plan.scenarios.find(row => row.id === direction);
+      const target = scenario?.metrics[0] ? Math.round(scenario.metrics[0].value * 100) / 100 : null;
+      const contribution = positive(target) ? target * (1 - (plan.commissionPct + plan.advertisingPct) / 100) - plan.unitCost - plan.otherCostsPerUnit : null;
+      const changesPrice = direction === 'price_up' ? target > item.price?.sellerPrice : target < item.price?.sellerPrice;
+      if (scenario?.status === 'conditional' && positive(target) && positive(contribution) && changesPrice && scenario.metrics.length >= 3) {
+        suggestedPrice = target;
+        scenario.metrics[0].value = target;
+        scenario.metrics[1].value = contribution;
+        scenario.metrics[2].value = (direction === 'price_up' ? 1 - plan.contributionPerUnit / contribution : plan.contributionPerUnit / contribution - 1) * 100;
+        title = relation === 'above' ? 'Рассмотреть небольшой тест снижения цены' : 'Рассмотреть небольшой тест повышения цены';
+        summary = relation === 'above' ? 'Цена покупателя выше выбранных аналогов. Условное снижение цены продавца показывает, какой рост реализованного объёма нужен для сохранения суммарного вклада.' : 'Цена покупателя ниже выбранных аналогов. Условное повышение цены продавца показывает допустимое снижение объёма при сохранении суммарного вклада.';
+        nextStep = 'Проверьте перенос изменения цены продавца в цену покупателя, скидки и доставку. Согласуйте один тест и сравните суммарный вклад за сопоставимые периоды.';
+        if (stockCoverKnown && !blockers.length) status = 'test_candidate';
+      } else {
+        direction = 'hold'; primaryScenarioId = 'hold'; status = 'hold'; title = 'Снижение цены не подтверждено вкладом';
+        summary = 'Условный шаг не сохраняет положительный вклад. Порог роста объёма для сохранения прибыли не определён.';
+      }
+    } else if (relation === 'within') {
+      title = 'Уточнить основание для рекламного пилота';
+      summary = 'Цена находится в диапазоне выбранных аналогов, плановый вклад положителен. Это ещё не доказывает окупаемость дополнительного бюджета.';
+      if (!funnelKnown) need('AD_FUNNEL_UNVERIFIED', 'Обновите Performance API за завершённый период: показы, клики, заказы и точную связь рекламы с этим SKU.');
+      if (!comparableTraffic) need('TRAFFIC_BASELINE_NEEDED', 'Добавьте предыдущий сопоставимый рекламный период той же длительности: без базы нельзя подтвердить снижение трафика.');
+      if (!funnelKnown || ads.clicks === 0 || ads.orders === 0) need('CONVERSION_EVIDENCE_NEEDED', 'Подтвердите конверсию на ненулевых кликах и заказах; нулевая выборка не обосновывает расширение бюджета.');
+      if (!pilotKnown) need('AD_PILOT_BASIS_NEEDED', 'Согласуйте сумму дополнительного бюджета, срок, предел потерь и способ измерения дополнительных реализованных продаж относительно базы.');
+      if (trafficDeclined && ads.clicks > 0 && ads.orders > 0 && pilotKnown) {
+        direction = 'ad_pilot'; primaryScenarioId = 'ad_up'; title = 'Рассмотреть ограниченный рекламный пилот';
+        summary = 'Трафик ниже сопоставимого периода, конверсия наблюдается, ограничения пилота заданы. Проверяйте дополнительные продажи и суммарный вклад: рост бюджета сам по себе не гарантирует результат.';
+        const index = plan.scenarios.findIndex(row => row.id === 'ad_up');
+        plan.scenarios[index] = {id: 'ad_up', label: 'Ограниченный рекламный пилот', status: 'conditional', summary: 'Показаны согласованные ограничения пилота, а не прогноз расхода, продаж или прибыли.',
+          metrics: [metric('Лимит дополнительного расхода за пилот', pilot.maxAdditionalSpendRub, 'RUB'), metric('Срок пилота', pilot.days, 'days'), metric('Предел потерь для остановки', pilot.stopLossRub, 'RUB')],
+          assumptions: ['Лимиты заданы явно; рекламный резерв не является разрешением потратить эту сумму.', 'Атрибутированные заказы не равны дополнительным реализованным продажам.', 'Бюджет кампании влияет на все её товары; нужна отдельная проверка и подтверждение точного изменения.']};
+        if (stockCoverKnown && !blockers.length) status = 'test_candidate';
+      }
+      nextStep = 'Меняйте только один параметр кампании после отдельного подтверждения; учитывайте все товары кампании и проверяйте дополнительные продажи, а не только атрибутированные заказы.';
+    } else {
+      title = 'Обновить сравнение с рынком'; nextStep = 'Зафиксируйте сопоставимые цены покупателей и условия доставки. До этого нельзя выбрать направление ценового теста.';
+    }
+  }
+  if (!Number.isFinite(at) || !['profit_volume', 'sales', 'position'].includes(objective)) { status = 'data_needed'; direction = 'hold'; primaryScenarioId = 'hold'; suggestedPrice = null; }
+  if (objective === 'sales') { need('SALES_EFFECT_UNVERIFIED', 'Задайте критерий роста реализованных единиц и сравнимую базу; финансовый порог не прогнозирует продажи.'); if (status === 'test_candidate') status = 'review'; }
+  if (objective === 'position') { need('POSITION_EFFECT_UNVERIFIED', 'Задайте целевую позицию и ряд наблюдений одного запроса/региона; финансовый порог не прогнозирует позицию.'); if (status === 'test_candidate') status = 'review'; }
+  return {status, priority, title, summary, nextStep, direction, primaryScenarioId, suggestedPrice, signals, missingEvidence, scenarios: plan.scenarios,
+    coverage: {objective, planStatus: plan.status, finance: plan.status === 'complete', financeComplete: item.analysisBasis?.financeComplete === true, economicsUsable: plan.status === 'complete', stockKnown, stockCoverKnown, market, marketRelation: relation, advertising: funnelKnown, trafficDeclined, pilotKnown, optimizerBlockers: blockers, automaticChanges: false},
+    calculation: {basis: 'planning_reserve', remainderBeforeOtherCosts: remainder, contributionPerUnit: plan.contributionPerUnit, minPrice: plan.minPrice, commissionPct: plan.commissionPct, advertisingPct: plan.advertisingPct}};
+}
+
+module.exports = {adviseProduct, calculateCommercialPlan, adviseGrowthDecision};

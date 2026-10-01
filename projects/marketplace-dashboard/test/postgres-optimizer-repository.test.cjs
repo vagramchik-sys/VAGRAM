@@ -50,6 +50,39 @@ const command = (commandId = COMMAND, expectedRevision = '0') => ({commandId, ex
 const protectedCredentials = {storeId: '1', clientIdCiphertext: 'protected-id', clientSecretCiphertext: 'protected-secret', credentialVersion: VERSION, intentHash: 'a'.repeat(64)};
 const snapshot = (extra = {}) => ({storeId: '1', credentialVersion: VERSION, commandId: COMMAND, expectedRevision: '0', campaigns: [], products: [], statistics: [], links: [], observedAt: timestamp, ...extra});
 
+test('stopped Performance settlement requires proof and locks before checking receipt',async()=>{
+ const db=database(),input={storeId:'1',commandId:COMMAND,expectedRevision:'0'};
+ await assert.rejects(db.repository.settleStoppedRefresh(input),{code:'INVALID_ARGUMENT'});assert.equal(db.queries.length,0);
+ assert.deepEqual(await db.repository.settleStoppedRefresh({...input,producerStopped:true}),{committed:false,revision:'0'});
+ assert.equal(db.queries[0].sql,'BEGIN ISOLATION LEVEL READ COMMITTED');
+ const lockIndexes=db.queries.flatMap((q,i)=>q.sql.startsWith('SELECT pg_advisory_xact_lock')?[i]:[]),receiptIndex=db.queries.findIndex(q=>q.sql.includes('FROM "pult_optimizer"."commands"'));
+ assert.equal(lockIndexes.length,2);assert.ok(lockIndexes.every(i=>i<receiptIndex));
+ assert.ok(db.queries.some(q=>q.sql.includes('FROM "pult_optimizer"."refresh_state"')&&q.sql.endsWith('FOR UPDATE')));
+ assert.ok(db.queries.some(q=>q.sql==="SET LOCAL lock_timeout = '5s'"));
+ assert.equal(db.queries.some(q=>/^(INSERT|UPDATE|DELETE)/.test(q.sql)),false);
+});
+
+test('stopped Performance settlement holds another active producer and reports a changed revision',async()=>{
+ const db=database(),input={storeId:'1',commandId:COMMAND,expectedRevision:'0',producerStopped:true};
+ db.state.refresh.set('1',{revision:'0',status:'running',last_command_id:OTHER});
+ assert.equal(await db.repository.settleStoppedRefresh(input),null);
+ db.state.refresh.set('1',{revision:'2',status:'ready',last_command_id:OTHER});
+ assert.deepEqual(await db.repository.settleStoppedRefresh(input),{committed:false,revision:'2'});
+ db.state.refresh.set('1',{revision:'0',status:'running',last_command_id:COMMAND});
+ assert.deepEqual(await db.repository.settleStoppedRefresh(input),{committed:false,revision:'0'});
+});
+
+test('stopped Performance settlement waits for an in-flight SQL commit and then finds its receipt',async()=>{
+ const db=database();db.state.credentials.set('1',{credential_version:VERSION,revision:'1'});
+ let release,started;const gate=new Promise(r=>release=r),ready=new Promise(r=>started=r),connect=db.pool.connect;let first=true;
+ db.pool.connect=async()=>{const c=await connect();if(!first)return c;first=false;return{...c,query:async(sql,args)=>{if(sql==='COMMIT'){started();await gate;}return c.query(sql,args)}}};
+ const writing=db.repository.commitRefresh(snapshot());await ready;let settled=false;
+ const settling=db.repository.settleStoppedRefresh({storeId:'1',commandId:COMMAND,expectedRevision:'0',producerStopped:true}).then(result=>{settled=true;return result});
+ await new Promise(r=>setImmediate(r));assert.equal(settled,false);release();await writing;
+ assert.deepEqual(await settling,{committed:true,revision:'1'});
+ await assert.rejects(db.repository.settleStoppedRefresh({storeId:'1',commandId:COMMAND,expectedRevision:'1',producerStopped:true}),{code:'COMMAND_ID_REUSED'});
+});
+
 test('concurrent first credential writes serialize an absent row and only one expected revision wins', async () => {
   const db = database();
   const results = await Promise.allSettled([

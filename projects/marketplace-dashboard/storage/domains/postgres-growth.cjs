@@ -1,8 +1,11 @@
 'use strict';
 
 const {createJsonDocumentRepository, encodeJson} = require('../postgres-json-repository.cjs');
-const {adviseProduct, calculateCommercialPlan} = require('../../optimizer/growth-advisor.cjs');
+const {adviseProduct, adviseGrowthDecision, calculateCommercialPlan} = require('../../optimizer/growth-advisor.cjs');
 const {createGrowthWatchlist, GrowthWatchlistError} = require('../growth-watchlist.cjs');
+const {GrowthActionError} = require('../growth-actions.cjs');
+const {OzonAdControlError} = require('../ozon-ad-control.cjs');
+const {previewReport, GrowthImportError} = require('../growth-report-import.cjs');
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const DAY = 86400000;
 class GrowthError extends Error {
@@ -46,7 +49,7 @@ function parseOptions(params, now) {
   return result;
 }
 
-function createGrowthCenter({optimizer, stateStore, storesRepository, readMarket, now = Date.now} = {}) {
+function createGrowthCenter({optimizer, stateStore, storesRepository, readMarket, actions, refresh, now = Date.now} = {}) {
   if (!optimizer?.prices || !stateStore || !storesRepository?.read) throw new TypeError('Growth center dependencies required');
   const watchlist = createGrowthWatchlist({stateStore, storesRepository, now, verifyProduct: async (storeId, productId) => {
     const options = parseOptions(new URLSearchParams({store: storeId, limit: '1'}), Number(now()));
@@ -131,16 +134,17 @@ function createGrowthCenter({optimizer, stateStore, storesRepository, readMarket
         try { competitors = await watchlist.read({storeId: String(item.product.storeId), productId: String(item.product.id)}); }
         catch { competitors = {revision: null, competitors: []}; watchlistError = 'Привязки конкурентов временно недоступны.'; }
         const at = new Date(Number(now())).toISOString();
-        return {...item, marketEvidence, evidenceError, watchlist: competitors, watchlistError, commercialPlan: calculateCommercialPlan(item, commercialTerms.terms, {now: at}), advisory: adviseProduct(item, {now: at, objective: options.objective, marketEvidence: marketEvidence.latest})};
+        const advisor = commercialTerms.terms && typeof adviseGrowthDecision === 'function' ? adviseGrowthDecision : adviseProduct;
+        return {...item, marketEvidence, evidenceError, watchlist: competitors, watchlistError, commercialPlan: calculateCommercialPlan(item, commercialTerms.terms, {now: at}), advisory: advisor(item, {terms: commercialTerms.terms, now: at, objective: options.objective, marketEvidence: marketEvidence.latest})};
       }));
       items.push(...batch);
     }
-    return {...data, items, stores: availableStores, commercialTerms, objective: options.objective, capabilities: {priceWrite: false, bidWrite: false, auto: false}, coverage: {competitorMonitoring: false, message: 'Автоматический мониторинг конкурентов не подключён. Ручные наблюдения охватывают только выбранные аналоги, запрос и регион.'}};
+    return {...data, items, stores: availableStores, commercialTerms, objective: options.objective, capabilities: {priceWrite: !!actions, budgetWrite: !!actions, bidWrite: false, auto: false, refresh: !!refresh, reportImport: true}, coverage: {competitorMonitoring: false, message: 'Сравниваются привязанные аналоги. Загрузите отчёт Ozon и добавьте текущие цены; автоматического наблюдения всех продавцов нет.'}};
   }
-  return {list, evidence, saveEvidence, market, terms, saveTerms, watchlist: watchlist.read, saveWatchlist: watchlist.save};
+  return {list, evidence, saveEvidence, market, terms, saveTerms, watchlist: watchlist.read, saveWatchlist: watchlist.save, actions, refresh};
 }
 
-function createGrowthRoutes({center, authorize}) {
+function createGrowthRoutes({center, authorize, now = Date.now}) {
   const reply = (res, status, value) => { res.writeHead(status, {'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store'}); res.end(JSON.stringify(value)); };
   async function handle(req, res, url) {
     if (url.pathname !== '/api/growth' && !url.pathname.startsWith('/api/growth/')) return false;
@@ -151,6 +155,16 @@ function createGrowthRoutes({center, authorize}) {
       else if (req.method === 'GET' && url.pathname === '/api/growth/market') reply(res, 200, await center.market({storeId: url.searchParams.get('store'), productId: url.searchParams.get('product')}));
       else if (req.method === 'GET' && url.pathname === '/api/growth/terms') reply(res, 200, await center.terms());
       else if (req.method === 'GET' && url.pathname === '/api/growth/watchlist') reply(res, 200, await center.watchlist({storeId: url.searchParams.get('store'), productId: url.searchParams.get('product')}));
+      else if (req.method === 'GET' && url.pathname === '/api/growth/refresh' && center.refresh) reply(res, 200, await center.refresh.status({storeId:url.searchParams.get('store'),productId:url.searchParams.get('product')||undefined,from:url.searchParams.get('from')||undefined,to:url.searchParams.get('to')||undefined}));
+      else if (req.method === 'GET' && url.pathname === '/api/growth/price/status' && center.actions) reply(res, 200, await center.actions.priceStatus({storeId:url.searchParams.get('store'),productId:url.searchParams.get('product')}));
+      else if (req.method === 'POST' && (url.pathname === '/api/growth/refresh' || url.pathname === '/api/growth/import/preview' || /^\/api\/growth\/(price|ad)\/(preview|apply|reconcile)$/.test(url.pathname))) {
+        const chunks=[];let bytes=0;const limit=url.pathname==='/api/growth/import/preview'?12*1024*1024:32768;
+        for await(const part of req){const chunk=Buffer.from(part);bytes+=chunk.length;if(bytes>limit)fail('Данные слишком большие.','BODY_TOO_LARGE',413);chunks.push(chunk);}
+        let value;try{value=JSON.parse(Buffer.concat(chunks).toString('utf8'));}catch{fail('Некорректный JSON.');}
+        if(url.pathname==='/api/growth/import/preview') reply(res,200,await previewReport(value,{now}));
+        else if(url.pathname==='/api/growth/refresh') {if(!center.refresh)fail('Обновление не подключено.','REFRESH_UNAVAILABLE',503);reply(res,202,await center.refresh.request(value));}
+        else {if(!center.actions)fail('Изменения не подключены.','ACTIONS_UNAVAILABLE',503);const [,kind,method]=/^\/api\/growth\/(price|ad)\/(preview|apply|reconcile)$/.exec(url.pathname);reply(res,200,await center.actions[kind+method[0].toUpperCase()+method.slice(1)](value));}
+      }
       else if (req.method === 'POST' && ['/api/growth/evidence', '/api/growth/terms', '/api/growth/watchlist'].includes(url.pathname)) {
         let bytes = 0; const chunks = [];
         for await (const part of req) { const chunk = Buffer.from(part); bytes += chunk.length; if (bytes > (url.pathname.endsWith('/watchlist') ? 256 * 1024 : 32768)) fail('Данные слишком большие.', 'BODY_TOO_LARGE', 413); chunks.push(chunk); }
@@ -159,7 +173,7 @@ function createGrowthRoutes({center, authorize}) {
       } else reply(res, 405, {error: 'Метод не поддерживается.'});
     } catch (error) {
       const conflict = ['REVISION_CONFLICT', 'COMMAND_ID_REUSED'].includes(error.code);
-      const known = error instanceof GrowthError || error instanceof GrowthWatchlistError;
+      const known = error instanceof GrowthError || error instanceof GrowthWatchlistError || error instanceof GrowthActionError || error instanceof OzonAdControlError || error instanceof GrowthImportError || error?.name === 'GrowthRefreshError';
       reply(res, known ? error.status : conflict ? 409 : 503, {code: known || conflict ? error.code : 'GROWTH_UNAVAILABLE', error: known ? error.message : conflict ? 'Данные изменились. Обновите карточку.' : 'Центр роста временно недоступен.'});
     }
     return true;

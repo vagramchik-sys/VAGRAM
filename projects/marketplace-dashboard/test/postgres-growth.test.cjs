@@ -3,6 +3,22 @@ const test = require('node:test'), assert = require('node:assert/strict'), crypt
 const {Readable} = require('node:stream');
 const {createGrowthCenter, createGrowthRoutes, normalizeObservation, parseOptions} = require('../storage/domains/postgres-growth.cjs');
 const NOW = Date.parse('2026-10-01T09:00:00Z');
+
+test('action and refresh HTTP dispatch preserve bodies and require owner before every side effect',async()=>{
+ const calls=[],center={actions:{pricePreview:async v=>(calls.push(['preview',v]),{token:'token'}),priceApply:async v=>(calls.push(['apply',v]),{status:'applied'}),priceStatus:async v=>(calls.push(['status',v]),{pending:null}),adReconcile:async v=>(calls.push(['ad',v]),{status:'idle'})},refresh:{request:async v=>(calls.push(['refresh',v]),{queued:true})}};
+ async function run(path,method,body,allowed=true){const route=createGrowthRoutes({center,authorize:async()=>allowed});const req=Readable.from(body?[JSON.stringify(body)]:[]);req.method=method;const res={writeHead(status){this.status=status;},end(value){this.body=JSON.parse(value);}};await route.handle(req,res,new URL('http://localhost'+path));return res;}
+ for(const path of ['/api/growth/price/apply','/api/growth/refresh','/api/growth/ad/reconcile','/api/growth/import/preview'])assert.equal((await run(path,'POST',{},false)).status,403);
+ assert.equal(calls.length,0);assert.equal((await run('/api/growth/refresh','POST',{storeId:'11'})).status,202);
+ assert.equal((await run('/api/growth/price/preview','POST',{storeId:'11',productId:'22',desiredPrice:'100'})).body.token,'token');
+ assert.equal((await run('/api/growth/price/status?store=11&product=22','GET')).body.pending,null);
+ assert.deepEqual(calls[2],['status',{storeId:'11',productId:'22'}]);
+});
+
+test('report import is read-only and reports invalid files without exposing internals',async()=>{
+ const route=createGrowthRoutes({center:{},authorize:async()=>true});
+ const req=Readable.from([JSON.stringify({format:'csv',text:'bad,columns'})]);req.method='POST';const res={writeHead(status){this.status=status;},end(value){this.body=JSON.parse(value);}};
+ await route.handle(req,res,new URL('http://localhost/api/growth/import/preview'));assert.equal(res.status,400);assert.equal(res.body.code,'INVALID_REPORT');
+});
 const observation = () => ({observedAt:'2026-10-01T08:00:00Z', comparable:true, region:'Москва', query:'саморезы', ownBuyerPrice:1000, ownUnitCount:100, ownPosition:12, competitors:[{name:'Аналог',url:'https://www.ozon.ru/product/samorezy-123456/?from=test',buyerPrice:900,unitCount:100,position:5}]});
 function fixture(overrides = {}) {
   const rows = new Map(), commands = new Map(); let writes = 0;

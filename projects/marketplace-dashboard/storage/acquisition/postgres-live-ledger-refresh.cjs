@@ -1,24 +1,24 @@
 'use strict';
 
 const crypto = require('node:crypto');
-const {createLedgerBuilder, buildLedger, typesHash} = require('../../ledger.cjs');
+const {createLedgerBuilder, buildLedger, typesHash, LEDGER_BUILDER_VERSION} = require('../../ledger.cjs');
 
 const STORE = /^[0-9]+$/u, HASH = /^[a-f0-9]{64}$/u, LEGACY_STAMP = /^(?:0|[1-9][0-9]{0,15})(?:\.[0-9]{1,9})?:[a-f0-9]{64}$/u;
 class LiveLedgerRefreshError extends Error {
   constructor(code, message) { super(message); this.name = 'LiveLedgerRefreshError'; this.code = code; }
 }
 const fail = (code, message) => { throw new LiveLedgerRefreshError(code, message); };
-const same = (a, b) => a?.snapshotId === b?.snapshotId && a?.marketRevision === b?.marketRevision && a?.marketSha256 === b?.marketSha256 && a?.typesSha256 === b?.typesSha256;
+const same = (a, b) => a?.snapshotId === b?.snapshotId && a?.marketRevision === b?.marketRevision && a?.marketSha256 === b?.marketSha256 && a?.typesSha256 === b?.typesSha256 && a?.builderVersion === b?.builderVersion;
 const sameMarket = (a, b) => a?.snapshotId === b?.snapshotId && a?.marketRevision === String(b?.marketRevision ?? '') && a?.marketSha256 === (b?.sourceSha256 ?? b?.marketSha256);
 const currentWrapper = (value, current) => same(value?.source, current.source) && value?.source?.sourceKind === 'native-sql-rows' && value?.data?.completedAt === current.metadata.completedAt && value?.data?.period?.from === current.metadata.period?.from && value?.data?.period?.to === current.metadata.period?.to;
 function validWrapper(value) {
   const source = value?.source;
   if (!value || typeof value !== 'object' || Array.isArray(value) || value.data?.version !== 3 || typeof value.stamp !== 'string') return false;
   if (source === undefined) return LEGACY_STAMP.test(value.stamp) || Number.isFinite(Date.parse(value.stamp));
-  return !!source&&typeof source==='object'&&!Array.isArray(source)&&Number.isFinite(Date.parse(value.stamp)) && (source.sourceKind===undefined||source.sourceKind==='native-sql-rows') && typeof source.snapshotId === 'string' && /^(?:0|[1-9][0-9]*)$/u.test(source.marketRevision || '') && HASH.test(source.marketSha256 || '') && HASH.test(source.typesSha256 || '');
+  return !!source&&typeof source==='object'&&!Array.isArray(source)&&Number.isFinite(Date.parse(value.stamp)) && (source.sourceKind===undefined||source.sourceKind==='native-sql-rows') && (source.builderVersion===undefined||source.builderVersion===LEDGER_BUILDER_VERSION) && typeof source.snapshotId === 'string' && /^(?:0|[1-9][0-9]*)$/u.test(source.marketRevision || '') && HASH.test(source.marketSha256 || '') && HASH.test(source.typesSha256 || '');
 }
 function commandId(source, expectedRevision = '0') {
-  const bytes = crypto.createHash('sha256').update(`pult:live-ledger:${source.snapshotId}:${source.marketRevision}:${source.marketSha256}:${source.typesSha256}:${expectedRevision}`).digest().subarray(0, 16);
+  const bytes = crypto.createHash('sha256').update(`pult:live-ledger:${source.snapshotId}:${source.marketRevision}:${source.marketSha256}:${source.typesSha256}:${source.builderVersion}:${expectedRevision}`).digest().subarray(0, 16);
   bytes[6] = (bytes[6] & 15) | 0x50; bytes[8] = (bytes[8] & 63) | 0x80; const hex = bytes.toString('hex');
   return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
 }
@@ -35,7 +35,7 @@ function createPostgresLiveLedgerRefresh({liveSources, pageSize = 1000} = {}) {
     const types = insights?.value?.types ?? [];
     if (!Array.isArray(types)) fail('SOURCE_INTEGRITY', 'Insights type evidence is invalid');
     return {
-      source: {sourceKind: 'native-sql-rows', snapshotId: `live:${storeId}:${marketRevision}`, marketRevision, marketSha256, typesSha256: typesHash(types)},
+      source: {sourceKind: 'native-sql-rows', builderVersion: LEDGER_BUILDER_VERSION, snapshotId: `live:${storeId}:${marketRevision}`, marketRevision, marketSha256, typesSha256: typesHash(types)},
       metadata: market.value,
       operationCount: Number(market.head.entityCounts?.operations ?? 0),
       types

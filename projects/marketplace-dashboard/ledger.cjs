@@ -1,5 +1,6 @@
 'use strict';
 const fs=require('fs'),path=require('path');
+const LEDGER_BUILDER_VERSION=2;
 const groups={
  ads:new Set(['BrandCommission','BrandPromotion','BrandShelf','ExternalPromotion','InternetSiteAdvertising','Marketing','PayPerClick','Promotion','Stencil','SocialMediaAdvertising','PushCampaign','PointsForReviews','ReviewsPin','SaleReview','FirstCustomerReview','AcceleratedReviewCollection','PremiumCashbackPromotion','PremiumMailingCommission']),
  acquiring:new Set(['Acquiring']),storage:new Set(['Placements','ReturnStorageInTheWarehouse','TemporaryPlacement','TemporaryPlacementsAgent','B2CTemporaryPlacement']),
@@ -26,9 +27,12 @@ function createLedgerBuilder(raw,types=[]){
      add(date,p.sku,'realized',sale,true);add(date,p.sku,'commission',commission,true);add(date,p.sku,'bonus',amount(p.commission?.bonus));add(date,p.sku,'partners',amount(p.commission?.coinvestment));
      if(sale){
        add(date,p.sku,'salesRows',1);
-       const unitPrice=p.commission?.seller_price,price=Math.abs(cents(unitPrice?.amount));
-       // seller_price is a unit price. Only exact, integral ratios can support a cost estimate.
-       if(price>0&&(!unitPrice.currency||unitPrice.currency==='RUB')&&Math.abs(sale)%price===0){
+       const explicit=Object.hasOwn(p,'quantity'),quantity=p.quantity,unitPrice=p.commission?.seller_price,price=Math.abs(cents(unitPrice?.amount));
+       // Current accrual rows carry an explicit item quantity. The amount/price ratio
+       // remains only a compatibility fallback for older rows that omit the field.
+       if(explicit&&Number.isSafeInteger(quantity)&&quantity>0){
+         add(date,p.sku,sale>0?'soldUnits':'returnedUnits',quantity);
+       }else if(!explicit&&price>0&&(!unitPrice.currency||unitPrice.currency==='RUB')&&Math.abs(sale)%price===0){
          add(date,p.sku,sale>0?'soldUnits':'returnedUnits',Math.abs(sale)/price);
        }else add(date,p.sku,'unknownUnitRows',1);
      }
@@ -46,7 +50,7 @@ function createLedgerBuilder(raw,types=[]){
 }
 function buildLedger(raw,types=[]){const builder=createLedgerBuilder(raw,types);for(const op of raw.operations||[])builder.add(op);return builder.finish()}
 const typesHash=types=>require('crypto').createHash('sha256').update(JSON.stringify(Array.isArray(types)?types:[])).digest('hex');
-module.exports={buildLedger,createLedgerBuilder,typesHash,feeGroup,cents};
+module.exports={buildLedger,createLedgerBuilder,typesHash,feeGroup,cents,LEDGER_BUILDER_VERSION};
 module.exports.cache=function({privateDir,readTypes}){
  const memory=new Map();return function(id){const source=path.join(privateDir,'data-'+id+'.json');if(!fs.existsSync(source))return null;const types=readTypes(id)?.types||[];const stamp=fs.statSync(source).mtimeMs+':'+require('crypto').createHash('sha256').update(JSON.stringify(types)).digest('hex');if(memory.get(id)?.stamp===stamp)return memory.get(id).data;
  const file=path.join(privateDir,'ledger-'+id+'.json');if(fs.existsSync(file)){const saved=JSON.parse(fs.readFileSync(file,'utf8'));if(saved.stamp===stamp&&saved.data.version===3){memory.set(id,saved);return saved.data}}
