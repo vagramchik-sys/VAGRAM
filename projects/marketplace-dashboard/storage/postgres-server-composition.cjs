@@ -32,7 +32,7 @@ const ROUTE_CAPABILITIES = Object.freeze({
   '/api/manage/refresh-prices': 'pricing-refresh', '/api/wb/orders': 'wb-orders-report', '/api/order-categories': 'order-categories',
   '/api/economics/compare': 'economics-compare', '/api/impact': 'impact', '/api/changes': 'release-notes',
   '/api/finance/contracts': 'finance-documents', '/api/partners/*': 'partner-tools', '/api/charity/*': 'charity-tools'
-  ,'/api/optimizer/*': 'optimizer-api', '/api/ad-control': 'ad-control-api', '/api/ad-control/*': 'ad-control-api'
+  ,'/api/growth': 'growth-api', '/api/growth/*': 'growth-api', '/api/optimizer/*': 'optimizer-api', '/api/ad-control': 'ad-control-api', '/api/ad-control/*': 'ad-control-api'
 });
 const BACKGROUND_CAPABILITIES = Object.freeze({ schedulerExecution: 'scheduler-runner', periodicAttempts: 'cadence-producer', marketSnapshots: 'market-acquisition', costsAndPrices: 'costs-prices', orders: 'insights-orders', funnel: 'insights-funnel', wbOrders: 'wb-orders-acquisition', performance: 'performance-acquisition', intradayCapture: 'intraday-writer', categoryCapture: 'category-writer' });
 const HANDLER_GROUPS = Object.freeze({
@@ -43,6 +43,7 @@ const HANDLER_GROUPS = Object.freeze({
   'charity-tools': ['charity-tools'],
   'optimizer-routes': ['optimizer-api'],
   'ad-control-routes': ['ad-control-api'],
+  'growth-routes': ['growth-api'],
   'report-routes': ['insights-api', 'wb-orders-report', 'order-categories', 'economics-compare'],
   'acquisition-routes': ['pricing-refresh', 'insights-refresh'],
   'info-routes': ['impact', 'release-notes']

@@ -88,7 +88,7 @@ async function start({ pool, core, ownerRoutesFactory, otherHandlers = [], handl
           if (url.pathname === '/api/runtime-metrics' && req.method === 'GET') { json(res, 200, requestMetrics.snapshot()); return; }
           if (url.pathname === '/api/stores' && req.method === 'GET') { if (typeof core.registryRevision === 'function') res.setHeader('X-Pult-Registry-Revision', await core.registryRevision()); json(res, 200, await core.publicStores()); return; }
           if (req.method === 'GET') {
-            const lane = url.pathname === '/api/ad-control' || url.pathname.startsWith('/api/ad-control/') ? apiGetLanes.advertising : url.pathname === '/api/data' || url.pathname === '/api/insights' ? apiGetLanes.light : HEAVY_READ_ROUTES.has(url.pathname) ? apiGetLanes.heavy : apiGetLanes.regular;
+            const lane = url.pathname === '/api/growth/market' || url.pathname === '/api/ad-control' || url.pathname.startsWith('/api/ad-control/') ? apiGetLanes.advertising : url.pathname === '/api/data' || url.pathname === '/api/insights' ? apiGetLanes.light : HEAVY_READ_ROUTES.has(url.pathname) ? apiGetLanes.heavy : apiGetLanes.regular;
             const slot = await apiGetSlot(lane, req, res);
             if (typeof slot !== 'function') { if (slot === 'timeout' || slot === 'busy') res.setHeader('Retry-After', '1'); unavailable(res); return; }
             releaseApiGet = slot;

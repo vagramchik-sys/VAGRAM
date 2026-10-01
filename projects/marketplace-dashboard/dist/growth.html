@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#f6f9ff">
+  <title>Пульт — Центр роста</title>
+  <link rel="stylesheet" href="/dashboard.css">
+  <link rel="stylesheet" href="/premium.css">
+  <link rel="stylesheet" href="/seller-shell.css">
+  <link rel="stylesheet" href="/seller-workspace.css">
+  <link rel="stylesheet" href="/growth.css">
+</head>
+<body class="pult-overview-light">
+  <main class="growth-page">
+    <header class="growth-heading">
+      <div>
+        <p class="growth-eyebrow">ЦЕНА × РЕКЛАМА × ПРОДАЖИ</p>
+        <h1>Центр роста</h1>
+        <p>Решения по цене и рекламе на основе доступных продаж, экономики и ваших наблюдений за аналогами. Изменения на Ozon не отправляются.</p>
+      </div>
+      <button id="growth-refresh" class="growth-button primary" type="button">Обновить данные</button>
+    </header>
+
+    <section class="growth-warning" aria-label="Ограничения рыночных данных">
+      <strong>Мониторинг всех конкурентов не подключён.</strong>
+      <span>Позиция товара зависит от поискового запроса, региона, времени и персонализации. Наблюдения не гарантируют будущую позицию, продажи или прибыль.</span>
+    </section>
+
+    <div id="growth-notice" class="growth-notice" role="status" aria-live="polite" hidden></div>
+    <section id="growth-terms-summary" class="growth-terms-summary" aria-label="Условия расчёта"></section>
+
+    <form id="growth-filters" class="growth-filters" autocomplete="off">
+      <label>Магазин<select name="store" id="growth-store"><option value="">Все магазины</option></select></label>
+      <label>Цель<select name="objective"><option value="profit_volume">Прибыль и объём</option><option value="sales">Продажи</option><option value="position">Позиция</option></select></label>
+      <label class="growth-search">Товар или SKU<input name="search" type="search" maxlength="200" placeholder="Название, SKU или артикул"></label>
+      <label>С даты<input name="from" type="date"></label>
+      <label>По дату<input name="to" type="date"></label>
+    </form>
+
+    <section id="growth-kpis" class="growth-kpis" aria-label="Итоги на этой странице"></section>
+
+    <section class="growth-workspace">
+      <div class="growth-list-panel">
+        <div class="growth-panel-heading">
+          <div><h2>Товары</h2><p id="growth-period">Загружаем данные…</p></div>
+          <span id="growth-page-count"></span>
+        </div>
+        <div id="growth-list" class="growth-list" aria-live="polite"><p class="growth-empty">Загружаем товары…</p></div>
+        <footer class="growth-pager">
+          <span id="growth-page-info"></span>
+          <div><button id="growth-prev" type="button" aria-label="Предыдущая страница">←</button><button id="growth-next" type="button" aria-label="Следующая страница">→</button></div>
+        </footer>
+      </div>
+
+      <aside id="growth-detail" class="growth-detail" aria-labelledby="growth-detail-title">
+        <div class="growth-detail-empty"><h2 id="growth-detail-title">Решение по товару</h2><p>Выберите товар, чтобы увидеть четыре сценария, основания решения и недостающие данные.</p></div>
+      </aside>
+    </section>
+
+    <nav class="growth-links" aria-label="Связанные разделы">
+      <a id="growth-link-control" href="/ad-control.html">Управление рекламой</a>
+      <a id="growth-link-ads" href="/ads.html">Рекомендации по рекламе</a>
+      <a id="growth-link-prices" href="/prices.html">Рекомендации по ценам</a>
+    </nav>
+  </main>
+
+  <dialog id="evidence-dialog" class="evidence-dialog" aria-labelledby="evidence-title">
+    <form id="evidence-form" method="dialog" autocomplete="off">
+      <header><div><p class="growth-eyebrow">ЛОКАЛЬНОЕ НАБЛЮДЕНИЕ</p><h2 id="evidence-title">Добавить наблюдение по аналогам</h2><p id="evidence-product"></p></div><button id="evidence-close" class="icon-button" type="button" aria-label="Закрыть">×</button></header>
+      <p class="evidence-note">Это введённое вручную локальное наблюдение, а не автоматический мониторинг рынка.</p>
+      <div class="evidence-fields">
+        <label>Дата и время, Москва<input name="observedAt" type="datetime-local" required></label>
+        <label>Регион<input name="region" required maxlength="120" placeholder="Например, Москва"></label>
+        <label class="wide">Поисковый запрос<input name="query" required maxlength="240" placeholder="Запрос, по которому сравнивали позиции"></label>
+        <label>Ваша цена покупателя, ₽<input name="ownBuyerPrice" type="number" min="0.01" step="0.01" required></label>
+        <label>Единиц в комплекте<input name="ownUnitCount" type="number" min="1" step="1" value="1" required></label>
+        <label>Ваша позиция, если видна<input name="ownPosition" type="number" min="1" step="1"></label>
+      </div>
+      <div class="evidence-competitors-head"><div><h3>Аналоги</h3><p>До пяти товаров Ozon, увиденных в тех же условиях.</p></div><button id="add-competitor" class="growth-button secondary" type="button">Добавить аналог</button></div>
+      <div id="competitor-list" class="competitor-list"></div>
+      <label class="evidence-confirm"><input name="comparable" type="checkbox" required> Аналоги сопоставимы по характеристикам; цены и позиции сняты для одного региона и запроса</label>
+      <div id="evidence-error" class="evidence-error" role="alert"></div>
+      <footer><button id="evidence-cancel" class="growth-button secondary" type="button">Отмена</button><button id="evidence-save" class="growth-button primary" type="submit">Сохранить наблюдение</button></footer>
+    </form>
+  </dialog>
+
+  <dialog id="watchlist-dialog" class="evidence-dialog" aria-labelledby="watchlist-title">
+    <form id="watchlist-form" method="dialog" autocomplete="off">
+      <header><div><p class="growth-eyebrow">СПИСОК ДЛЯ СРАВНЕНИЯ</p><h2 id="watchlist-title">Наши конкуренты</h2><p id="watchlist-product"></p></div><button id="watchlist-close" class="icon-button" type="button" aria-label="Закрыть">×</button></header>
+      <p class="evidence-note">Привязка сохраняет товары для анализа без текущих цен. Средние показатели Ozon, если они доступны, относятся только к указанному периоду.</p>
+      <div class="evidence-competitors-head"><div><h3>Товары Ozon</h3><p>Для статуса «Проверен» укажите упаковку и пояснение сопоставимости.</p></div><button id="add-watchlist" class="growth-button secondary" type="button">Добавить товар</button></div>
+      <div id="watchlist-rows" class="competitor-list"></div>
+      <div id="watchlist-error" class="evidence-error" role="alert"></div>
+      <footer><a class="ozon-analytics-link" href="https://seller.ozon.ru/app/analytics/competitors/ozon-bestsellers" target="_blank" rel="noopener noreferrer">Найти конкурентов в Ozon</a><button id="watchlist-cancel" class="growth-button secondary" type="button">Отмена</button><button id="watchlist-save" class="growth-button primary" type="submit">Сохранить список</button></footer>
+    </form>
+  </dialog>
+
+  <template id="competitor-template">
+    <fieldset class="competitor-card"><legend>Аналог</legend><button class="competitor-remove" type="button" aria-label="Удалить аналог">Удалить</button><label>Название<input name="competitorName" required maxlength="200"></label><label class="wide">Ссылка Ozon<input name="competitorUrl" type="url" required placeholder="https://www.ozon.ru/product/..."></label><label>Цена покупателя, ₽<input name="competitorPrice" type="number" min="0.01" step="0.01" required></label><label>Единиц в комплекте<input name="competitorUnits" type="number" min="1" step="1" value="1" required></label><label>Позиция, если видна<input name="competitorPosition" type="number" min="1" step="1"></label></fieldset>
+  </template>
+  <template id="watchlist-template">
+    <fieldset class="competitor-card watchlist-card"><legend>Товар для сравнения</legend><button class="competitor-remove" type="button" aria-label="Удалить товар">Удалить</button><label>Название<input name="watchName" required maxlength="200"></label><label class="wide">Ссылка Ozon<input name="watchUrl" type="url" required placeholder="https://www.ozon.ru/product/..."></label><label>Статус<select name="watchStatus"><option value="candidate">Кандидат</option><option value="confirmed">Проверен</option></select></label><label>Единиц в упаковке<input name="watchUnits" type="number" min="1" step="1"></label><label class="wide">Почему товар сопоставим<textarea name="watchNotes" maxlength="500" rows="2"></textarea></label><div class="watch-metrics wide"></div></fieldset>
+  </template>
+
+  <script src="/growth.js"></script>
+  <script src="/seller-workspace.js"></script>
+</body>
+</html>
