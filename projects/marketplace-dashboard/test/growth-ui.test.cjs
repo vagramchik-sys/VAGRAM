@@ -166,7 +166,9 @@ test('refresh request is scoped to the selected store and requests only connecte
 });
 
 test('refresh outcomes report queue truth and polling stops only on terminal jobs', () => {
-  assert.match(ui.refreshSummary({queued:false,state:'not_queued',message:'Не поставлено',outcomes:{market:{status:'not_queued'}}}),/Не поставлено/);
+  const notQueued=ui.refreshSummary({queued:false,state:'not_queued',message:'Не поставлено',outcomes:{market:{status:'not_queued'}}});
+  assert.match(notQueued,/Не поставлено/);
+  assert.doesNotMatch(notQueued,/not_queued/);
   assert.match(ui.refreshSummary({queued:false,state:'partial',errorCode:'JOB_CONFLICT',outcomes:{market:{status:'done'},costs:{status:'unknown'}}}),/JOB_CONFLICT/);
   assert.equal(ui.refreshJobsTerminal({jobs:{market:{status:'done'},'costs-prices':{status:'partial'}}},['market','costs-prices']),true);
   assert.equal(ui.refreshJobsTerminal({jobs:{market:{status:'done'},'costs-prices':{status:'running'}}},['market','costs-prices']),false);
@@ -197,4 +199,8 @@ test('refresh status explains every source in Russian including stages and error
   assert.match(text,/Каталог и остатки: завершено · Каталог/);
   assert.match(text,/Себестоимость и цены: ошибка · Цены · ошибки: SOURCE_FAILED/);
   assert.doesNotMatch(text,/undefined|null/);
+  assert.equal(ui.localizedRefreshStage('Queued by owner command'),'Ожидает запуска');
+  assert.equal(ui.localizedRefreshStage('Snapshot complete'),'Снимок готов');
+  assert.equal(ui.localizedRefreshStage('Some new upstream stage'),'');
+  assert.equal(ui.REFRESH_MONITOR_MS,30*60*1000);
 });
