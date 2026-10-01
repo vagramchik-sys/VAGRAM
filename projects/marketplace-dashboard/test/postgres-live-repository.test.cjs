@@ -75,6 +75,60 @@ test('native repository uses a disposable PostgreSQL database', { skip: !process
   await ensurePostgresLiveSchema(pool);
   const repo = createPostgresLiveRepository({ pool });
 
+  await t.test('large publication keeps indexed probes with stale empty staging statistics', {timeout:120000}, async()=>{
+    // Capture the repository's actual statement, then execute it only against
+    // transaction-local fixture tables. No application source rows are used.
+    let applySql;
+    const tracked=createPostgresLiveRepository({pool:{connect:async()=>{const client=await pool.connect();return{query:(sql,args)=>{if(sql.startsWith('WITH incoming AS'))applySql=sql;return client.query(sql,args)},release:()=>client.release()}}}});
+    await tracked.publish(command(id(),'capture-scale-statement',0,[all([record('one',null,{value:1},0)])]));
+    assert.equal(typeof applySql,'string');
+    const sql=applySql.replaceAll('pult_live.incoming_rows','pg_temp.scale_incoming').replaceAll('pult_live.facts','pg_temp.scale_facts').replaceAll('pult_live.record_journal','pg_temp.scale_journal');
+    const client=await pool.connect(),size=350000,values=['scale','market','operations',2,'scale-command',null,null];
+    try{
+      await client.query('BEGIN');
+      await client.query("SET LOCAL work_mem='4MB'");await client.query("SET LOCAL statement_timeout='60s'");
+      await client.query('CREATE TEMP TABLE scale_facts (LIKE pult_live.facts INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING INDEXES) ON COMMIT DROP');
+      await client.query('CREATE TEMP TABLE scale_incoming (LIKE pult_live.incoming_rows INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING INDEXES) ON COMMIT DROP');
+      await client.query('CREATE TEMP TABLE scale_journal (LIKE pult_live.record_journal INCLUDING DEFAULTS INCLUDING CONSTRAINTS INCLUDING IDENTITY INCLUDING INDEXES) ON COMMIT DROP');
+      await client.query(`INSERT INTO pg_temp.scale_facts(store_id,domain,entity_type,entity_key,occurrence,business_day,source_order,value,row_sha256,revision)
+        SELECT 'scale','market','operations','key-'||((g-1)/2)::text,(g-1)%2,'2026-01-01'::date,g,jsonb_build_object('n',g,'payload',repeat('x',512)),repeat('a',64),1 FROM generate_series(1,$1::integer) g`,[size]);
+      await client.query('ANALYZE pg_temp.scale_facts');
+      await client.query(`INSERT INTO pg_temp.scale_incoming SELECT store_id,domain,'scale-command',entity_type,entity_key,occurrence,business_day,source_order,value,row_sha256 FROM pg_temp.scale_facts LIMIT 1`);
+      await client.query('DELETE FROM pg_temp.scale_incoming');
+      await client.query('ANALYZE pg_temp.scale_incoming');
+      await client.query(`INSERT INTO pg_temp.scale_incoming(store_id,domain,command_id,entity_type,entity_key,occurrence,business_day,source_order,value,row_sha256)
+        SELECT 'scale','market','scale-command','operations','key-'||((g-1)/2)::text,(g-1)%2,'2026-01-01'::date,g,jsonb_build_object('n',g,'payload',repeat('x',512)),CASE WHEN g<=340000 THEN repeat('a',64) ELSE repeat('b',64) END
+        FROM (SELECT generate_series(1,345000) AS g UNION ALL SELECT generate_series(350001,355000)) rows`);
+      const plan=(await client.query('EXPLAIN (FORMAT JSON) '+sql,values)).rows[0]['QUERY PLAN'][0].Plan,nodes=[];
+      (function visit(node){nodes.push(node);for(const child of node.Plans||[])visit(child)})(plan);
+      assert.equal(nodes.some(n=>['incoming','previous'].includes(n['CTE Name'])),false,'key lookup collections must not be materialized');
+      const incomingProbes=nodes.filter(n=>n['Relation Name']==='scale_incoming'&&String(n['Index Cond']).includes('f.entity_key'));
+      assert.equal(incomingProbes.length,1);assert.match(incomingProbes[0]['Index Cond'],/occurrence = f\.occurrence/);
+      assert.ok(nodes.some(n=>n['Relation Name']==='scale_facts'&&String(n['Index Cond']).includes('w.entity_key')));
+      const estimates=nodes.filter(n=>n['Relation Name']==='scale_incoming').map(n=>n['Plan Rows']);
+      assert.ok(estimates.every(n=>n<=10),'fixture must preserve the production empty-staging underestimate');
+      // Recreate the former exact lookup strategy for a bounded comparison.
+      // The savepoint rolls back all its temp-table changes, whether it finishes
+      // or hits the deadline. No hardware-dependent speed ratio is asserted.
+      const legacySql=sql.replaceAll('AS NOT MATERIALIZED','AS MATERIALIZED').replace(' OFFSET 0','')
+        .replace('CASE WHEN p.entity_key IS NOT NULL', 'CASE WHEN EXISTS(SELECT 1 FROM previous p WHERE p.entity_key=w.entity_key AND p.occurrence=w.occurrence)')
+        .replace(/w\.entity_type,w\.entity_key,w\.occurrence,w\.business_day,w\.source_order,w\.value,w\.row_sha256 FROM written w\s+LEFT JOIN previous p ON p\.entity_key=w\.entity_key AND p\.occurrence=w\.occurrence/u,'entity_type,entity_key,occurrence,business_day,source_order,value,row_sha256 FROM written w');
+      await client.query('SAVEPOINT legacy_lookup');await client.query("SET LOCAL statement_timeout='15s'");
+      const legacyStarted=Date.now();let legacyOutcome='completed';
+      try{await client.query(legacySql,values)}catch(error){assert.equal(error.code,'57014');legacyOutcome='statement timeout'}
+      const legacyElapsed=Date.now()-legacyStarted;
+      await client.query('ROLLBACK TO SAVEPOINT legacy_lookup');await client.query('RELEASE SAVEPOINT legacy_lookup');
+      await client.query("SET LOCAL statement_timeout='60s'");
+      const started=Date.now(),result=await client.query(sql,values),elapsedMs=Date.now()-started;
+      assert.deepEqual(Object.fromEntries(result.rows.map(r=>[r.action,Number(r.count)])),{delete:5000,insert:5000,update:5000});
+      assert.equal(Number((await client.query('SELECT count(*) AS count FROM pg_temp.scale_facts')).rows[0].count),size);
+      const unchanged=Number((await client.query('SELECT count(*) AS count FROM pg_temp.scale_facts WHERE revision=1')).rows[0].count);
+      assert.equal(unchanged,340000);
+      assert.deepEqual((await client.query('SELECT action,count(*)::integer AS count FROM pg_temp.scale_journal GROUP BY action ORDER BY action')).rows,[{action:'delete',count:5000},{action:'insert',count:5000},{action:'update',count:5000}]);
+      t.diagnostic(`350000 rows, work_mem=4MB, stale staging estimates=${estimates.join(',')}: former apply ${legacyOutcome} after ${legacyElapsed}ms; indexed apply ${elapsedMs}ms`);
+    }finally{await client.query('ROLLBACK');client.release()}
+  });
+
   await t.test('keyset pages retain every ordering tie and duplicate occurrence without totals', async () => {
     const identity=id();
     await repo.importComplete(command(identity,'keyset',0,[all([record('dup','2026-01-01',{n:1},0)]),all([record('a',null,{n:4},0)],'products')]));

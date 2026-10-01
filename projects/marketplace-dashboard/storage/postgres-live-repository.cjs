@@ -403,10 +403,16 @@ function createPostgresLiveRepository({ pool, maxMetadataBytes = 64 * 1024, writ
           const collision = await client.query(`WITH incoming AS (${incoming}) SELECT $4::bigint AS revision,$5::text AS command_id,EXISTS(SELECT 1 FROM pult_live.facts f JOIN incoming i USING(entity_key,occurrence) WHERE f.store_id=$1 AND f.domain=$2 AND f.entity_type=$3 AND NOT COALESCE(${scope},false)) AS conflict`, values);
           if (collision.rows[0].conflict) fail('ENTITY_OUTSIDE_PARTITION');
         }
-        const result = await client.query(`WITH incoming AS MATERIALIZED (${incoming}),
-          previous AS MATERIALIZED (SELECT entity_key,occurrence FROM pult_live.facts WHERE store_id=$1 AND domain=$2 AND entity_type=$3),
+        // Staging is normally empty between publications, so its statistics may
+        // estimate one row even after a large batch. Keep both lookups inline.
+        // OFFSET 0 preserves the correlated anti-lookup: otherwise PostgreSQL
+        // may materialize the underestimated input and rescan it for each fact.
+        // Both key probes can use the existing unique indexes without JSON spill.
+        // All CTEs read the same pre-write statement snapshot for event actions.
+        const result = await client.query(`WITH incoming AS NOT MATERIALIZED (${incoming}),
+          previous AS NOT MATERIALIZED (SELECT entity_key,occurrence FROM pult_live.facts WHERE store_id=$1 AND domain=$2 AND entity_type=$3),
           removed AS (DELETE FROM pult_live.facts f WHERE f.store_id=$1 AND f.domain=$2 AND f.entity_type=$3 AND ${scope}
-            AND NOT EXISTS(SELECT 1 FROM incoming i WHERE i.entity_key=f.entity_key AND i.occurrence=f.occurrence) RETURNING f.*),
+            AND NOT EXISTS(SELECT 1 FROM incoming i WHERE i.entity_key=f.entity_key AND i.occurrence=f.occurrence OFFSET 0) RETURNING f.*),
           written AS (INSERT INTO pult_live.facts AS f(store_id,domain,entity_type,entity_key,occurrence,business_day,source_order,value,row_sha256,revision)
             SELECT $1,$2,$3,i.entity_key,i.occurrence,i.business_day,i.source_order,i.value,i.row_sha256,$4 FROM incoming i
             ON CONFLICT(store_id,domain,entity_type,entity_key,occurrence) DO UPDATE SET business_day=EXCLUDED.business_day,source_order=EXCLUDED.source_order,
@@ -414,8 +420,9 @@ function createPostgresLiveRepository({ pool, maxMetadataBytes = 64 * 1024, writ
             WHERE f.row_sha256 IS DISTINCT FROM EXCLUDED.row_sha256 RETURNING f.*),
           events AS (INSERT INTO pult_live.record_journal(store_id,domain,command_id,revision,action,entity_type,entity_key,occurrence,business_day,source_order,value,row_sha256)
             SELECT $1,$2,$5,$4,'delete',entity_type,entity_key,occurrence,business_day,source_order,value,row_sha256 FROM removed
-            UNION ALL SELECT $1,$2,$5,$4,CASE WHEN EXISTS(SELECT 1 FROM previous p WHERE p.entity_key=w.entity_key AND p.occurrence=w.occurrence) THEN 'update' ELSE 'insert' END,
-              entity_type,entity_key,occurrence,business_day,source_order,value,row_sha256 FROM written w RETURNING action)
+            UNION ALL SELECT $1,$2,$5,$4,CASE WHEN p.entity_key IS NOT NULL THEN 'update' ELSE 'insert' END,
+              w.entity_type,w.entity_key,w.occurrence,w.business_day,w.source_order,w.value,w.row_sha256 FROM written w
+              LEFT JOIN previous p ON p.entity_key=w.entity_key AND p.occurrence=w.occurrence RETURNING action)
           SELECT action,count(*) AS count FROM events GROUP BY action`, values);
         await client.query('DELETE FROM pult_live.incoming_rows WHERE store_id=$1 AND domain=$2 AND command_id=$3 AND entity_type=$4', [intent.storeId, intent.domain, intent.commandId, partition.entityType]);
         const changes = { insert: 0, update: 0, delete: 0 };
